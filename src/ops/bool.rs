@@ -1,7 +1,5 @@
 //! Bool tensor operations for the Ember backend.
 
-use core::future::Future;
-
 use burn_backend::{
     DType, ExecutionError, TensorData,
     ops::BoolTensorOps,
@@ -16,10 +14,8 @@ impl BoolTensorOps<Ember> for Ember {
         EmberTensor::from_data(data)
     }
 
-    fn bool_into_data(
-        tensor: BoolTensor<Ember>,
-    ) -> impl Future<Output = Result<TensorData, ExecutionError>> + Send {
-        async move { Ok(tensor.into_data()) }
+    async fn bool_into_data(tensor: BoolTensor<Ember>) -> Result<TensorData, ExecutionError> {
+        Ok(tensor.into_data())
     }
 
     fn bool_device(_tensor: &BoolTensor<Ember>) -> Device<Ember> {

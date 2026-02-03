@@ -7,36 +7,22 @@ use crate::qtensor::EmberQTensor;
 use crate::tensor::EmberTensor;
 
 /// CPU device for the Ember backend.
+///
+/// Unit struct since there's only one CPU device.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct EmberDevice {
-    index: usize,
-}
-
-impl EmberDevice {
-    /// Create a new CPU device.
-    pub fn new(index: usize) -> Self {
-        Self { index }
-    }
-
-    /// Get the device index.
-    pub fn index(&self) -> usize {
-        self.index
-    }
-}
+pub struct EmberDevice;
 
 impl Device for EmberDevice {
     fn to_id(&self) -> DeviceId {
-        DeviceId::new(0, self.index as u32)
+        DeviceId::new(0, 0)
     }
 
-    fn from_id(id: DeviceId) -> Self {
-        Self {
-            index: id.index_id as usize,
-        }
+    fn from_id(_id: DeviceId) -> Self {
+        Self
     }
 
     fn device_count(_kind: u16) -> usize {
-        1 // Single CPU device
+        1
     }
 }
 
@@ -44,7 +30,7 @@ impl DeviceOps for EmberDevice {}
 
 impl core::fmt::Display for EmberDevice {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Ember({})", self.index)
+        write!(f, "Ember")
     }
 }
 

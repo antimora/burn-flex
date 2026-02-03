@@ -1,7 +1,5 @@
 //! Float tensor operations for the Ember backend.
 
-use core::future::Future;
-
 use burn_backend::{
     Distribution, ExecutionError, FloatDType, Scalar, TensorData,
     ops::FloatTensorOps,
@@ -24,10 +22,8 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_random")
     }
 
-    fn float_into_data(
-        tensor: FloatTensor<Ember>,
-    ) -> impl Future<Output = Result<TensorData, ExecutionError>> + Send {
-        async move { Ok(tensor.into_data()) }
+    async fn float_into_data(tensor: FloatTensor<Ember>) -> Result<TensorData, ExecutionError> {
+        Ok(tensor.into_data())
     }
 
     fn float_device(_tensor: &FloatTensor<Ember>) -> Device<Ember> {

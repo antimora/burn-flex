@@ -1,7 +1,5 @@
 //! Quantized tensor operations for the Ember backend.
 
-use core::future::Future;
-
 use burn_backend::{
     DType, ExecutionError, TensorData,
     ops::QTensorOps,
@@ -54,10 +52,8 @@ impl QTensorOps<Ember> for Ember {
         }
     }
 
-    fn q_into_data(
-        tensor: QuantizedTensor<Ember>,
-    ) -> impl Future<Output = Result<TensorData, ExecutionError>> + Send {
-        async move { Ok(tensor.tensor.into_data()) }
+    async fn q_into_data(tensor: QuantizedTensor<Ember>) -> Result<TensorData, ExecutionError> {
+        Ok(tensor.tensor.into_data())
     }
 
     fn q_swap_dims(

@@ -1,7 +1,5 @@
 //! Int tensor operations for the Ember backend.
 
-use core::future::Future;
-
 use burn_backend::{
     Distribution, ExecutionError, Scalar, TensorData,
     ops::IntTensorOps,
@@ -16,10 +14,8 @@ impl IntTensorOps<Ember> for Ember {
         EmberTensor::from_data(data)
     }
 
-    fn int_into_data(
-        tensor: IntTensor<Ember>,
-    ) -> impl Future<Output = Result<TensorData, ExecutionError>> + Send {
-        async move { Ok(tensor.into_data()) }
+    async fn int_into_data(tensor: IntTensor<Ember>) -> Result<TensorData, ExecutionError> {
+        Ok(tensor.into_data())
     }
 
     fn int_device(_tensor: &IntTensor<Ember>) -> Device<Ember> {
