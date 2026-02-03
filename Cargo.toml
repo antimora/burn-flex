@@ -1,27 +1,29 @@
-[package]
-name = "burn-ember"
-version = "0.0.1"
+[workspace]
+resolver = "2"
+
+members = ["crates/*", "xtask"]
+
+[workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "A fast, portable CPU backend for Burn"
-repository = "https://github.com/antimora/burn-ember"
-readme = false
-authors = ["Dilshod Tadjibaev (@antimora)"]
 
-exclude = ["*.md"]
+[workspace.lints.clippy]
 
-[features]
-default = ["std"]
-std = []
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
 
-[lib]
-path = "src/lib.rs"
-
-[dependencies]
+[workspace.dependencies]
 burn-backend = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
 burn-std = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
+burn-tensor = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
 half = { version = "2", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
 
-[dev-dependencies]
-burn-tensor = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
+# xtask
+tracel-xtask = "=4.12.3"
+strum = { version = "0.27.2", features = ["derive"] }
+log = { version = "0.4", default-features = false }
+
+[profile.dev]
+debug = 1

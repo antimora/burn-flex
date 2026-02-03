@@ -1,0 +1,7 @@
+[default]
+
+[files]
+extend-exclude = [
+    "*.onnx",
+    "target/",
+]
