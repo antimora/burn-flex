@@ -145,6 +145,32 @@ impl Layout {
         }
         offset
     }
+
+    /// Get stride of the innermost (last) dimension.
+    /// Returns 1 for contiguous tensors, larger values for transposed.
+    pub fn inner_stride(&self) -> usize {
+        self.strides.last().copied().unwrap_or(1)
+    }
+
+    /// Check if innermost dimension is contiguous (stride == 1).
+    /// This enables efficient vectorized inner loops.
+    pub fn has_contiguous_inner(&self) -> bool {
+        self.inner_stride() == 1
+    }
+
+    /// For 2D layouts, get (outer_size, inner_size, outer_stride, inner_stride).
+    /// Returns None if not 2D.
+    pub fn as_2d_strides(&self) -> Option<(usize, usize, usize, usize)> {
+        if self.num_dims() != 2 {
+            return None;
+        }
+        Some((
+            self.shape.dims[0],
+            self.shape.dims[1],
+            self.strides[0],
+            self.strides[1],
+        ))
+    }
 }
 
 #[cfg(test)]

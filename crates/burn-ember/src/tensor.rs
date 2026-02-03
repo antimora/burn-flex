@@ -176,10 +176,23 @@ impl EmberTensor {
 
     fn copy_contiguous<E: Element + bytemuck::Pod>(&self) -> Self {
         let src: &[E] = bytemuck::cast_slice(&self.data);
-        let mut dst = Vec::with_capacity(self.layout.num_elements());
+        let n = self.layout.num_elements();
+        let mut dst = Vec::with_capacity(n);
 
-        for idx in crate::strided_index::StridedIter::new(&self.layout) {
-            dst.push(src[idx]);
+        // Fast path for 2D tensors (common for transpose)
+        if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
+            let offset = self.layout.start_offset();
+            for row in 0..rows {
+                let row_start = offset + row * row_stride;
+                for col in 0..cols {
+                    dst.push(src[row_start + col * col_stride]);
+                }
+            }
+        } else {
+            // General fallback using strided iterator
+            for idx in crate::strided_index::StridedIter::new(&self.layout) {
+                dst.push(src[idx]);
+            }
         }
 
         let bytes = Bytes::from_elems(dst);
@@ -193,10 +206,22 @@ impl EmberTensor {
 
     fn copy_contiguous_f16(&self) -> Self {
         let src: &[f16] = bytemuck::cast_slice(&self.data);
-        let mut dst = Vec::with_capacity(self.layout.num_elements());
+        let n = self.layout.num_elements();
+        let mut dst = Vec::with_capacity(n);
 
-        for idx in crate::strided_index::StridedIter::new(&self.layout) {
-            dst.push(src[idx]);
+        // Fast path for 2D tensors
+        if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
+            let offset = self.layout.start_offset();
+            for row in 0..rows {
+                let row_start = offset + row * row_stride;
+                for col in 0..cols {
+                    dst.push(src[row_start + col * col_stride]);
+                }
+            }
+        } else {
+            for idx in crate::strided_index::StridedIter::new(&self.layout) {
+                dst.push(src[idx]);
+            }
         }
 
         let bytes = Bytes::from_elems(dst);
@@ -210,10 +235,22 @@ impl EmberTensor {
 
     fn copy_contiguous_bf16(&self) -> Self {
         let src: &[bf16] = bytemuck::cast_slice(&self.data);
-        let mut dst = Vec::with_capacity(self.layout.num_elements());
+        let n = self.layout.num_elements();
+        let mut dst = Vec::with_capacity(n);
 
-        for idx in crate::strided_index::StridedIter::new(&self.layout) {
-            dst.push(src[idx]);
+        // Fast path for 2D tensors
+        if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
+            let offset = self.layout.start_offset();
+            for row in 0..rows {
+                let row_start = offset + row * row_stride;
+                for col in 0..cols {
+                    dst.push(src[row_start + col * col_stride]);
+                }
+            }
+        } else {
+            for idx in crate::strided_index::StridedIter::new(&self.layout) {
+                dst.push(src[idx]);
+            }
         }
 
         let bytes = Bytes::from_elems(dst);
