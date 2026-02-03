@@ -252,6 +252,7 @@ dependencies = [
  "burn-tensor",
  "bytemuck",
  "half",
+ "num-traits",
 ]
 
 [[package]]

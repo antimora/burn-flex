@@ -41,18 +41,18 @@ Minimize allocations wherever possible:
 
 ### In-Place Operations
 
-When the input tensor is uniquely owned (`Bytes::is_unique()`), mutate in place:
+When tensor is contiguous at offset 0, mutate in place:
 
 ```rust
 fn neg_inplace(mut tensor: EmberTensor) -> EmberTensor {
-    if tensor.data.is_unique() && tensor.is_contiguous() {
-        let slice: &mut [f32] = tensor.data.as_mut_slice();
-        for x in slice.iter_mut() {
+    if let Some((0, end)) = tensor.layout().contiguous_offsets() {
+        let slice: &mut [f32] = tensor.storage_mut();
+        for x in slice[..end].iter_mut() {
             *x = -*x;
         }
         tensor
     } else {
-        // COW: allocate new buffer
+        // Allocate new buffer for non-contiguous
         neg_copy(&tensor)
     }
 }
@@ -60,16 +60,21 @@ fn neg_inplace(mut tensor: EmberTensor) -> EmberTensor {
 
 ### Output Buffer Reuse
 
-For binary ops, reuse input buffer when possible:
+For binary ops, reuse lhs buffer when contiguous at offset 0:
 
 ```rust
-fn add(lhs: EmberTensor, rhs: &EmberTensor) -> EmberTensor {
-    if lhs.data.is_unique() && lhs.is_contiguous() && lhs.shape() == rhs.shape() {
-        // Reuse lhs buffer
-        add_into(lhs, rhs)
-    } else {
-        add_alloc(&lhs, rhs)
+fn add(mut lhs: EmberTensor, rhs: &EmberTensor) -> EmberTensor {
+    if let Some((0, l_end)) = lhs.layout().contiguous_offsets() {
+        if let Some((r_start, r_end)) = rhs.layout().contiguous_offsets() {
+            let lhs_storage: &mut [f32] = lhs.storage_mut();
+            let rhs_storage: &[f32] = rhs.storage();
+            for (l, &r) in lhs_storage[..l_end].iter_mut().zip(&rhs_storage[r_start..r_end]) {
+                *l = *l + r;
+            }
+            return lhs;
+        }
     }
+    add_alloc(&lhs, rhs)
 }
 ```
 
@@ -78,8 +83,46 @@ fn add(lhs: EmberTensor, rhs: &EmberTensor) -> EmberTensor {
 Only allocate when necessary:
 
 - Shape changes (broadcast, concat, reshape of non-contiguous)
-- Multiple references to input (`!is_unique()`)
 - Non-contiguous input that must become contiguous
+- Views/slices with non-zero offset
+
+### Thread-Safe Reference Counting (Future)
+
+Current implementation uses `Bytes` directly. For proper COW with cheap clones
+(like burn-ndarray's `ArcArray`), wrap storage with `Arc`:
+
+```rust
+pub struct EmberStorage {
+    data: Arc<Bytes>,
+}
+
+impl EmberStorage {
+    /// Thread-safe uniqueness check for in-place optimization
+    pub fn is_unique(&self) -> bool {
+        Arc::strong_count(&self.data) == 1
+    }
+
+    /// COW: clone data if shared, return mutable access
+    pub fn make_mut(&mut self) -> &mut Bytes {
+        Arc::make_mut(&mut self.data)
+    }
+}
+```
+
+Benefits:
+- Cheap clones (`Arc::clone` is just refcount increment)
+- Thread-safe sharing (`Arc` is `Send + Sync`)
+- COW via `Arc::make_mut` (clones only when shared)
+- `is_unique()` enables smarter in-place decisions
+
+This would enable the pattern:
+```rust
+if storage.is_unique() && tensor.is_contiguous() {
+    // mutate in place
+} else {
+    // allocate new
+}
+```
 
 ---
 
@@ -140,13 +183,14 @@ pub struct EmberTensor {
 }
 
 impl EmberTensor {
-    /// Cast to typed slice for operations (zero-cost, just pointer reinterpret)
-    pub fn as_slice<T: Element>(&self) -> &[T] {
-        self.data.as_slice()
+    /// Zero-copy typed view of full storage (for use with StridedIter)
+    pub fn storage<E: Element + bytemuck::Pod>(&self) -> &[E] {
+        bytemuck::cast_slice(&self.data)
     }
 
-    pub fn as_slice_mut<T: Element>(&mut self) -> &mut [T] {
-        self.data.as_mut_slice()
+    /// Mutable typed view for in-place operations
+    pub fn storage_mut<E: Element + bytemuck::Pod>(&mut self) -> &mut [E] {
+        bytemuck::cast_slice_mut(&mut self.data)
     }
 }
 ```

@@ -6,7 +6,9 @@ use burn_backend::{
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
 use burn_std::{Shape, Slice};
+use num_traits::ToPrimitive;
 
+use crate::ops::binary::{binary_op, scalar_op};
 use crate::{Ember, EmberTensor};
 
 impl FloatTensorOps<Ember> for Ember {
@@ -44,36 +46,40 @@ impl FloatTensorOps<Ember> for Ember {
         EmberTensor::empty(shape, dtype.into())
     }
 
-    fn float_add(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_add")
+    fn float_add(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        binary_op(lhs, rhs, |a, b| a + b, |a, b| a + b)
     }
 
-    fn float_add_scalar(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> FloatTensor<Ember> {
-        todo!("float_add_scalar")
+    fn float_add_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
+        let rhs_val = rhs.to_f64().unwrap();
+        scalar_op(lhs, rhs_val, |a, b| a + b, |a, b| a + b)
     }
 
-    fn float_sub(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_sub")
+    fn float_sub(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        binary_op(lhs, rhs, |a, b| a - b, |a, b| a - b)
     }
 
-    fn float_sub_scalar(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> FloatTensor<Ember> {
-        todo!("float_sub_scalar")
+    fn float_sub_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
+        let rhs_val = rhs.to_f64().unwrap();
+        scalar_op(lhs, rhs_val, |a, b| a - b, |a, b| a - b)
     }
 
-    fn float_mul(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_mul")
+    fn float_mul(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        binary_op(lhs, rhs, |a, b| a * b, |a, b| a * b)
     }
 
-    fn float_mul_scalar(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> FloatTensor<Ember> {
-        todo!("float_mul_scalar")
+    fn float_mul_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
+        let rhs_val = rhs.to_f64().unwrap();
+        scalar_op(lhs, rhs_val, |a, b| a * b, |a, b| a * b)
     }
 
-    fn float_div(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_div")
+    fn float_div(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        binary_op(lhs, rhs, |a, b| a / b, |a, b| a / b)
     }
 
-    fn float_div_scalar(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> FloatTensor<Ember> {
-        todo!("float_div_scalar")
+    fn float_div_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
+        let rhs_val = rhs.to_f64().unwrap();
+        scalar_op(lhs, rhs_val, |a, b| a / b, |a, b| a / b)
     }
 
     fn float_remainder(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
@@ -372,5 +378,76 @@ impl FloatTensorOps<Ember> for Ember {
         _step: usize,
     ) -> FloatTensor<Ember> {
         todo!("float_unfold")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use burn_tensor::{Tensor, TensorData};
+
+    use crate::Ember;
+
+    #[test]
+    fn test_add_tensors() {
+        let a: Tensor<Ember, 2> =
+            Tensor::from_data([[1.0f32, 2.0], [3.0, 4.0]], &Default::default());
+        let b: Tensor<Ember, 2> =
+            Tensor::from_data([[5.0f32, 6.0], [7.0, 8.0]], &Default::default());
+
+        let result = a + b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([[6.0f32, 8.0], [10.0, 12.0]]));
+    }
+
+    #[test]
+    fn test_sub_tensors() {
+        let a: Tensor<Ember, 1> = Tensor::from_data([10.0f32, 20.0, 30.0], &Default::default());
+        let b: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 2.0, 3.0], &Default::default());
+
+        let result = a - b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([9.0f32, 18.0, 27.0]));
+    }
+
+    #[test]
+    fn test_mul_tensors() {
+        let a: Tensor<Ember, 1> = Tensor::from_data([2.0f32, 3.0, 4.0], &Default::default());
+        let b: Tensor<Ember, 1> = Tensor::from_data([5.0f32, 6.0, 7.0], &Default::default());
+
+        let result = a * b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([10.0f32, 18.0, 28.0]));
+    }
+
+    #[test]
+    fn test_div_tensors() {
+        let a: Tensor<Ember, 1> = Tensor::from_data([10.0f32, 20.0, 30.0], &Default::default());
+        let b: Tensor<Ember, 1> = Tensor::from_data([2.0f32, 4.0, 5.0], &Default::default());
+
+        let result = a / b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([5.0f32, 5.0, 6.0]));
+    }
+
+    #[test]
+    fn test_add_scalar() {
+        let a: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 2.0, 3.0], &Default::default());
+        let result = a + 10.0;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([11.0f32, 12.0, 13.0]));
+    }
+
+    #[test]
+    fn test_mul_scalar() {
+        let a: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 2.0, 3.0], &Default::default());
+        let result = a * 3.0;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([3.0f32, 6.0, 9.0]));
     }
 }

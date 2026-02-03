@@ -19,6 +19,7 @@ burn-std = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
 burn-tensor = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
 half = { version = "2", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 
 # xtask
 tracel-xtask = "=4.12.3"

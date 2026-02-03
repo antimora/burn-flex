@@ -83,23 +83,52 @@ impl EmberTensor {
         self.layout.is_contiguous()
     }
 
+    /// Zero-copy typed view of the full storage buffer.
+    ///
+    /// Use with `StridedIter` for non-contiguous access, or with
+    /// `layout().contiguous_offsets()` for the contiguous fast path.
+    ///
+    /// # Panics
+    /// Debug-asserts if `E::dtype()` doesn't match the tensor's dtype.
+    pub fn storage<E: Element + bytemuck::Pod>(&self) -> &[E] {
+        debug_assert_eq!(
+            E::dtype(),
+            self.dtype,
+            "storage: dtype mismatch (expected {:?}, got {:?})",
+            self.dtype,
+            E::dtype()
+        );
+        bytemuck::cast_slice(&self.data)
+    }
+
+    /// Mutable typed view of the full storage buffer.
+    ///
+    /// For in-place operations when you own the tensor.
+    ///
+    /// # Panics
+    /// Debug-asserts if `E::dtype()` doesn't match the tensor's dtype.
+    pub fn storage_mut<E: Element + bytemuck::Pod>(&mut self) -> &mut [E] {
+        debug_assert_eq!(
+            E::dtype(),
+            self.dtype,
+            "storage_mut: dtype mismatch (expected {:?}, got {:?})",
+            self.dtype,
+            E::dtype()
+        );
+        bytemuck::cast_slice_mut(&mut self.data)
+    }
+
     /// Get typed slice view (zero-cost if contiguous and offset is 0).
     ///
-    /// Returns None if dtype doesn't match E.
+    /// Returns None if dtype doesn't match E or tensor is non-contiguous.
     pub fn as_slice<E: Element + bytemuck::Pod>(&self) -> Option<&[E]> {
         if E::dtype() != self.dtype {
             return None;
         }
-
-        // Cast bytes to typed slice
-        let all_elements: &[E] = bytemuck::cast_slice(&self.data);
-
-        if let Some((start, end)) = self.layout.contiguous_offsets() {
-            Some(&all_elements[start..end])
-        } else {
-            // For non-contiguous, caller should use iterator or copy first
-            None
-        }
+        let storage: &[E] = self.storage();
+        self.layout
+            .contiguous_offsets()
+            .map(|(start, end)| &storage[start..end])
     }
 
     /// Create an empty tensor with given shape and dtype.
