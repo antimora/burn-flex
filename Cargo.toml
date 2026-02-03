@@ -25,6 +25,9 @@ num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 # benchmarks
 divan = "0.1"
 
+# parallelism
+rayon = "1.10"
+
 # xtask
 tracel-xtask = "=4.12.3"
 strum = { version = "0.27.2", features = ["derive"] }

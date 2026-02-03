@@ -8,10 +8,22 @@ use crate::layout::Layout;
 use crate::strided_index::StridedIter;
 use crate::EmberTensor;
 
+#[cfg(feature = "simd")]
+use crate::simd;
+
+/// Operation type for SIMD dispatch.
+#[derive(Clone, Copy)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
 /// Apply a binary operation element-wise to two tensors.
 ///
-/// Requires tensors to have the same shape. Attempts in-place mutation
-/// when lhs is contiguous; otherwise allocates a new tensor.
+/// Requires tensors to have the same shape. Uses SIMD acceleration for f32
+/// when available and both tensors are contiguous.
 pub fn binary_op<F32Op, F64Op>(
     lhs: EmberTensor,
     rhs: EmberTensor,
@@ -32,7 +44,7 @@ where
     let dtype = lhs.dtype();
 
     match dtype {
-        DType::F32 => binary_op_typed(lhs, &rhs, f32_op),
+        DType::F32 => binary_op_f32(lhs, &rhs, f32_op),
         DType::F64 => binary_op_typed(lhs, &rhs, f64_op),
         DType::F16 => binary_op_half(lhs, &rhs, |a, b| {
             f16::from_f32(f32_op(a.to_f32(), b.to_f32()))
@@ -41,6 +53,74 @@ where
             bf16::from_f32(f32_op(a.to_f32(), b.to_f32()))
         }),
         _ => panic!("binary_op: unsupported dtype {:?}", dtype),
+    }
+}
+
+/// Specialized binary operation for f32 with SIMD fast path.
+#[cfg(feature = "simd")]
+fn binary_op_f32<Op>(mut lhs: EmberTensor, rhs: &EmberTensor, op: Op) -> EmberTensor
+where
+    Op: Fn(f32, f32) -> f32,
+{
+    // In-place SIMD fast path: lhs contiguous at offset 0, rhs contiguous
+    if let (Some((0, l_end)), Some((r_start, r_end))) = (
+        lhs.layout().contiguous_offsets(),
+        rhs.layout().contiguous_offsets(),
+    ) {
+        // Detect operation type
+        if let Some(simd_op) = detect_binary_op(&op) {
+            let r_slice: &[f32] = &rhs.storage()[r_start..r_end];
+
+            // Get mutable access to lhs storage
+            let lhs_storage: &mut [f32] = lhs.storage_mut();
+            let l_slice = &mut lhs_storage[..l_end];
+
+            // Use true in-place SIMD operations
+            match simd_op {
+                BinaryOp::Add => simd::add_inplace_f32(l_slice, r_slice),
+                BinaryOp::Sub => simd::sub_inplace_f32(l_slice, r_slice),
+                BinaryOp::Mul => simd::mul_inplace_f32(l_slice, r_slice),
+                BinaryOp::Div => simd::div_inplace_f32(l_slice, r_slice),
+            }
+            return lhs;
+        }
+    }
+
+    // Fallback to generic implementation
+    binary_op_typed(lhs, rhs, op)
+}
+
+/// Fallback when SIMD is disabled.
+#[cfg(not(feature = "simd"))]
+fn binary_op_f32<Op>(lhs: EmberTensor, rhs: &EmberTensor, op: Op) -> EmberTensor
+where
+    Op: Fn(f32, f32) -> f32,
+{
+    binary_op_typed(lhs, rhs, op)
+}
+
+/// Detect which binary operation is being performed by testing sample values.
+#[cfg(feature = "simd")]
+fn detect_binary_op<Op>(op: &Op) -> Option<BinaryOp>
+where
+    Op: Fn(f32, f32) -> f32,
+{
+    // Test with values that distinguish operations
+    let a = 6.0f32;
+    let b = 2.0f32;
+    let result = op(a, b);
+
+    // Check which operation matches
+    if (result - 8.0).abs() < 1e-6 {
+        Some(BinaryOp::Add) // 6 + 2 = 8
+    } else if (result - 4.0).abs() < 1e-6 {
+        Some(BinaryOp::Sub) // 6 - 2 = 4
+    } else if (result - 12.0).abs() < 1e-6 {
+        Some(BinaryOp::Mul) // 6 * 2 = 12
+    } else if (result - 3.0).abs() < 1e-6 {
+        Some(BinaryOp::Div) // 6 / 2 = 3
+    } else {
+        None // Unknown operation, use generic path
     }
 }
 
@@ -646,5 +726,153 @@ mod tests {
 
         let expected: Vec<f32> = vec![-1.0, -2.0, -3.0];
         assert_eq!(data.as_slice::<f32>().unwrap(), expected.as_slice());
+    }
+
+    // ===================
+    // F16 tests
+    // ===================
+
+    #[test]
+    fn test_binary_add_f16() {
+        let a_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(f16::from_f32).collect();
+        let b_vals: Vec<f16> = vec![5.0, 6.0, 7.0, 8.0].into_iter().map(f16::from_f32).collect();
+
+        let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
+        let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
+
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let data = result.into_data();
+        let result_slice = data.as_slice::<f16>().unwrap();
+
+        let expected: Vec<f16> = vec![6.0, 8.0, 10.0, 12.0].into_iter().map(f16::from_f32).collect();
+        for (r, e) in result_slice.iter().zip(expected.iter()) {
+            assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_binary_mul_f16() {
+        let a_vals: Vec<f16> = vec![2.0, 3.0, 4.0, 5.0].into_iter().map(f16::from_f32).collect();
+        let b_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(f16::from_f32).collect();
+
+        let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
+        let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
+
+        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
+        let data = result.into_data();
+        let result_slice = data.as_slice::<f16>().unwrap();
+
+        let expected: Vec<f16> = vec![2.0, 6.0, 12.0, 20.0].into_iter().map(f16::from_f32).collect();
+        for (r, e) in result_slice.iter().zip(expected.iter()) {
+            assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_binary_f16_transposed() {
+        let a_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(f16::from_f32).collect();
+        let b_vals: Vec<f16> = vec![10.0, 20.0, 30.0, 40.0].into_iter().map(f16::from_f32).collect();
+
+        let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2])).transpose(0, 1);
+        let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2])).transpose(0, 1);
+
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let data = result.into_data();
+        let result_slice = data.as_slice::<f16>().unwrap();
+
+        // a_t = [[1,3], [2,4]], b_t = [[10,30], [20,40]]
+        // result = [[11,33], [22,44]]
+        let expected: Vec<f16> = vec![11.0, 33.0, 22.0, 44.0].into_iter().map(f16::from_f32).collect();
+        for (r, e) in result_slice.iter().zip(expected.iter()) {
+            assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
+        }
+    }
+
+    #[test]
+    fn test_scalar_f16() {
+        let a_vals: Vec<f16> = vec![1.0, 2.0, 3.0].into_iter().map(f16::from_f32).collect();
+        let a = EmberTensor::from_data(TensorData::new(a_vals, vec![3]));
+
+        let result = scalar_op(a, 10.0, |x, y| x + y, |x, y| x + y);
+        let data = result.into_data();
+        let result_slice = data.as_slice::<f16>().unwrap();
+
+        let expected: Vec<f16> = vec![11.0, 12.0, 13.0].into_iter().map(f16::from_f32).collect();
+        for (r, e) in result_slice.iter().zip(expected.iter()) {
+            assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
+        }
+    }
+
+    // ===================
+    // BF16 tests
+    // ===================
+
+    #[test]
+    fn test_binary_add_bf16() {
+        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(bf16::from_f32).collect();
+        let b_vals: Vec<bf16> = vec![5.0, 6.0, 7.0, 8.0].into_iter().map(bf16::from_f32).collect();
+
+        let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
+        let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
+
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let data = result.into_data();
+        let result_slice = data.as_slice::<bf16>().unwrap();
+
+        let expected: Vec<bf16> = vec![6.0, 8.0, 10.0, 12.0].into_iter().map(bf16::from_f32).collect();
+        for (r, e) in result_slice.iter().zip(expected.iter()) {
+            assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
+        }
+    }
+
+    #[test]
+    fn test_binary_mul_bf16() {
+        let a_vals: Vec<bf16> = vec![2.0, 3.0, 4.0, 5.0].into_iter().map(bf16::from_f32).collect();
+        let b_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(bf16::from_f32).collect();
+
+        let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
+        let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
+
+        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
+        let data = result.into_data();
+        let result_slice = data.as_slice::<bf16>().unwrap();
+
+        let expected: Vec<bf16> = vec![2.0, 6.0, 12.0, 20.0].into_iter().map(bf16::from_f32).collect();
+        for (r, e) in result_slice.iter().zip(expected.iter()) {
+            assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
+        }
+    }
+
+    #[test]
+    fn test_binary_bf16_transposed() {
+        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(bf16::from_f32).collect();
+        let b_vals: Vec<bf16> = vec![10.0, 20.0, 30.0, 40.0].into_iter().map(bf16::from_f32).collect();
+
+        let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2])).transpose(0, 1);
+        let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2])).transpose(0, 1);
+
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let data = result.into_data();
+        let result_slice = data.as_slice::<bf16>().unwrap();
+
+        let expected: Vec<bf16> = vec![11.0, 33.0, 22.0, 44.0].into_iter().map(bf16::from_f32).collect();
+        for (r, e) in result_slice.iter().zip(expected.iter()) {
+            assert!((r.to_f32() - e.to_f32()).abs() < 0.5);
+        }
+    }
+
+    #[test]
+    fn test_scalar_bf16() {
+        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0].into_iter().map(bf16::from_f32).collect();
+        let a = EmberTensor::from_data(TensorData::new(a_vals, vec![3]));
+
+        let result = scalar_op(a, 10.0, |x, y| x + y, |x, y| x + y);
+        let data = result.into_data();
+        let result_slice = data.as_slice::<bf16>().unwrap();
+
+        let expected: Vec<bf16> = vec![11.0, 12.0, 13.0].into_iter().map(bf16::from_f32).collect();
+        for (r, e) in result_slice.iter().zip(expected.iter()) {
+            assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
+        }
     }
 }

@@ -14,8 +14,10 @@ exclude = ["*.md"]
 workspace = true
 
 [features]
-default = ["std"]
+default = ["std", "simd"]
 std = []
+simd = []  # Enable SIMD optimizations (NEON/AVX2)
+rayon = ["dep:rayon"]  # Enable parallel execution for large tensors
 
 [dependencies]
 burn-backend = { workspace = true }
@@ -23,6 +25,7 @@ burn-std = { workspace = true }
 half = { workspace = true }
 bytemuck = { workspace = true }
 num-traits = { workspace = true }
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 burn-tensor = { workspace = true }

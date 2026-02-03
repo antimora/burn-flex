@@ -276,6 +276,7 @@ dependencies = [
  "divan",
  "half",
  "num-traits",
+ "rayon",
 ]
 
 [[package]]
