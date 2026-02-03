@@ -105,6 +105,13 @@ impl Layout {
 
     /// Narrow/slice along a dimension (zero-copy, metadata only).
     pub fn narrow(&self, dim: usize, start: usize, len: usize) -> Self {
+        debug_assert!(
+            start + len <= self.shape.dims[dim],
+            "narrow: start ({}) + len ({}) exceeds dimension size ({})",
+            start,
+            len,
+            self.shape.dims[dim]
+        );
         let mut dims = self.shape.dims.clone();
         dims[dim] = len;
         Self {
@@ -114,11 +121,11 @@ impl Layout {
         }
     }
 
-    /// Reshape to a new shape. Only works if contiguous.
+    /// Reshape to a new shape. Only works if contiguous with zero offset.
     ///
-    /// Returns None if not contiguous (would require data copy).
+    /// Returns None if not contiguous or has non-zero offset (would require data copy).
     pub fn reshape(&self, new_shape: Shape) -> Option<Self> {
-        if !self.is_contiguous() {
+        if !self.is_contiguous() || self.start_offset != 0 {
             return None;
         }
         debug_assert_eq!(
