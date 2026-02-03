@@ -20,7 +20,7 @@ on:
       - '!**.md'
 
 env:
-  RUST_PREVIOUS_VERSION: 1.85.0
+  RUST_PREVIOUS_VERSION: 1.92.0
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
