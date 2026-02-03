@@ -88,8 +88,8 @@ Only allocate when necessary:
 
 ### Thread-Safe Reference Counting (Future)
 
-Current implementation uses `Bytes` directly. For proper COW with cheap clones
-(like burn-ndarray's `ArcArray`), wrap storage with `Arc`:
+Current implementation uses `Bytes` directly. For proper COW with cheap clones (like burn-ndarray's
+`ArcArray`), wrap storage with `Arc`:
 
 ```rust
 pub struct EmberStorage {
@@ -110,12 +110,14 @@ impl EmberStorage {
 ```
 
 Benefits:
+
 - Cheap clones (`Arc::clone` is just refcount increment)
 - Thread-safe sharing (`Arc` is `Send + Sync`)
 - COW via `Arc::make_mut` (clones only when shared)
 - `is_unique()` enables smarter in-place decisions
 
 This would enable the pattern:
+
 ```rust
 if storage.is_unique() && tensor.is_contiguous() {
     // mutate in place
@@ -321,6 +323,38 @@ pub fn matmul<T: faer::RealField>(
     );
 }
 ```
+
+---
+
+## Optimization Decisions
+
+### Implemented
+
+| Optimization               | Benefit                             | Notes                                        |
+| -------------------------- | ----------------------------------- | -------------------------------------------- |
+| **SIMD (NEON)**            | ~1.5-1.7x for contiguous ops        | In-place mutation avoids allocation overhead |
+| **Rayon parallelism**      | Scales with cores for large tensors | Threshold: 4M elements (memory-bound ops)    |
+| **Row-based 2D iteration** | 5.9x faster for transposed tensors  | Replaces per-element StridedIter             |
+| **In-place mutation**      | Eliminates allocation               | When lhs is contiguous at offset 0           |
+
+### Considered but Skipped
+
+| Optimization                     | Why Skipped                                                                                                                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cache blocking / loop tiling** | Requires architecture-specific tile sizes. M3 has 128KB L1, but optimal tile size varies by operation, data type, and cache hierarchy. Adds complexity without portable benefit.              |
+| **Software prefetching**         | ARM64 `_prefetch` intrinsic is unstable (requires nightly Rust). Apple Silicon has excellent hardware prefetchers that detect strided access patterns automatically. Benefit likely marginal. |
+| **Kernel fusion**                | Outside burn-ember scope. Fusion is handled at the Burn framework level via `burn-fusion`. This backend focuses on single-operation efficiency.                                               |
+| **AVX2/AVX-512 (x86_64)**        | Not yet implemented. NEON is primary target; x86 support uses scalar fallback for now.                                                                                                        |
+
+### Why Element-wise Ops are Memory-Bound
+
+Element-wise operations (add, mul, etc.) perform ~1 FLOP per 4-8 bytes loaded. Modern CPUs can
+execute 100+ FLOPs in the time it takes to load one cache line from RAM. This means:
+
+1. **SIMD helps marginally** - Reduces instruction count but doesn't change memory bandwidth
+2. **Avoiding allocation matters more** - In-place mutation eliminates write-allocate traffic
+3. **Simple loops auto-vectorize** - Compiler generates good SIMD code for predictable patterns
+4. **Hardware prefetchers are effective** - M3 detects sequential and strided patterns automatically
 
 ---
 
