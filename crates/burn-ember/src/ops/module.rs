@@ -82,22 +82,49 @@ impl ModuleOps<Ember> for Ember {
         }
     }
 
-    fn conv_transpose2d(
-        _x: FloatTensor<Ember>,
-        _weight: FloatTensor<Ember>,
-        _bias: Option<FloatTensor<Ember>>,
-        _options: ConvTransposeOptions<2>,
+    fn conv_transpose1d(
+        x: FloatTensor<Ember>,
+        weight: FloatTensor<Ember>,
+        bias: Option<FloatTensor<Ember>>,
+        options: ConvTransposeOptions<1>,
     ) -> FloatTensor<Ember> {
-        todo!("conv_transpose2d")
+        match x.dtype() {
+            DType::F32 => conv::conv_transpose1d_f32(x, weight, bias, &options),
+            DType::F64 => conv::conv_transpose1d_f64(x, weight, bias, &options),
+            DType::F16 => conv::conv_transpose1d_f16(x, weight, bias, &options),
+            DType::BF16 => conv::conv_transpose1d_bf16(x, weight, bias, &options),
+            dtype => panic!("conv_transpose1d: unsupported dtype {:?}", dtype),
+        }
+    }
+
+    fn conv_transpose2d(
+        x: FloatTensor<Ember>,
+        weight: FloatTensor<Ember>,
+        bias: Option<FloatTensor<Ember>>,
+        options: ConvTransposeOptions<2>,
+    ) -> FloatTensor<Ember> {
+        match x.dtype() {
+            DType::F32 => conv::conv_transpose2d_f32(x, weight, bias, &options),
+            DType::F64 => conv::conv_transpose2d_f64(x, weight, bias, &options),
+            DType::F16 => conv::conv_transpose2d_f16(x, weight, bias, &options),
+            DType::BF16 => conv::conv_transpose2d_bf16(x, weight, bias, &options),
+            dtype => panic!("conv_transpose2d: unsupported dtype {:?}", dtype),
+        }
     }
 
     fn conv_transpose3d(
-        _x: FloatTensor<Ember>,
-        _weight: FloatTensor<Ember>,
-        _bias: Option<FloatTensor<Ember>>,
-        _options: ConvTransposeOptions<3>,
+        x: FloatTensor<Ember>,
+        weight: FloatTensor<Ember>,
+        bias: Option<FloatTensor<Ember>>,
+        options: ConvTransposeOptions<3>,
     ) -> FloatTensor<Ember> {
-        todo!("conv_transpose3d")
+        match x.dtype() {
+            DType::F32 => conv::conv_transpose3d_f32(x, weight, bias, &options),
+            DType::F64 => conv::conv_transpose3d_f64(x, weight, bias, &options),
+            DType::F16 => conv::conv_transpose3d_f16(x, weight, bias, &options),
+            DType::BF16 => conv::conv_transpose3d_bf16(x, weight, bias, &options),
+            dtype => panic!("conv_transpose3d: unsupported dtype {:?}", dtype),
+        }
     }
 
     fn avg_pool2d(
