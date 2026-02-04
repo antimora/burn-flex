@@ -13,10 +13,10 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Binary Ops      | 11         | 0            | 0     |
 | Matrix Multiply | 16         | 5            | 1     |
 | Slice Ops       | 18         | 0            | 0     |
-| Reduce Ops      | 12         | 4            | 0     |
+| Reduce Ops      | 16         | 0            | 0     |
 | Unary Ops       | 15         | 0            | 4     |
 | Comparison Ops  | 13         | 4            | 0     |
-| **Total**       | **85**     | **13**       | **5** |
+| **Total**       | **89**     | **9**        | **5** |
 
 ---
 
@@ -161,60 +161,60 @@ while NdArray copies data. This gives orders of magnitude speedup for large tens
 
 ## Reduce Operations
 
-Sum, mean, argmax reductions with portable SIMD via pulp.
+Sum, mean, argmax reductions with 8-fold unrolled loops (LLVM auto-vectorizes).
 
 ### Full Tensor Sum
 
 | Size | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | ---- | ---------- | ------------ | -------- | --------- | ----------- |
-| 1K   | 261 ns     | 388 ns       | **1.5x** | 104 B     | 8.3 KB      |
-| 64K  | 11.6 us    | 15.4 us      | **1.3x** | 104 B     | 524 KB      |
-| 1M   | 38.5 us    | 227 us       | **5.9x** | 104 B     | 8.4 MB      |
+| 1K   | 190 ns     | 400 ns       | **2.1x** | 104 B     | 8.3 KB      |
+| 64K  | 6.2 us     | 15.5 us      | **2.5x** | 104 B     | 524 KB      |
+| 1M   | 57 us      | 227 us       | **4.0x** | 104 B     | 8.4 MB      |
 
 ### Sum Along Dimension
 
 | Shape     | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
-| 256x256   | 0   | 5.1 us     | 21 us        | **4.1x** | 2.2 KB    | 524 KB      |
-| 256x256   | 1   | 6.1 us     | 13.8 us      | **2.3x** | 1.2 KB    | 524 KB      |
-| 1024x1024 | 0   | 81 us      | 215 us       | **2.7x** | 8.3 KB    | 8.4 MB      |
-| 1024x1024 | 1   | 138 us     | 210 us       | **1.5x** | 4.2 KB    | 8.4 MB      |
+| 256x256   | 0   | 5.2 us     | 21 us        | **4.0x** | 2.2 KB    | 524 KB      |
+| 256x256   | 1   | 4.2 us     | 13.5 us      | **3.2x** | 1.2 KB    | 524 KB      |
+| 1024x1024 | 0   | 81 us      | 217 us       | **2.7x** | 8.3 KB    | 8.4 MB      |
+| 1024x1024 | 1   | 79 us      | 214 us       | **2.7x** | 4.2 KB    | 8.4 MB      |
 
 ### 3D Sum (Batched)
 
 | Shape      | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | ---------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
-| 32x256x256 | 1   | 150 us     | 530 us       | **3.5x** | 65.7 KB   | 16.8 MB     |
-| 32x256x256 | 2   | 187 us     | 366 us       | **2.0x** | 32.9 KB   | 16.8 MB     |
+| 32x256x256 | 1   | 150 us     | 534 us       | **3.6x** | 65.7 KB   | 16.8 MB     |
+| 32x256x256 | 2   | 131 us     | 364 us       | **2.8x** | 32.9 KB   | 16.8 MB     |
 
 ### Sum Transposed (total sum)
 
 | Size      | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | --------- | ---------- | ------------ | -------- | --------- | ----------- |
-| 256x256   | 11.4 us    | 6.4 us       | 0.6x     | 120 B     | 44 B        |
-| 1024x1024 | 44.6 us    | 98 us        | **2.2x** | 120 B     | 44 B        |
+| 256x256   | 6.0 us     | 6.5 us       | **1.0x** | 120 B     | 44 B        |
+| 1024x1024 | 57 us      | 98 us        | **1.7x** | 120 B     | 44 B        |
 
 ### Sum Dim on Transposed Tensor
 
-| Size      | Dim | Ember Time | NdArray Time | Speedup |
-| --------- | --- | ---------- | ------------ | ------- |
-| 256x256   | 0   | 5.8 us     | 4.5 us       | 0.8x    |
-| 1024x1024 | 0   | 140 us     | 84 us        | 0.6x    |
+| Size      | Dim | Ember Time | NdArray Time | Speedup  |
+| --------- | --- | ---------- | ------------ | -------- |
+| 256x256   | 0   | 3.9 us     | 4.5 us       | **1.2x** |
+| 1024x1024 | 0   | 79 us      | 82 us        | **1.0x** |
 
 ### Mean Along Dimension
 
 | Shape     | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
-| 256x256   | 1   | 5.8 us     | 13.6 us      | **2.3x** | 1.2 KB    | 524 KB      |
-| 1024x1024 | 1   | 137 us     | 214 us       | **1.6x** | 4.2 KB    | 8.4 MB      |
+| 256x256   | 1   | 4.3 us     | 13.6 us      | **3.2x** | 1.2 KB    | 524 KB      |
+| 1024x1024 | 1   | 85 us      | 216 us       | **2.5x** | 4.2 KB    | 8.4 MB      |
 
 ### Argmax
 
 | Shape     | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
-| 1K (flat) | -   | 3.4 us     | 4.3 us       | **1.3x** | 104 B     | 8.3 KB      |
-| 256x256   | 1   | 212 us     | 247 us       | **1.2x** | 2.2 KB    | 524 KB      |
-| 1024x1024 | 1   | 3.39 ms    | 4.0 ms       | **1.2x** | 8.3 KB    | 8.4 MB      |
+| 1K (flat) | -   | 3.4 us     | 4.2 us       | **1.2x** | 104 B     | 8.3 KB      |
+| 256x256   | 1   | 221 us     | 250 us       | **1.1x** | 2.2 KB    | 524 KB      |
+| 1024x1024 | 1   | 3.34 ms    | 4.0 ms       | **1.2x** | 8.3 KB    | 8.4 MB      |
 
 ---
 
@@ -335,9 +335,8 @@ Element-wise comparisons with NEON SIMD optimization for f32.
 
 ### Areas for Improvement
 
-1. **Transposed sum**: NdArray slightly faster on small transposed tensor sums
-2. **Boolean ops**: NdArray ~20% faster on bool_not
-3. **Integer matmul**: Both backends similar; neither has SIMD optimization
+1. **Boolean ops**: NdArray ~20% faster on bool_not
+2. **Integer matmul**: Both backends similar; neither has SIMD optimization
 
 ### Arc-based COW Analysis
 
@@ -372,6 +371,20 @@ run single-threaded even on large matrices. With rayon enabled:
 - Previously without rayon: 19.5ms (Ember) vs 5.9ms (NdArray) = 0.3x (regression)
 
 The fix was adding `rayon` to default features in Cargo.toml.
+
+### Sum Optimization Summary
+
+Root cause of transposed sum regression: pulp SIMD dispatch had ~2x overhead vs ndarray's 8-fold
+unrolled loop that LLVM auto-vectorizes.
+
+Investigation found:
+- ndarray uses simple 8-fold unrolled accumulator: `p0+=xs[0]; p1+=xs[1]; ... p7+=xs[7]`
+- LLVM recognizes this pattern and emits optimal SIMD code
+- pulp dispatch overhead (arch detection, slice splitting, horizontal reduction) was significant
+
+The fix replaced pulp-based sum with 8-fold unrolled loops:
+- sum_transposed 256x256: 11.4us -> 6.0us (0.6x -> 1.0x vs NdArray)
+- sum_dim_transposed 1024x1024: 140us -> 79us (0.6x -> 1.0x vs NdArray)
 
 ---
 
