@@ -150,9 +150,15 @@ Integer matmul uses naive triple-loop with SIMD dot product (no gemm equivalent 
 
 For 2D matrices, Ember is competitive with NdArray. The SIMD-optimized dot product with rhs transpose provides good performance for single matrix operations.
 
-For batched operations, NdArray is significantly faster. This is likely due to NdArray using more optimized BLAS-like routines internally. Ember's naive approach with per-batch transpose has higher overhead.
+For batched operations, NdArray is faster due to better cache utilization in its generic matmul implementation. No high-performance integer GEMM exists in pure Rust (gemm/matrixmultiply only support f32/f64).
 
-**Future optimization:** Tiled/blocked matrix multiplication would improve cache utilization for both 2D and batched cases.
+**Approaches tested:**
+1. Naive triple-loop with SIMD dot product
+2. Upfront transpose of entire rhs tensor
+3. gemm via f32 conversion (conversion overhead dominated)
+4. Batch-level rayon parallelism
+
+**Future optimization:** Cache-blocked (tiled) matmul would improve locality for both 2D and batched cases.
 
 ### Analysis
 

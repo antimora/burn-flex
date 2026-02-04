@@ -942,6 +942,8 @@ fn dot_i32_neon(a: &[i32], b: &[i32]) -> i32 {
 }
 
 /// Batched i32 matmul: [B..., M, K] x [B..., K, N] -> [B..., M, N]
+///
+/// Uses naive triple-loop with SIMD dot product and batch-level parallelism.
 fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
@@ -969,35 +971,38 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let lhs_data: &[i32] = lhs.storage();
     let rhs_data: &[i32] = rhs.storage();
 
+    // Transpose entire rhs tensor once: [B, K, N] -> [B, N, K]
+    let mut rhs_transposed = vec![0i32; batch_size * n * k];
+    for b in 0..batch_size {
+        let src_offset = b * rhs_matrix_size;
+        let dst_offset = b * n * k;
+        for i in 0..k {
+            for j in 0..n {
+                rhs_transposed[dst_offset + j * k + i] = rhs_data[src_offset + i * n + j];
+            }
+        }
+    }
+
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
 
         let mut output = vec![0i32; batch_size * out_matrix_size];
 
-        // Parallel over batches using par_chunks_mut
         output
             .par_chunks_mut(out_matrix_size)
             .enumerate()
             .for_each(|(b, out_slice)| {
                 let lhs_offset = b * lhs_matrix_size;
-                let rhs_offset = b * rhs_matrix_size;
+                let rhs_t_offset = b * n * k;
 
-                // Transpose rhs [K, N] -> [N, K] for contiguous column access
-                let mut rhs_t = vec![0i32; k * n];
-                let rhs_slice = &rhs_data[rhs_offset..rhs_offset + rhs_matrix_size];
-                for i in 0..k {
-                    for j in 0..n {
-                        rhs_t[j * k + i] = rhs_slice[i * n + j];
-                    }
-                }
-
-                // Matmul with SIMD dot product
                 let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
+                let rhs_t_slice = &rhs_transposed[rhs_t_offset..rhs_t_offset + n * k];
+
                 for i in 0..m {
                     let lhs_row = &lhs_slice[i * k..(i + 1) * k];
                     for j in 0..n {
-                        let rhs_col = &rhs_t[j * k..(j + 1) * k];
+                        let rhs_col = &rhs_t_slice[j * k..(j + 1) * k];
                         out_slice[i * n + j] = dot_i32(lhs_row, rhs_col);
                     }
                 }
@@ -1014,28 +1019,18 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     {
         let mut output = vec![0i32; batch_size * out_matrix_size];
 
-        // Reusable buffer for transposed rhs per batch
-        let mut rhs_t = vec![0i32; k * n];
-
         for b in 0..batch_size {
             let lhs_offset = b * lhs_matrix_size;
-            let rhs_offset = b * rhs_matrix_size;
+            let rhs_t_offset = b * n * k;
             let out_offset = b * out_matrix_size;
 
-            // Transpose rhs [K, N] -> [N, K] for contiguous column access
-            let rhs_slice = &rhs_data[rhs_offset..rhs_offset + rhs_matrix_size];
-            for i in 0..k {
-                for j in 0..n {
-                    rhs_t[j * k + i] = rhs_slice[i * n + j];
-                }
-            }
-
-            // Matmul with SIMD dot product
             let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
+            let rhs_t_slice = &rhs_transposed[rhs_t_offset..rhs_t_offset + n * k];
+
             for i in 0..m {
                 let lhs_row = &lhs_slice[i * k..(i + 1) * k];
                 for j in 0..n {
-                    let rhs_col = &rhs_t[j * k..(j + 1) * k];
+                    let rhs_col = &rhs_t_slice[j * k..(j + 1) * k];
                     output[out_offset + i * n + j] = dot_i32(lhs_row, rhs_col);
                 }
             }
