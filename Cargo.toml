@@ -14,10 +14,11 @@ broken_intra_doc_links = "deny"
 invalid_html_tags = "deny"
 
 [workspace.dependencies]
-burn-backend = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
-burn-std = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
-burn-tensor = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
-burn-ndarray = { git = "https://github.com/tracel-ai/burn", version = "0.21" }
+# Use local worktree for compatibility with burn-backend-tests
+burn-backend = { path = "/Users/dilshod/Projects/burn-ember-worktree/crates/burn-backend" }
+burn-std = { path = "/Users/dilshod/Projects/burn-ember-worktree/crates/burn-std" }
+burn-tensor = { path = "/Users/dilshod/Projects/burn-ember-worktree/crates/burn-tensor" }
+burn-ndarray = { path = "/Users/dilshod/Projects/burn-ember-worktree/crates/burn-ndarray" }
 half = { version = "2", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }

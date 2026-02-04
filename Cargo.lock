@@ -234,7 +234,6 @@ checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 [[package]]
 name = "burn-autodiff"
 version = "0.21.0"
-source = "git+https://github.com/tracel-ai/burn#4e39d21a4f6152e9cd2623349ecc577e2fb7e831"
 dependencies = [
  "burn-backend",
  "burn-std",
@@ -249,7 +248,6 @@ dependencies = [
 [[package]]
 name = "burn-backend"
 version = "0.21.0"
-source = "git+https://github.com/tracel-ai/burn#4e39d21a4f6152e9cd2623349ecc577e2fb7e831"
 dependencies = [
  "burn-std",
  "bytemuck",
@@ -277,13 +275,13 @@ dependencies = [
  "gemm",
  "half",
  "num-traits",
+ "pulp",
  "rayon",
 ]
 
 [[package]]
 name = "burn-ir"
 version = "0.21.0"
-source = "git+https://github.com/tracel-ai/burn#4e39d21a4f6152e9cd2623349ecc577e2fb7e831"
 dependencies = [
  "burn-backend",
  "hashbrown 0.16.1",
@@ -293,7 +291,6 @@ dependencies = [
 [[package]]
 name = "burn-ndarray"
 version = "0.21.0"
-source = "git+https://github.com/tracel-ai/burn#4e39d21a4f6152e9cd2623349ecc577e2fb7e831"
 dependencies = [
  "atomic_float",
  "burn-autodiff",
@@ -319,7 +316,6 @@ dependencies = [
 [[package]]
 name = "burn-std"
 version = "0.21.0"
-source = "git+https://github.com/tracel-ai/burn#4e39d21a4f6152e9cd2623349ecc577e2fb7e831"
 dependencies = [
  "bytemuck",
  "bytes",
@@ -332,7 +328,6 @@ dependencies = [
 [[package]]
 name = "burn-tensor"
 version = "0.21.0"
-source = "git+https://github.com/tracel-ai/burn#4e39d21a4f6152e9cd2623349ecc577e2fb7e831"
 dependencies = [
  "burn-backend",
  "burn-std",

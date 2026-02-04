@@ -1,11 +1,20 @@
 //! SIMD-optimized kernels for tensor operations.
 //!
-//! Provides platform-specific SIMD implementations with scalar fallbacks.
+//! Provides portable SIMD implementations via `pulp` with automatic
+//! dispatch to the best available instruction set:
+//! - aarch64: NEON
+//! - x86_64: AVX2, AVX512, SSE
+//! - wasm32: SIMD128
+//! - Other: Scalar fallback
 //!
 //! Enable with the `simd` feature flag (enabled by default).
 
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
+
+// Portable SIMD kernels using pulp
+#[cfg(feature = "simd")]
+pub mod kernels;
 
 /// SIMD lane count for f32 on current platform.
 #[cfg(target_arch = "aarch64")]

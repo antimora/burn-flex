@@ -77,7 +77,7 @@ fn slice_copy_impl<E: Element + bytemuck::Pod + Default>(
                 None => dim_size as usize,
             };
             let len = if end > start {
-                (end - start + abs_step - 1) / abs_step
+                (end - start).div_ceil(abs_step)
             } else {
                 0
             };
@@ -90,12 +90,12 @@ fn slice_copy_impl<E: Element + bytemuck::Pod + Default>(
                 s => (s as usize).min((dim_size - 1).max(0) as usize),
             };
             let end = match slice.end {
-                Some(e) if e < 0 => (dim_size + e).max(-1) as isize,
-                Some(e) => (e as isize - 1).max(-1),
+                Some(e) if e < 0 => (dim_size + e).max(-1),
+                Some(e) => (e - 1).max(-1),
                 None => -1,
             };
             let len = if (start as isize) > end {
-                ((start as isize - end) as usize + abs_step - 1) / abs_step
+                ((start as isize - end) as usize).div_ceil(abs_step)
             } else {
                 0
             };
@@ -117,14 +117,7 @@ fn slice_copy_impl<E: Element + bytemuck::Pod + Default>(
 
     // Use recursive iteration for arbitrary dimensions
     let mut indices = vec![0usize; ndims];
-    copy_slice_recursive(
-        src,
-        src_layout,
-        &slice_info,
-        &mut out_data,
-        &mut indices,
-        0,
-    );
+    copy_slice_recursive(src, src_layout, &slice_info, &mut out_data, &mut indices, 0);
 
     let bytes = Bytes::from_elems(out_data);
     EmberTensor::new(bytes, out_layout, tensor.dtype())
@@ -157,7 +150,11 @@ fn copy_slice_recursive<E: Copy>(
 }
 
 /// Compute source index from output indices and slice info.
-fn compute_src_index(layout: &Layout, slice_info: &[(usize, usize, isize)], out_indices: &[usize]) -> usize {
+fn compute_src_index(
+    layout: &Layout,
+    slice_info: &[(usize, usize, isize)],
+    out_indices: &[usize],
+) -> usize {
     let mut idx = layout.start_offset();
     for (dim, &out_i) in out_indices.iter().enumerate() {
         let (start, _, step) = slice_info[dim];
@@ -182,11 +179,7 @@ fn normalize_index(idx: isize, dim_size: isize) -> usize {
 }
 
 /// Assign values to a slice of a tensor.
-pub fn slice_assign(
-    tensor: EmberTensor,
-    slices: &[Slice],
-    value: EmberTensor,
-) -> EmberTensor {
+pub fn slice_assign(tensor: EmberTensor, slices: &[Slice], value: EmberTensor) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => slice_assign_impl::<f32>(tensor, slices, value),
         DType::F64 => slice_assign_impl::<f64>(tensor, slices, value),
@@ -237,7 +230,10 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
     let dst = tensor.storage_mut::<E>();
 
     // Check if innermost dimension is contiguous (step=1)
-    let inner_contiguous = slice_info.last().map(|(_, _, step)| *step == 1).unwrap_or(false);
+    let inner_contiguous = slice_info
+        .last()
+        .map(|(_, _, step)| *step == 1)
+        .unwrap_or(false);
 
     if ndims == 1 {
         // 1D case: simple loop or memcpy
@@ -253,7 +249,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
                 } else {
                     (start as isize - (i as isize) * (-step)) as usize
                 };
-                dst[dst_i] = val_src[i].clone();
+                dst[dst_i] = val_src[i];
             }
         }
     } else if ndims == 2 && inner_contiguous {
@@ -338,7 +334,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
                 dst_offset += src_i * dst_strides[dim];
             }
 
-            dst[dst_offset] = val_src[val_idx].clone();
+            dst[dst_offset] = val_src[val_idx];
 
             // Increment indices (odometer style)
             for dim in (0..ndims).rev() {
@@ -366,7 +362,7 @@ fn compute_slice_info(slice: &Slice, dim_size: isize) -> (usize, usize, isize) {
             None => dim_size as usize,
         };
         let len = if end > start {
-            (end - start + abs_step - 1) / abs_step
+            (end - start).div_ceil(abs_step)
         } else {
             0
         };
@@ -377,12 +373,12 @@ fn compute_slice_info(slice: &Slice, dim_size: isize) -> (usize, usize, isize) {
             s => (s as usize).min((dim_size - 1).max(0) as usize),
         };
         let end = match slice.end {
-            Some(e) if e < 0 => (dim_size + e).max(-1) as isize,
-            Some(e) => (e as isize - 1).max(-1),
+            Some(e) if e < 0 => (dim_size + e).max(-1),
+            Some(e) => (e - 1).max(-1),
             None => -1,
         };
         let len = if (start as isize) > end {
-            ((start as isize - end) as usize + abs_step - 1) / abs_step
+            ((start as isize - end) as usize).div_ceil(abs_step)
         } else {
             0
         };
@@ -402,10 +398,7 @@ mod tests {
         let tensor = EmberTensor::from_data(TensorData::new(data, [2, 3]));
 
         // Slice [0:1, 1:3] -> [[1, 2]]
-        let slices = vec![
-            Slice::new(0, Some(1), 1),
-            Slice::new(1, Some(3), 1),
-        ];
+        let slices = vec![Slice::new(0, Some(1), 1), Slice::new(1, Some(3), 1)];
         let result = slice(tensor, &slices);
 
         assert_eq!(result.layout().shape().dims, vec![1, 2]);
@@ -482,11 +475,7 @@ mod tests {
     #[test]
     fn test_slice_assign_2d() {
         // Create a 3x3 tensor
-        let data: Vec<f32> = vec![
-            0.0, 1.0, 2.0,
-            3.0, 4.0, 5.0,
-            6.0, 7.0, 8.0,
-        ];
+        let data: Vec<f32> = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let tensor = EmberTensor::from_data(TensorData::new(data, [3, 3]));
 
         // Assign [[10, 11], [12, 13]] to [1:3, 1:3]
@@ -497,11 +486,10 @@ mod tests {
 
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
-        assert_eq!(values, vec![
-            0.0, 1.0, 2.0,
-            3.0, 10.0, 11.0,
-            6.0, 12.0, 13.0,
-        ]);
+        assert_eq!(
+            values,
+            vec![0.0, 1.0, 2.0, 3.0, 10.0, 11.0, 6.0, 12.0, 13.0,]
+        );
     }
 
     #[test]
@@ -518,10 +506,11 @@ mod tests {
 
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
-        assert_eq!(values, vec![
-            0.0, 1.0, 2.0, 3.0,
-            100.0, 101.0, 102.0, 103.0,
-            8.0, 9.0, 10.0, 11.0,
-        ]);
+        assert_eq!(
+            values,
+            vec![
+                0.0, 1.0, 2.0, 3.0, 100.0, 101.0, 102.0, 103.0, 8.0, 9.0, 10.0, 11.0,
+            ]
+        );
     }
 }

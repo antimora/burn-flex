@@ -20,9 +20,9 @@ fn main() {
 }
 
 // Tensor sizes for benchmarking
-const SMALL: usize = 64 * 64;        // 4K elements
-const MEDIUM: usize = 256 * 256;     // 64K elements
-const LARGE: usize = 1024 * 1024;    // 1M elements
+const SMALL: usize = 64 * 64; // 4K elements
+const MEDIUM: usize = 256 * 256; // 64K elements
+const LARGE: usize = 1024 * 1024; // 1M elements
 
 fn make_tensor<B: Backend>(size: usize) -> Tensor<B, 1> {
     let data: Vec<f32> = (0..size).map(|i| (i % 1000) as f32 / 1000.0).collect();
@@ -30,7 +30,9 @@ fn make_tensor<B: Backend>(size: usize) -> Tensor<B, 1> {
 }
 
 fn make_tensor_2d<B: Backend>(rows: usize, cols: usize) -> Tensor<B, 2> {
-    let data: Vec<f32> = (0..rows * cols).map(|i| (i % 1000) as f32 / 1000.0).collect();
+    let data: Vec<f32> = (0..rows * cols)
+        .map(|i| (i % 1000) as f32 / 1000.0)
+        .collect();
     Tensor::from_data(TensorData::new(data, [rows, cols]), &Default::default())
 }
 

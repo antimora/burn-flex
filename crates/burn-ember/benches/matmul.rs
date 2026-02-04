@@ -33,7 +33,10 @@ fn make_batch_matrix<B: Backend>(batch: usize, rows: usize, cols: usize) -> Tens
     let data: Vec<f32> = (0..batch * rows * cols)
         .map(|i| ((i % 1000) as f32 / 1000.0) - 0.5)
         .collect();
-    Tensor::from_data(TensorData::new(data, [batch, rows, cols]), &Default::default())
+    Tensor::from_data(
+        TensorData::new(data, [batch, rows, cols]),
+        &Default::default(),
+    )
 }
 
 macro_rules! bench_backend {
@@ -197,7 +200,10 @@ fn make_int_batch_matrix<B: Backend>(
     let data: Vec<i32> = (0..batch * rows * cols)
         .map(|i| (i % 1000) as i32 - 500)
         .collect();
-    Tensor::from_data(TensorData::new(data, [batch, rows, cols]), &Default::default())
+    Tensor::from_data(
+        TensorData::new(data, [batch, rows, cols]),
+        &Default::default(),
+    )
 }
 
 macro_rules! bench_int_backend {

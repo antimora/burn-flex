@@ -130,9 +130,9 @@ fn matmul_2d_strided_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
             n,
             k,
             out_data.as_mut_ptr(),
-            1,               // dst col stride (contiguous)
-            n as isize,      // dst row stride
-            false,           // don't read dst
+            1,          // dst col stride (contiguous)
+            n as isize, // dst row stride
+            false,      // don't read dst
             lhs_ptr,
             lhs_col_stride,
             lhs_row_stride,
@@ -212,16 +212,24 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
                 unsafe {
                     gemm::gemm(
-                        m, n, k,
+                        m,
+                        n,
+                        k,
                         out_data[out_offset..].as_mut_ptr(),
-                        1, n as isize,
+                        1,
+                        n as isize,
                         false,
                         lhs_data[lhs_offset..].as_ptr(),
-                        1, k as isize,
+                        1,
+                        k as isize,
                         rhs_data[rhs_offset..].as_ptr(),
-                        1, n as isize,
-                        0.0f32, 1.0f32,
-                        false, false, false,
+                        1,
+                        n as isize,
+                        0.0f32,
+                        1.0f32,
+                        false,
+                        false,
+                        false,
                         parallelism,
                     );
                 }
@@ -231,30 +239,39 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
             use rayon::prelude::*;
 
             // Split output into chunks, one per batch
-            let out_chunks: Vec<&mut [f32]> = out_data
-                .chunks_mut(out_matrix_size)
-                .collect();
+            let out_chunks: Vec<&mut [f32]> = out_data.chunks_mut(out_matrix_size).collect();
 
-            out_chunks.into_par_iter().enumerate().for_each(|(b, out_chunk)| {
-                let lhs_offset = b * lhs_matrix_size;
-                let rhs_offset = b * rhs_matrix_size;
+            out_chunks
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(b, out_chunk)| {
+                    let lhs_offset = b * lhs_matrix_size;
+                    let rhs_offset = b * rhs_matrix_size;
 
-                unsafe {
-                    gemm::gemm(
-                        m, n, k,
-                        out_chunk.as_mut_ptr(),
-                        1, n as isize,
-                        false,
-                        lhs_data[lhs_offset..].as_ptr(),
-                        1, k as isize,
-                        rhs_data[rhs_offset..].as_ptr(),
-                        1, n as isize,
-                        0.0f32, 1.0f32,
-                        false, false, false,
-                        gemm::Parallelism::None,
-                    );
-                }
-            });
+                    unsafe {
+                        gemm::gemm(
+                            m,
+                            n,
+                            k,
+                            out_chunk.as_mut_ptr(),
+                            1,
+                            n as isize,
+                            false,
+                            lhs_data[lhs_offset..].as_ptr(),
+                            1,
+                            k as isize,
+                            rhs_data[rhs_offset..].as_ptr(),
+                            1,
+                            n as isize,
+                            0.0f32,
+                            1.0f32,
+                            false,
+                            false,
+                            false,
+                            gemm::Parallelism::None,
+                        );
+                    }
+                });
         } else {
             // Small total work: single-threaded
             for b in 0..batch_size {
@@ -264,16 +281,24 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
                 unsafe {
                     gemm::gemm(
-                        m, n, k,
+                        m,
+                        n,
+                        k,
                         out_data[out_offset..].as_mut_ptr(),
-                        1, n as isize,
+                        1,
+                        n as isize,
                         false,
                         lhs_data[lhs_offset..].as_ptr(),
-                        1, k as isize,
+                        1,
+                        k as isize,
                         rhs_data[rhs_offset..].as_ptr(),
-                        1, n as isize,
-                        0.0f32, 1.0f32,
-                        false, false, false,
+                        1,
+                        n as isize,
+                        0.0f32,
+                        1.0f32,
+                        false,
+                        false,
+                        false,
                         gemm::Parallelism::None,
                     );
                 }
@@ -291,16 +316,24 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
             unsafe {
                 gemm::gemm(
-                    m, n, k,
+                    m,
+                    n,
+                    k,
                     out_data[out_offset..].as_mut_ptr(),
-                    1, n as isize,
+                    1,
+                    n as isize,
                     false,
                     lhs_data[lhs_offset..].as_ptr(),
-                    1, k as isize,
+                    1,
+                    k as isize,
                     rhs_data[rhs_offset..].as_ptr(),
-                    1, n as isize,
-                    0.0f32, 1.0f32,
-                    false, false, false,
+                    1,
+                    n as isize,
+                    0.0f32,
+                    1.0f32,
+                    false,
+                    false,
+                    false,
                     gemm::Parallelism::None,
                 );
             }
@@ -431,16 +464,24 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
                 unsafe {
                     gemm::gemm(
-                        m, n, k,
+                        m,
+                        n,
+                        k,
                         out_data[out_offset..].as_mut_ptr(),
-                        1, n as isize,
+                        1,
+                        n as isize,
                         false,
                         lhs_data[lhs_offset..].as_ptr(),
-                        1, k as isize,
+                        1,
+                        k as isize,
                         rhs_data[rhs_offset..].as_ptr(),
-                        1, n as isize,
-                        0.0f64, 1.0f64,
-                        false, false, false,
+                        1,
+                        n as isize,
+                        0.0f64,
+                        1.0f64,
+                        false,
+                        false,
+                        false,
                         parallelism,
                     );
                 }
@@ -448,30 +489,39 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
         } else if total_ops >= BATCH_PARALLEL_THRESHOLD && batch_size > 1 {
             use rayon::prelude::*;
 
-            let out_chunks: Vec<&mut [f64]> = out_data
-                .chunks_mut(out_matrix_size)
-                .collect();
+            let out_chunks: Vec<&mut [f64]> = out_data.chunks_mut(out_matrix_size).collect();
 
-            out_chunks.into_par_iter().enumerate().for_each(|(b, out_chunk)| {
-                let lhs_offset = b * lhs_matrix_size;
-                let rhs_offset = b * rhs_matrix_size;
+            out_chunks
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(b, out_chunk)| {
+                    let lhs_offset = b * lhs_matrix_size;
+                    let rhs_offset = b * rhs_matrix_size;
 
-                unsafe {
-                    gemm::gemm(
-                        m, n, k,
-                        out_chunk.as_mut_ptr(),
-                        1, n as isize,
-                        false,
-                        lhs_data[lhs_offset..].as_ptr(),
-                        1, k as isize,
-                        rhs_data[rhs_offset..].as_ptr(),
-                        1, n as isize,
-                        0.0f64, 1.0f64,
-                        false, false, false,
-                        gemm::Parallelism::None,
-                    );
-                }
-            });
+                    unsafe {
+                        gemm::gemm(
+                            m,
+                            n,
+                            k,
+                            out_chunk.as_mut_ptr(),
+                            1,
+                            n as isize,
+                            false,
+                            lhs_data[lhs_offset..].as_ptr(),
+                            1,
+                            k as isize,
+                            rhs_data[rhs_offset..].as_ptr(),
+                            1,
+                            n as isize,
+                            0.0f64,
+                            1.0f64,
+                            false,
+                            false,
+                            false,
+                            gemm::Parallelism::None,
+                        );
+                    }
+                });
         } else {
             for b in 0..batch_size {
                 let lhs_offset = b * lhs_matrix_size;
@@ -480,16 +530,24 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
                 unsafe {
                     gemm::gemm(
-                        m, n, k,
+                        m,
+                        n,
+                        k,
                         out_data[out_offset..].as_mut_ptr(),
-                        1, n as isize,
+                        1,
+                        n as isize,
                         false,
                         lhs_data[lhs_offset..].as_ptr(),
-                        1, k as isize,
+                        1,
+                        k as isize,
                         rhs_data[rhs_offset..].as_ptr(),
-                        1, n as isize,
-                        0.0f64, 1.0f64,
-                        false, false, false,
+                        1,
+                        n as isize,
+                        0.0f64,
+                        1.0f64,
+                        false,
+                        false,
+                        false,
                         gemm::Parallelism::None,
                     );
                 }
@@ -507,16 +565,24 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
             unsafe {
                 gemm::gemm(
-                    m, n, k,
+                    m,
+                    n,
+                    k,
                     out_data[out_offset..].as_mut_ptr(),
-                    1, n as isize,
+                    1,
+                    n as isize,
                     false,
                     lhs_data[lhs_offset..].as_ptr(),
-                    1, k as isize,
+                    1,
+                    k as isize,
                     rhs_data[rhs_offset..].as_ptr(),
-                    1, n as isize,
-                    0.0f64, 1.0f64,
-                    false, false, false,
+                    1,
+                    n as isize,
+                    0.0f64,
+                    1.0f64,
+                    false,
+                    false,
+                    false,
                     gemm::Parallelism::None,
                 );
             }
@@ -647,16 +713,24 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
                 unsafe {
                     gemm::gemm(
-                        m, n, k,
+                        m,
+                        n,
+                        k,
                         out_data[out_offset..].as_mut_ptr() as *mut half::f16,
-                        1, n as isize,
+                        1,
+                        n as isize,
                         false,
                         lhs_data[lhs_offset..].as_ptr() as *const half::f16,
-                        1, k as isize,
+                        1,
+                        k as isize,
                         rhs_data[rhs_offset..].as_ptr() as *const half::f16,
-                        1, n as isize,
-                        half::f16::from_f32(0.0), half::f16::from_f32(1.0),
-                        false, false, false,
+                        1,
+                        n as isize,
+                        half::f16::from_f32(0.0),
+                        half::f16::from_f32(1.0),
+                        false,
+                        false,
+                        false,
                         parallelism,
                     );
                 }
@@ -664,30 +738,39 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
         } else if total_ops >= BATCH_PARALLEL_THRESHOLD && batch_size > 1 {
             use rayon::prelude::*;
 
-            let out_chunks: Vec<&mut [f16]> = out_data
-                .chunks_mut(out_matrix_size)
-                .collect();
+            let out_chunks: Vec<&mut [f16]> = out_data.chunks_mut(out_matrix_size).collect();
 
-            out_chunks.into_par_iter().enumerate().for_each(|(b, out_chunk)| {
-                let lhs_offset = b * lhs_matrix_size;
-                let rhs_offset = b * rhs_matrix_size;
+            out_chunks
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(b, out_chunk)| {
+                    let lhs_offset = b * lhs_matrix_size;
+                    let rhs_offset = b * rhs_matrix_size;
 
-                unsafe {
-                    gemm::gemm(
-                        m, n, k,
-                        out_chunk.as_mut_ptr() as *mut half::f16,
-                        1, n as isize,
-                        false,
-                        lhs_data[lhs_offset..].as_ptr() as *const half::f16,
-                        1, k as isize,
-                        rhs_data[rhs_offset..].as_ptr() as *const half::f16,
-                        1, n as isize,
-                        half::f16::from_f32(0.0), half::f16::from_f32(1.0),
-                        false, false, false,
-                        gemm::Parallelism::None,
-                    );
-                }
-            });
+                    unsafe {
+                        gemm::gemm(
+                            m,
+                            n,
+                            k,
+                            out_chunk.as_mut_ptr() as *mut half::f16,
+                            1,
+                            n as isize,
+                            false,
+                            lhs_data[lhs_offset..].as_ptr() as *const half::f16,
+                            1,
+                            k as isize,
+                            rhs_data[rhs_offset..].as_ptr() as *const half::f16,
+                            1,
+                            n as isize,
+                            half::f16::from_f32(0.0),
+                            half::f16::from_f32(1.0),
+                            false,
+                            false,
+                            false,
+                            gemm::Parallelism::None,
+                        );
+                    }
+                });
         } else {
             for b in 0..batch_size {
                 let lhs_offset = b * lhs_matrix_size;
@@ -696,16 +779,24 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
                 unsafe {
                     gemm::gemm(
-                        m, n, k,
+                        m,
+                        n,
+                        k,
                         out_data[out_offset..].as_mut_ptr() as *mut half::f16,
-                        1, n as isize,
+                        1,
+                        n as isize,
                         false,
                         lhs_data[lhs_offset..].as_ptr() as *const half::f16,
-                        1, k as isize,
+                        1,
+                        k as isize,
                         rhs_data[rhs_offset..].as_ptr() as *const half::f16,
-                        1, n as isize,
-                        half::f16::from_f32(0.0), half::f16::from_f32(1.0),
-                        false, false, false,
+                        1,
+                        n as isize,
+                        half::f16::from_f32(0.0),
+                        half::f16::from_f32(1.0),
+                        false,
+                        false,
+                        false,
                         gemm::Parallelism::None,
                     );
                 }
@@ -723,16 +814,24 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
             unsafe {
                 gemm::gemm(
-                    m, n, k,
+                    m,
+                    n,
+                    k,
                     out_data[out_offset..].as_mut_ptr() as *mut half::f16,
-                    1, n as isize,
+                    1,
+                    n as isize,
                     false,
                     lhs_data[lhs_offset..].as_ptr() as *const half::f16,
-                    1, k as isize,
+                    1,
+                    k as isize,
                     rhs_data[rhs_offset..].as_ptr() as *const half::f16,
-                    1, n as isize,
-                    half::f16::from_f32(0.0), half::f16::from_f32(1.0),
-                    false, false, false,
+                    1,
+                    n as isize,
+                    half::f16::from_f32(0.0),
+                    half::f16::from_f32(1.0),
+                    false,
+                    false,
+                    false,
                     gemm::Parallelism::None,
                 );
             }
@@ -754,16 +853,8 @@ fn matmul_bf16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_shape = rhs.layout().shape();
 
     // Convert bf16 -> f32
-    let lhs_f32: Vec<f32> = lhs
-        .storage::<bf16>()
-        .iter()
-        .map(|x| x.to_f32())
-        .collect();
-    let rhs_f32: Vec<f32> = rhs
-        .storage::<bf16>()
-        .iter()
-        .map(|x| x.to_f32())
-        .collect();
+    let lhs_f32: Vec<f32> = lhs.storage::<bf16>().iter().map(|x| x.to_f32()).collect();
+    let rhs_f32: Vec<f32> = rhs.storage::<bf16>().iter().map(|x| x.to_f32()).collect();
 
     // Create f32 tensors
     let lhs_f32_tensor = EmberTensor::new(
@@ -957,7 +1048,10 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
     let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
     let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
-    debug_assert_eq!(lhs_batch, rhs_batch, "int_matmul: batch dimensions must match");
+    debug_assert_eq!(
+        lhs_batch, rhs_batch,
+        "int_matmul: batch dimensions must match"
+    );
 
     let batch_size: usize = lhs_batch.iter().product();
     let lhs_matrix_size = m * k;
@@ -1107,7 +1201,10 @@ fn matmul_batched_i64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
     let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
     let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
-    debug_assert_eq!(lhs_batch, rhs_batch, "int_matmul: batch dimensions must match");
+    debug_assert_eq!(
+        lhs_batch, rhs_batch,
+        "int_matmul: batch dimensions must match"
+    );
 
     let batch_size: usize = lhs_batch.iter().product();
     let lhs_matrix_size = m * k;
@@ -1350,10 +1447,7 @@ mod tests {
         ];
 
         for (a, b) in values.iter().zip(expected.iter()) {
-            assert!(
-                (a.to_f32() - b.to_f32()).abs() < 0.1,
-                "f16 matmul mismatch"
-            );
+            assert!((a.to_f32() - b.to_f32()).abs() < 0.1, "f16 matmul mismatch");
         }
     }
 

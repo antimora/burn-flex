@@ -4,9 +4,9 @@ use alloc::vec::Vec;
 use burn_backend::{DType, Element};
 use burn_std::{Bytes, Shape, bf16, f16};
 
+use crate::EmberTensor;
 use crate::layout::Layout;
 use crate::strided_index::StridedIter;
-use crate::EmberTensor;
 
 #[cfg(feature = "simd")]
 use crate::simd;
@@ -734,8 +734,14 @@ mod tests {
 
     #[test]
     fn test_binary_add_f16() {
-        let a_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(f16::from_f32).collect();
-        let b_vals: Vec<f16> = vec![5.0, 6.0, 7.0, 8.0].into_iter().map(f16::from_f32).collect();
+        let a_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
+        let b_vals: Vec<f16> = vec![5.0, 6.0, 7.0, 8.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
 
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
@@ -744,7 +750,10 @@ mod tests {
         let data = result.into_data();
         let result_slice = data.as_slice::<f16>().unwrap();
 
-        let expected: Vec<f16> = vec![6.0, 8.0, 10.0, 12.0].into_iter().map(f16::from_f32).collect();
+        let expected: Vec<f16> = vec![6.0, 8.0, 10.0, 12.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
         for (r, e) in result_slice.iter().zip(expected.iter()) {
             assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
         }
@@ -752,8 +761,14 @@ mod tests {
 
     #[test]
     fn test_binary_mul_f16() {
-        let a_vals: Vec<f16> = vec![2.0, 3.0, 4.0, 5.0].into_iter().map(f16::from_f32).collect();
-        let b_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(f16::from_f32).collect();
+        let a_vals: Vec<f16> = vec![2.0, 3.0, 4.0, 5.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
+        let b_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
 
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
@@ -762,7 +777,10 @@ mod tests {
         let data = result.into_data();
         let result_slice = data.as_slice::<f16>().unwrap();
 
-        let expected: Vec<f16> = vec![2.0, 6.0, 12.0, 20.0].into_iter().map(f16::from_f32).collect();
+        let expected: Vec<f16> = vec![2.0, 6.0, 12.0, 20.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
         for (r, e) in result_slice.iter().zip(expected.iter()) {
             assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
         }
@@ -770,8 +788,14 @@ mod tests {
 
     #[test]
     fn test_binary_f16_transposed() {
-        let a_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(f16::from_f32).collect();
-        let b_vals: Vec<f16> = vec![10.0, 20.0, 30.0, 40.0].into_iter().map(f16::from_f32).collect();
+        let a_vals: Vec<f16> = vec![1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
+        let b_vals: Vec<f16> = vec![10.0, 20.0, 30.0, 40.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
 
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2])).transpose(0, 1);
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2])).transpose(0, 1);
@@ -782,7 +806,10 @@ mod tests {
 
         // a_t = [[1,3], [2,4]], b_t = [[10,30], [20,40]]
         // result = [[11,33], [22,44]]
-        let expected: Vec<f16> = vec![11.0, 33.0, 22.0, 44.0].into_iter().map(f16::from_f32).collect();
+        let expected: Vec<f16> = vec![11.0, 33.0, 22.0, 44.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
         for (r, e) in result_slice.iter().zip(expected.iter()) {
             assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
         }
@@ -797,7 +824,10 @@ mod tests {
         let data = result.into_data();
         let result_slice = data.as_slice::<f16>().unwrap();
 
-        let expected: Vec<f16> = vec![11.0, 12.0, 13.0].into_iter().map(f16::from_f32).collect();
+        let expected: Vec<f16> = vec![11.0, 12.0, 13.0]
+            .into_iter()
+            .map(f16::from_f32)
+            .collect();
         for (r, e) in result_slice.iter().zip(expected.iter()) {
             assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
         }
@@ -809,8 +839,14 @@ mod tests {
 
     #[test]
     fn test_binary_add_bf16() {
-        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(bf16::from_f32).collect();
-        let b_vals: Vec<bf16> = vec![5.0, 6.0, 7.0, 8.0].into_iter().map(bf16::from_f32).collect();
+        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
+        let b_vals: Vec<bf16> = vec![5.0, 6.0, 7.0, 8.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
 
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
@@ -819,7 +855,10 @@ mod tests {
         let data = result.into_data();
         let result_slice = data.as_slice::<bf16>().unwrap();
 
-        let expected: Vec<bf16> = vec![6.0, 8.0, 10.0, 12.0].into_iter().map(bf16::from_f32).collect();
+        let expected: Vec<bf16> = vec![6.0, 8.0, 10.0, 12.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
         for (r, e) in result_slice.iter().zip(expected.iter()) {
             assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
         }
@@ -827,8 +866,14 @@ mod tests {
 
     #[test]
     fn test_binary_mul_bf16() {
-        let a_vals: Vec<bf16> = vec![2.0, 3.0, 4.0, 5.0].into_iter().map(bf16::from_f32).collect();
-        let b_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(bf16::from_f32).collect();
+        let a_vals: Vec<bf16> = vec![2.0, 3.0, 4.0, 5.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
+        let b_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
 
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
@@ -837,7 +882,10 @@ mod tests {
         let data = result.into_data();
         let result_slice = data.as_slice::<bf16>().unwrap();
 
-        let expected: Vec<bf16> = vec![2.0, 6.0, 12.0, 20.0].into_iter().map(bf16::from_f32).collect();
+        let expected: Vec<bf16> = vec![2.0, 6.0, 12.0, 20.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
         for (r, e) in result_slice.iter().zip(expected.iter()) {
             assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
         }
@@ -845,8 +893,14 @@ mod tests {
 
     #[test]
     fn test_binary_bf16_transposed() {
-        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0].into_iter().map(bf16::from_f32).collect();
-        let b_vals: Vec<bf16> = vec![10.0, 20.0, 30.0, 40.0].into_iter().map(bf16::from_f32).collect();
+        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
+        let b_vals: Vec<bf16> = vec![10.0, 20.0, 30.0, 40.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
 
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2])).transpose(0, 1);
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2])).transpose(0, 1);
@@ -855,7 +909,10 @@ mod tests {
         let data = result.into_data();
         let result_slice = data.as_slice::<bf16>().unwrap();
 
-        let expected: Vec<bf16> = vec![11.0, 33.0, 22.0, 44.0].into_iter().map(bf16::from_f32).collect();
+        let expected: Vec<bf16> = vec![11.0, 33.0, 22.0, 44.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
         for (r, e) in result_slice.iter().zip(expected.iter()) {
             assert!((r.to_f32() - e.to_f32()).abs() < 0.5);
         }
@@ -863,14 +920,20 @@ mod tests {
 
     #[test]
     fn test_scalar_bf16() {
-        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0].into_iter().map(bf16::from_f32).collect();
+        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![3]));
 
         let result = scalar_op(a, 10.0, |x, y| x + y, |x, y| x + y);
         let data = result.into_data();
         let result_slice = data.as_slice::<bf16>().unwrap();
 
-        let expected: Vec<bf16> = vec![11.0, 12.0, 13.0].into_iter().map(bf16::from_f32).collect();
+        let expected: Vec<bf16> = vec![11.0, 12.0, 13.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
         for (r, e) in result_slice.iter().zip(expected.iter()) {
             assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
         }

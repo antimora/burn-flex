@@ -161,7 +161,7 @@ impl Layout {
             if step > 0 {
                 // Positive step: forward iteration
                 let len = if end > start {
-                    (end - start + step as usize - 1) / step as usize
+                    (end - start).div_ceil(step as usize)
                 } else {
                     0
                 };
