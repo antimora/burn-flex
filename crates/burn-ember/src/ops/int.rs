@@ -208,24 +208,24 @@ impl IntTensorOps<Ember> for Ember {
         matmul::int_matmul(lhs, rhs)
     }
 
-    fn int_sum(_tensor: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_sum")
+    fn int_sum(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
+        crate::ops::reduce::sum(tensor)
     }
 
-    fn int_sum_dim(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_sum_dim")
+    fn int_sum_dim(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::sum_dim(tensor, dim)
     }
 
-    fn int_prod(_tensor: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_prod")
+    fn int_prod(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
+        crate::ops::reduce::prod(tensor)
     }
 
-    fn int_prod_dim(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_prod_dim")
+    fn int_prod_dim(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::prod_dim(tensor, dim)
     }
 
-    fn int_mean_dim(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_mean_dim")
+    fn int_mean_dim(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::mean_dim(tensor, dim)
     }
 
     fn int_cumsum(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
@@ -244,12 +244,12 @@ impl IntTensorOps<Ember> for Ember {
         todo!("int_cummax")
     }
 
-    fn int_argmax(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_argmax")
+    fn int_argmax(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::argmax(tensor, dim)
     }
 
-    fn int_argmin(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_argmin")
+    fn int_argmin(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::argmin(tensor, dim)
     }
 
     fn int_abs(_tensor: IntTensor<Ember>) -> IntTensor<Ember> {

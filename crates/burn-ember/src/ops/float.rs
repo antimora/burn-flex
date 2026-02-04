@@ -228,16 +228,16 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_lower_equal_elem")
     }
 
-    fn float_sum(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_sum")
+    fn float_sum(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        crate::ops::reduce::sum(tensor)
     }
 
-    fn float_sum_dim(_tensor: FloatTensor<Ember>, _dim: usize) -> FloatTensor<Ember> {
-        todo!("float_sum_dim")
+    fn float_sum_dim(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        crate::ops::reduce::sum_dim(tensor, dim)
     }
 
-    fn float_mean_dim(_tensor: FloatTensor<Ember>, _dim: usize) -> FloatTensor<Ember> {
-        todo!("float_mean_dim")
+    fn float_mean_dim(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        crate::ops::reduce::mean_dim(tensor, dim)
     }
 
     fn float_cumsum(_tensor: FloatTensor<Ember>, _dim: usize) -> FloatTensor<Ember> {
@@ -360,12 +360,12 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_erf")
     }
 
-    fn float_argmax(_tensor: FloatTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("float_argmax")
+    fn float_argmax(tensor: FloatTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::argmax(tensor, dim)
     }
 
-    fn float_argmin(_tensor: FloatTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("float_argmin")
+    fn float_argmin(tensor: FloatTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::argmin(tensor, dim)
     }
 
     fn float_expand(_tensor: FloatTensor<Ember>, _shape: Shape) -> FloatTensor<Ember> {
