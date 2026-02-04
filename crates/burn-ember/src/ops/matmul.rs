@@ -15,6 +15,11 @@ use crate::{EmberTensor, Layout};
 /// 192^3 = ~7M ops - balance between 128x128 (no parallel) and 256x256 (parallel)
 const PARALLEL_THRESHOLD: usize = 192 * 192 * 192;
 
+/// Threshold for batch-level parallelism (total ops across all batches).
+/// Use batch parallelism when individual matrices are small but total work is large.
+#[cfg(feature = "rayon")]
+const BATCH_PARALLEL_THRESHOLD: usize = 128 * 128 * 128; // ~2M ops total
+
 /// Get parallelism setting based on matrix size.
 #[cfg(feature = "gemm")]
 fn get_parallelism(m: usize, n: usize, k: usize) -> gemm::Parallelism {
@@ -181,37 +186,118 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_data: &[f32] = rhs.storage();
     let out_data: &mut [f32] = output.storage_mut();
 
-    // Use parallelism for individual matmuls if large enough
-    let parallelism = get_parallelism(m, n, k);
+    let per_matrix_ops = m * n * k;
 
-    // Process batches (could parallelize this loop with rayon too)
-    for b in 0..batch_size {
-        let lhs_offset = b * lhs_matrix_size;
-        let rhs_offset = b * rhs_matrix_size;
-        let out_offset = b * out_matrix_size;
+    // Strategy:
+    // 1. Large matrices: let gemm parallelize internally
+    // 2. Small matrices, large batch: parallelize batch loop
+    // 3. Small total work: single-threaded
+    #[cfg(feature = "rayon")]
+    {
+        let total_ops = batch_size * per_matrix_ops;
 
-        unsafe {
-            gemm::gemm(
-                m,
-                n,
-                k,
-                out_data[out_offset..].as_mut_ptr(),
-                1,
-                n as isize,
-                false,
-                lhs_data[lhs_offset..].as_ptr(),
-                1,
-                k as isize,
-                rhs_data[rhs_offset..].as_ptr(),
-                1,
-                n as isize,
-                0.0f32,
-                1.0f32,
-                false,
-                false,
-                false,
-                parallelism,
-            );
+        if per_matrix_ops >= PARALLEL_THRESHOLD {
+            // Large matrices: use per-matrix parallelism
+            let parallelism = gemm::Parallelism::Rayon(0);
+            for b in 0..batch_size {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+                let out_offset = b * out_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_data[out_offset..].as_mut_ptr(),
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr(),
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr(),
+                        1, n as isize,
+                        0.0f32, 1.0f32,
+                        false, false, false,
+                        parallelism,
+                    );
+                }
+            }
+        } else if total_ops >= BATCH_PARALLEL_THRESHOLD && batch_size > 1 {
+            // Small matrices but enough total work: parallelize batch loop
+            use rayon::prelude::*;
+
+            // Split output into chunks, one per batch
+            let out_chunks: Vec<&mut [f32]> = out_data
+                .chunks_mut(out_matrix_size)
+                .collect();
+
+            out_chunks.into_par_iter().enumerate().for_each(|(b, out_chunk)| {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_chunk.as_mut_ptr(),
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr(),
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr(),
+                        1, n as isize,
+                        0.0f32, 1.0f32,
+                        false, false, false,
+                        gemm::Parallelism::None,
+                    );
+                }
+            });
+        } else {
+            // Small total work: single-threaded
+            for b in 0..batch_size {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+                let out_offset = b * out_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_data[out_offset..].as_mut_ptr(),
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr(),
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr(),
+                        1, n as isize,
+                        0.0f32, 1.0f32,
+                        false, false, false,
+                        gemm::Parallelism::None,
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    {
+        let _ = per_matrix_ops; // silence unused warning
+        for b in 0..batch_size {
+            let lhs_offset = b * lhs_matrix_size;
+            let rhs_offset = b * rhs_matrix_size;
+            let out_offset = b * out_matrix_size;
+
+            unsafe {
+                gemm::gemm(
+                    m, n, k,
+                    out_data[out_offset..].as_mut_ptr(),
+                    1, n as isize,
+                    false,
+                    lhs_data[lhs_offset..].as_ptr(),
+                    1, k as isize,
+                    rhs_data[rhs_offset..].as_ptr(),
+                    1, n as isize,
+                    0.0f32, 1.0f32,
+                    false, false, false,
+                    gemm::Parallelism::None,
+                );
+            }
         }
     }
 
@@ -323,35 +409,110 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_data: &[f64] = rhs.storage();
     let out_data: &mut [f64] = output.storage_mut();
 
-    let parallelism = get_parallelism(m, n, k);
+    let per_matrix_ops = m * n * k;
 
-    for b in 0..batch_size {
-        let lhs_offset = b * lhs_matrix_size;
-        let rhs_offset = b * rhs_matrix_size;
-        let out_offset = b * out_matrix_size;
+    #[cfg(feature = "rayon")]
+    {
+        let total_ops = batch_size * per_matrix_ops;
 
-        unsafe {
-            gemm::gemm(
-                m,
-                n,
-                k,
-                out_data[out_offset..].as_mut_ptr(),
-                1,
-                n as isize,
-                false,
-                lhs_data[lhs_offset..].as_ptr(),
-                1,
-                k as isize,
-                rhs_data[rhs_offset..].as_ptr(),
-                1,
-                n as isize,
-                0.0f64,
-                1.0f64,
-                false,
-                false,
-                false,
-                parallelism,
-            );
+        if per_matrix_ops >= PARALLEL_THRESHOLD {
+            let parallelism = gemm::Parallelism::Rayon(0);
+            for b in 0..batch_size {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+                let out_offset = b * out_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_data[out_offset..].as_mut_ptr(),
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr(),
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr(),
+                        1, n as isize,
+                        0.0f64, 1.0f64,
+                        false, false, false,
+                        parallelism,
+                    );
+                }
+            }
+        } else if total_ops >= BATCH_PARALLEL_THRESHOLD && batch_size > 1 {
+            use rayon::prelude::*;
+
+            let out_chunks: Vec<&mut [f64]> = out_data
+                .chunks_mut(out_matrix_size)
+                .collect();
+
+            out_chunks.into_par_iter().enumerate().for_each(|(b, out_chunk)| {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_chunk.as_mut_ptr(),
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr(),
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr(),
+                        1, n as isize,
+                        0.0f64, 1.0f64,
+                        false, false, false,
+                        gemm::Parallelism::None,
+                    );
+                }
+            });
+        } else {
+            for b in 0..batch_size {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+                let out_offset = b * out_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_data[out_offset..].as_mut_ptr(),
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr(),
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr(),
+                        1, n as isize,
+                        0.0f64, 1.0f64,
+                        false, false, false,
+                        gemm::Parallelism::None,
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    {
+        let _ = per_matrix_ops; // silence unused warning
+        for b in 0..batch_size {
+            let lhs_offset = b * lhs_matrix_size;
+            let rhs_offset = b * rhs_matrix_size;
+            let out_offset = b * out_matrix_size;
+
+            unsafe {
+                gemm::gemm(
+                    m, n, k,
+                    out_data[out_offset..].as_mut_ptr(),
+                    1, n as isize,
+                    false,
+                    lhs_data[lhs_offset..].as_ptr(),
+                    1, k as isize,
+                    rhs_data[rhs_offset..].as_ptr(),
+                    1, n as isize,
+                    0.0f64, 1.0f64,
+                    false, false, false,
+                    gemm::Parallelism::None,
+                );
+            }
         }
     }
 
@@ -463,35 +624,110 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_data: &[f16] = rhs.storage();
     let out_data: &mut [f16] = output.storage_mut();
 
-    let parallelism = get_parallelism(m, n, k);
+    let per_matrix_ops = m * n * k;
 
-    for b in 0..batch_size {
-        let lhs_offset = b * lhs_matrix_size;
-        let rhs_offset = b * rhs_matrix_size;
-        let out_offset = b * out_matrix_size;
+    #[cfg(feature = "rayon")]
+    {
+        let total_ops = batch_size * per_matrix_ops;
 
-        unsafe {
-            gemm::gemm(
-                m,
-                n,
-                k,
-                out_data[out_offset..].as_mut_ptr() as *mut half::f16,
-                1,
-                n as isize,
-                false,
-                lhs_data[lhs_offset..].as_ptr() as *const half::f16,
-                1,
-                k as isize,
-                rhs_data[rhs_offset..].as_ptr() as *const half::f16,
-                1,
-                n as isize,
-                half::f16::from_f32(0.0),
-                half::f16::from_f32(1.0),
-                false,
-                false,
-                false,
-                parallelism,
-            );
+        if per_matrix_ops >= PARALLEL_THRESHOLD {
+            let parallelism = gemm::Parallelism::Rayon(0);
+            for b in 0..batch_size {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+                let out_offset = b * out_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_data[out_offset..].as_mut_ptr() as *mut half::f16,
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr() as *const half::f16,
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr() as *const half::f16,
+                        1, n as isize,
+                        half::f16::from_f32(0.0), half::f16::from_f32(1.0),
+                        false, false, false,
+                        parallelism,
+                    );
+                }
+            }
+        } else if total_ops >= BATCH_PARALLEL_THRESHOLD && batch_size > 1 {
+            use rayon::prelude::*;
+
+            let out_chunks: Vec<&mut [f16]> = out_data
+                .chunks_mut(out_matrix_size)
+                .collect();
+
+            out_chunks.into_par_iter().enumerate().for_each(|(b, out_chunk)| {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_chunk.as_mut_ptr() as *mut half::f16,
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr() as *const half::f16,
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr() as *const half::f16,
+                        1, n as isize,
+                        half::f16::from_f32(0.0), half::f16::from_f32(1.0),
+                        false, false, false,
+                        gemm::Parallelism::None,
+                    );
+                }
+            });
+        } else {
+            for b in 0..batch_size {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+                let out_offset = b * out_matrix_size;
+
+                unsafe {
+                    gemm::gemm(
+                        m, n, k,
+                        out_data[out_offset..].as_mut_ptr() as *mut half::f16,
+                        1, n as isize,
+                        false,
+                        lhs_data[lhs_offset..].as_ptr() as *const half::f16,
+                        1, k as isize,
+                        rhs_data[rhs_offset..].as_ptr() as *const half::f16,
+                        1, n as isize,
+                        half::f16::from_f32(0.0), half::f16::from_f32(1.0),
+                        false, false, false,
+                        gemm::Parallelism::None,
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    {
+        let _ = per_matrix_ops;
+        for b in 0..batch_size {
+            let lhs_offset = b * lhs_matrix_size;
+            let rhs_offset = b * rhs_matrix_size;
+            let out_offset = b * out_matrix_size;
+
+            unsafe {
+                gemm::gemm(
+                    m, n, k,
+                    out_data[out_offset..].as_mut_ptr() as *mut half::f16,
+                    1, n as isize,
+                    false,
+                    lhs_data[lhs_offset..].as_ptr() as *const half::f16,
+                    1, k as isize,
+                    rhs_data[rhs_offset..].as_ptr() as *const half::f16,
+                    1, n as isize,
+                    half::f16::from_f32(0.0), half::f16::from_f32(1.0),
+                    false, false, false,
+                    gemm::Parallelism::None,
+                );
+            }
         }
     }
 

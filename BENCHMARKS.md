@@ -82,14 +82,14 @@ SIMD provides modest gains for element-wise ops since they are memory-bound, not
 | 512x512 | 653µs | 890µs | **Ember 1.4x faster** |
 | 1024x1024 | 2.79ms | 6.11ms | **Ember 2.2x faster** |
 
-#### Batched Matmul
+#### Batched Matmul (with batch-level parallelism)
 
 | Benchmark | Ember | NdArray | Result |
 |-----------|-------|---------|--------|
-| batch8_64x64 | 57µs | 111µs | **Ember 2.0x faster** |
-| batch16_128x128 | 748µs | 626µs | NdArray 1.2x faster |
-| batch32_64x64 | 216µs | 206µs | ~equal |
-| heads12_seq512_dim64 | 2.13ms | 1.88ms | NdArray 1.13x faster |
+| batch8_64x64 | 70µs | 110µs | **Ember 1.6x faster** |
+| batch16_128x128 | 338µs | 630µs | **Ember 1.9x faster** |
+| batch32_64x64 | 122µs | 167µs | **Ember 1.4x faster** |
+| heads12_seq512_dim64 | 2.17ms | 1.88ms | NdArray 1.15x faster |
 
 #### Transposed Inputs (256x256)
 
@@ -110,16 +110,18 @@ SIMD provides modest gains for element-wise ops since they are memory-bound, not
 #### Matmul Optimizations Applied
 
 1. **Strided gemm**: Transposed inputs use native strides (no copy needed)
-2. **Parallelism**: Auto-enabled for matrices > 192^3 ops (~7M) via rayon
-3. **Memory reduction**: ~30% less allocation by avoiding intermediate buffers
+2. **Per-matrix parallelism**: Auto-enabled for matrices > 192^3 ops (~7M) via rayon
+3. **Batch-level parallelism**: For small matrices in batches, parallelize the batch loop
+4. **Memory reduction**: ~30% less allocation by avoiding intermediate buffers
 
 #### Matmul Analysis
 
 With optimizations, Ember wins for:
 - Small matrices (<192x192): Lower overhead, single-threaded gemm
 - Large matrices (>=256x256): Parallel gemm beats NdArray BLAS
+- Batched small matrices: Batch-level parallelism beats sequential execution
 
-256x256 is essentially equal to NdArray (only 7% slower). Ember wins at 4/5 tested sizes.
+256x256 is essentially equal to NdArray (only 7% slower). Ember wins at 4/5 square sizes, 2/3 transposed, and 3/4 batched cases.
 
 ### Analysis
 
