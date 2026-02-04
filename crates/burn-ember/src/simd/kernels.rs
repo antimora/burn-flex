@@ -19,43 +19,43 @@ pub fn arch() -> Arch {
 // Sum reduction
 // ============================================================================
 
-/// Sum all elements in a f32 slice using SIMD.
+/// Sum all elements in a f32 slice.
+///
+/// Uses 8-fold unrolled loop that LLVM auto-vectorizes.
+/// This matches ndarray's approach and is faster than explicit pulp dispatch
+/// due to lower overhead.
 #[inline]
 pub fn sum_f32(data: &[f32]) -> f32 {
-    arch().dispatch(SumF32(data))
+    unrolled_sum_f32(data)
 }
 
-struct SumF32<'a>(&'a [f32]);
+/// 8-fold unrolled sum that LLVM auto-vectorizes.
+/// This is the same approach used by ndarray's `unrolled_fold`.
+#[inline]
+fn unrolled_sum_f32(mut xs: &[f32]) -> f32 {
+    let (mut p0, mut p1, mut p2, mut p3, mut p4, mut p5, mut p6, mut p7) =
+        (0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 
-impl WithSimd for SumF32<'_> {
-    type Output = f32;
-
-    #[inline(always)]
-    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
-        let data = self.0;
-        if data.is_empty() {
-            return 0.0;
-        }
-
-        // Split into SIMD-aligned chunks and scalar tail
-        let (head, tail) = S::as_simd_f32s(data);
-
-        // Accumulate SIMD lanes
-        let mut acc = simd.splat_f32s(0.0);
-        for &chunk in head {
-            acc = simd.add_f32s(acc, chunk);
-        }
-
-        // Reduce SIMD accumulator to scalar
-        let mut sum = simd.reduce_sum_f32s(acc);
-
-        // Add scalar tail
-        for &x in tail {
-            sum += x;
-        }
-
-        sum
+    while xs.len() >= 8 {
+        p0 += xs[0];
+        p1 += xs[1];
+        p2 += xs[2];
+        p3 += xs[3];
+        p4 += xs[4];
+        p5 += xs[5];
+        p6 += xs[6];
+        p7 += xs[7];
+        xs = &xs[8..];
     }
+
+    // Combine accumulators in a way that allows further vectorization
+    let mut sum = (p0 + p4) + (p1 + p5) + (p2 + p6) + (p3 + p7);
+
+    // Handle remainder
+    for &x in xs {
+        sum += x;
+    }
+    sum
 }
 
 // ============================================================================
@@ -209,53 +209,14 @@ impl WithSimd for ScatterAddBatchedF32<'_> {
 
 /// Sum each row, storing results in output slice.
 /// Used for last-dim reductions.
+///
+/// Uses 8-fold unrolled loop per row that LLVM auto-vectorizes.
 #[inline]
 pub fn sum_rows_f32(src: &[f32], dst: &mut [f32], num_rows: usize, row_len: usize) {
-    arch().dispatch(SumRowsF32 {
-        src,
-        dst,
-        num_rows,
-        row_len,
-    });
-}
-
-struct SumRowsF32<'a> {
-    src: &'a [f32],
-    dst: &'a mut [f32],
-    num_rows: usize,
-    row_len: usize,
-}
-
-impl WithSimd for SumRowsF32<'_> {
-    type Output = ();
-
-    #[inline(always)]
-    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
-        let Self {
-            src,
-            dst,
-            num_rows,
-            row_len,
-        } = self;
-
-        for (row, dst_val) in dst.iter_mut().enumerate().take(num_rows) {
-            let row_start = row * row_len;
-            let row_data = &src[row_start..row_start + row_len];
-
-            let (head, tail) = S::as_simd_f32s(row_data);
-
-            let mut acc = simd.splat_f32s(0.0);
-            for &chunk in head {
-                acc = simd.add_f32s(acc, chunk);
-            }
-
-            let mut sum = simd.reduce_sum_f32s(acc);
-            for &x in tail {
-                sum += x;
-            }
-
-            *dst_val = sum;
-        }
+    for (row, dst_val) in dst.iter_mut().enumerate().take(num_rows) {
+        let row_start = row * row_len;
+        let row_data = &src[row_start..row_start + row_len];
+        *dst_val = unrolled_sum_f32(row_data);
     }
 }
 
