@@ -16,7 +16,7 @@ workspace = true
 [features]
 default = ["std", "simd", "gemm"]
 std = []
-simd = ["dep:pulp"]  # Enable SIMD optimizations via pulp (portable across architectures)
+simd = ["dep:pulp", "dep:aligned-vec"]  # Enable SIMD optimizations via pulp (portable across architectures)
 rayon = ["dep:rayon"]  # Enable parallel execution for large tensors
 gemm = ["dep:gemm"]  # Enable optimized matrix multiplication
 
@@ -29,6 +29,7 @@ num-traits = { workspace = true }
 rayon = { workspace = true, optional = true }
 gemm = { version = "0.18", optional = true }
 pulp = { version = "0.21", optional = true }
+aligned-vec = { version = "0.6", optional = true }
 
 [dev-dependencies]
 burn-tensor = { workspace = true }

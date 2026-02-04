@@ -16,6 +16,10 @@ pub mod neon;
 #[cfg(feature = "simd")]
 pub mod kernels;
 
+// SIMD-aligned memory allocation
+#[cfg(feature = "simd")]
+pub mod aligned;
+
 /// SIMD lane count for f32 on current platform.
 #[cfg(target_arch = "aarch64")]
 pub const F32_LANES: usize = 4; // NEON: 128-bit / 32-bit = 4

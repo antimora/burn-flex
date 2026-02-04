@@ -16,6 +16,9 @@ use crate::{EmberTensor, Layout};
 #[cfg(feature = "simd")]
 use crate::simd::kernels;
 
+#[cfg(feature = "simd")]
+use crate::simd::aligned;
+
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
@@ -434,10 +437,11 @@ fn reduce_middle_dim_f32(
     dim_stride: usize,
 ) -> Vec<f32> {
     let out_size = outer_size * inner_size;
-    let mut result = vec![0.0f32; out_size];
 
     #[cfg(feature = "simd")]
     {
+        // Use aligned allocation for optimal SIMD scatter-add
+        let mut result = aligned::alloc_aligned_zeroed::<f32>(out_size);
         kernels::scatter_add_batched_f32(
             &data[start_offset..],
             &mut result,
@@ -447,10 +451,12 @@ fn reduce_middle_dim_f32(
             outer_stride,
             dim_stride,
         );
+        aligned::to_vec(result)
     }
 
     #[cfg(not(feature = "simd"))]
     {
+        let mut result = vec![0.0f32; out_size];
         for batch in 0..outer_size {
             let batch_start = start_offset + batch * outer_stride;
             let out_batch_start = batch * inner_size;
@@ -462,9 +468,8 @@ fn reduce_middle_dim_f32(
                 }
             }
         }
+        result
     }
-
-    result
 }
 
 /// Reduce first dimension with cache-friendly row iteration.
@@ -478,10 +483,10 @@ fn reduce_first_dim_f32(
     inner_size: usize, // number of columns (output positions)
     dim_stride: usize, // stride between rows
 ) -> Vec<f32> {
-    let mut result = vec![0.0f32; inner_size];
-
     #[cfg(feature = "simd")]
     {
+        // Use aligned allocation for optimal SIMD scatter-add
+        let mut result = aligned::alloc_aligned_zeroed::<f32>(inner_size);
         kernels::scatter_add_f32(
             &data[start_offset..],
             &mut result,
@@ -489,19 +494,20 @@ fn reduce_first_dim_f32(
             inner_size,
             dim_stride,
         );
+        aligned::to_vec(result)
     }
 
     #[cfg(not(feature = "simd"))]
     {
+        let mut result = vec![0.0f32; inner_size];
         for row in 0..dim_size {
             let row_start = start_offset + row * dim_stride;
             for c in 0..inner_size {
                 result[c] += data[row_start + c];
             }
         }
+        result
     }
-
-    result
 }
 
 /// Reduce last dimension with SIMD (most common case).
