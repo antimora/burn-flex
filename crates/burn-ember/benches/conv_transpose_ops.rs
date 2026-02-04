@@ -104,7 +104,10 @@ fn make_weight_3d<B: Backend>(
         .map(|i| ((i % 1000) as f32 / 1000.0) - 0.5)
         .collect();
     Tensor::from_data(
-        TensorData::new(data, [in_channels, out_channels, kernel_d, kernel_h, kernel_w]),
+        TensorData::new(
+            data,
+            [in_channels, out_channels, kernel_d, kernel_h, kernel_w],
+        ),
         &Default::default(),
     )
 }
@@ -264,7 +267,8 @@ macro_rules! bench_backend {
                 fn conv_transpose3d_1x32x4x4x4_to_8x8x8(bencher: Bencher) {
                     let x = make_input_3d::<B>(1, 32, 4, 4, 4);
                     let w = make_weight_3d::<B>(32, 32, 4, 4, 4);
-                    let opts = ConvTransposeOptions::new([2, 2, 2], [1, 1, 1], [0, 0, 0], [1, 1, 1], 1);
+                    let opts =
+                        ConvTransposeOptions::new([2, 2, 2], [1, 1, 1], [0, 0, 0], [1, 1, 1], 1);
                     bencher.bench(|| {
                         module::conv_transpose3d::<B>(x.clone(), w.clone(), None, opts.clone())
                     });
@@ -274,7 +278,8 @@ macro_rules! bench_backend {
                 fn conv_transpose3d_1x64x8x8x8_to_16x16x16(bencher: Bencher) {
                     let x = make_input_3d::<B>(1, 64, 8, 8, 8);
                     let w = make_weight_3d::<B>(64, 32, 4, 4, 4);
-                    let opts = ConvTransposeOptions::new([2, 2, 2], [1, 1, 1], [0, 0, 0], [1, 1, 1], 1);
+                    let opts =
+                        ConvTransposeOptions::new([2, 2, 2], [1, 1, 1], [0, 0, 0], [1, 1, 1], 1);
                     bencher.bench(|| {
                         module::conv_transpose3d::<B>(x.clone(), w.clone(), None, opts.clone())
                     });
