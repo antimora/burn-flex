@@ -14,7 +14,7 @@ exclude = ["*.md"]
 workspace = true
 
 [features]
-default = ["std", "simd", "gemm"]
+default = ["std", "simd", "gemm", "rayon"]
 std = []
 simd = ["dep:pulp", "dep:aligned-vec"]  # Enable SIMD optimizations via pulp (portable across architectures)
 rayon = ["dep:rayon"]  # Enable parallel execution for large tensors
