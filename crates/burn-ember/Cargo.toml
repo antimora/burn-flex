@@ -59,3 +59,7 @@ harness = false
 [[bench]]
 name = "comparison_ops"
 harness = false
+
+[[bench]]
+name = "conv_ops"
+harness = false

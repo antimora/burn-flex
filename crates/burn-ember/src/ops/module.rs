@@ -3,7 +3,9 @@
 //! These operations power neural network modules like convolutions and pooling.
 
 use crate::Ember;
+use crate::ops::conv;
 use burn_backend::{
+    DType,
     ops::{
         ConvOptions, ConvTransposeOptions, DeformConv2dBackward, DeformConvOptions,
         InterpolateOptions, MaxPool2dBackward, MaxPool2dWithIndices, ModuleOps,
@@ -12,13 +14,34 @@ use burn_backend::{
 };
 
 impl ModuleOps<Ember> for Ember {
-    fn conv2d(
-        _x: FloatTensor<Ember>,
-        _weight: FloatTensor<Ember>,
-        _bias: Option<FloatTensor<Ember>>,
-        _options: ConvOptions<2>,
+    fn conv1d(
+        x: FloatTensor<Ember>,
+        weight: FloatTensor<Ember>,
+        bias: Option<FloatTensor<Ember>>,
+        options: ConvOptions<1>,
     ) -> FloatTensor<Ember> {
-        todo!("conv2d")
+        match x.dtype() {
+            DType::F32 => conv::conv1d_f32(x, weight, bias, &options),
+            DType::F64 => conv::conv1d_f64(x, weight, bias, &options),
+            DType::F16 => conv::conv1d_f16(x, weight, bias, &options),
+            DType::BF16 => conv::conv1d_bf16(x, weight, bias, &options),
+            dtype => panic!("conv1d: unsupported dtype {:?}", dtype),
+        }
+    }
+
+    fn conv2d(
+        x: FloatTensor<Ember>,
+        weight: FloatTensor<Ember>,
+        bias: Option<FloatTensor<Ember>>,
+        options: ConvOptions<2>,
+    ) -> FloatTensor<Ember> {
+        match x.dtype() {
+            DType::F32 => conv::conv2d_f32(x, weight, bias, &options),
+            DType::F64 => conv::conv2d_f64(x, weight, bias, &options),
+            DType::F16 => conv::conv2d_f16(x, weight, bias, &options),
+            DType::BF16 => conv::conv2d_bf16(x, weight, bias, &options),
+            dtype => panic!("conv2d: unsupported dtype {:?}", dtype),
+        }
     }
 
     fn deform_conv2d(
@@ -45,12 +68,18 @@ impl ModuleOps<Ember> for Ember {
     }
 
     fn conv3d(
-        _x: FloatTensor<Ember>,
-        _weight: FloatTensor<Ember>,
-        _bias: Option<FloatTensor<Ember>>,
-        _options: ConvOptions<3>,
+        x: FloatTensor<Ember>,
+        weight: FloatTensor<Ember>,
+        bias: Option<FloatTensor<Ember>>,
+        options: ConvOptions<3>,
     ) -> FloatTensor<Ember> {
-        todo!("conv3d")
+        match x.dtype() {
+            DType::F32 => conv::conv3d_f32(x, weight, bias, &options),
+            DType::F64 => conv::conv3d_f64(x, weight, bias, &options),
+            DType::F16 => conv::conv3d_f16(x, weight, bias, &options),
+            DType::BF16 => conv::conv3d_bf16(x, weight, bias, &options),
+            dtype => panic!("conv3d: unsupported dtype {:?}", dtype),
+        }
     }
 
     fn conv_transpose2d(

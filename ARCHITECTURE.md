@@ -454,6 +454,67 @@ pub fn matmul_f32(lhs: &[f32], rhs: &[f32], out: &mut [f32], m: usize, n: usize,
 
 Performance: 1.3-3.4x faster than NdArray (which uses matrixmultiply crate).
 
+### Convolutions (im2col + gemm)
+
+All convolutions use the im2col transformation followed by matrix multiplication. This approach:
+- Converts convolution to a well-optimized GEMM operation
+- Leverages the same gemm crate used for matmul
+- Supports arbitrary strides, padding, dilation, and groups
+
+**Unified 3D Implementation**
+
+Rather than three separate implementations, conv1d and conv2d delegate to conv3d:
+
+```
+conv1d([B, C, W], kernel=[K_out, C_in, W_k])
+  → expand dims → conv3d([B, C, 1, 1, W], kernel=[K_out, C_in, 1, 1, W_k])
+  → squeeze → [B, K_out, W_out]
+
+conv2d([B, C, H, W], kernel=[K_out, C_in, H_k, W_k])
+  → expand dims → conv3d([B, C, 1, H, W], kernel=[K_out, C_in, 1, H_k, W_k])
+  → squeeze → [B, K_out, H_out, W_out]
+```
+
+Size-1 dimensions have negligible overhead since the gemm operation dominates runtime.
+
+**im2col Transformation**
+
+Rearranges input patches into columns for matrix multiplication:
+
+```
+Input: [B, C_in, D, H, W]
+Kernel: [C_out, C_in/groups, K_d, K_h, K_w]
+
+im2col produces: [spatial_out, C_in/groups * K_d * K_h * K_w]
+  where spatial_out = D_out * H_out * W_out
+
+GEMM: W[C_out/groups, col_len] × col[col_len, spatial_out]
+  → output[C_out/groups, spatial_out]
+```
+
+**Dtype Support**
+
+| Dtype | Implementation |
+|-------|----------------|
+| f32 | Native gemm |
+| f64 | Native gemm |
+| f16 | Native gemm (since gemm v0.15) |
+| bf16 | Convert to f32, compute, convert back |
+
+bf16 requires conversion because gemm doesn't have native bf16 support.
+
+**Optimization Opportunities**
+
+Current implementation is baseline (correct but unoptimized):
+
+1. **Parallel im2col**: Current im2col is single-threaded. Large spatial dimensions could parallelize over output positions.
+
+2. **Parallel batch/groups**: Loop over batches and groups is sequential. rayon can parallelize when batch*groups is large.
+
+3. **Memory layout**: im2col allocates O(spatial_out × kernel_volume × channels) per batch×group. Could reuse buffers or tile for cache efficiency.
+
+4. **Direct convolution**: For small kernels (3×3), direct convolution without im2col can be faster due to less memory movement.
+
 ---
 
 ## Optimization Decisions
@@ -519,10 +580,13 @@ this in `Arc` for cheap cloning while preserving zero-copy capabilities.
 - Reductions: sum, mean, max, min
 - Matmul via gemm crate
 
-### Phase 3: Module Operations
+### Phase 3: Module Operations (In Progress)
 
-- Conv2d, conv_transpose
-- Pooling (max, avg)
+- **Convolutions** (done): conv1d, conv2d, conv3d via unified im2col + gemm
+  - All dtypes: f32, f64, f16 (native), bf16 (via f32)
+  - Groups, stride, padding, dilation support
+- conv_transpose (todo)
+- Pooling: max, avg (todo)
 - Full `ModuleOps` trait
 
 ### Phase 4: Optimization

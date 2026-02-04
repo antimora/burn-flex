@@ -4,6 +4,7 @@ mod activation;
 pub mod binary;
 mod bool;
 pub mod comparison;
+pub mod conv;
 pub mod expand;
 mod float;
 mod int;
