@@ -157,16 +157,16 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_select_add")
     }
 
-    fn float_slice(_tensor: FloatTensor<Ember>, _slices: &[Slice]) -> FloatTensor<Ember> {
-        todo!("float_slice")
+    fn float_slice(tensor: FloatTensor<Ember>, slices: &[Slice]) -> FloatTensor<Ember> {
+        crate::ops::slice::slice(tensor, slices)
     }
 
     fn float_slice_assign(
-        _tensor: FloatTensor<Ember>,
-        _slices: &[Slice],
-        _value: FloatTensor<Ember>,
+        tensor: FloatTensor<Ember>,
+        slices: &[Slice],
+        value: FloatTensor<Ember>,
     ) -> FloatTensor<Ember> {
-        todo!("float_slice_assign")
+        crate::ops::slice::slice_assign(tensor, slices, value)
     }
 
     fn float_mask_where(

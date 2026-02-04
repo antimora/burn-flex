@@ -30,8 +30,8 @@ impl BoolTensorOps<Ember> for Ember {
         tensor.reshape(shape)
     }
 
-    fn bool_slice(_tensor: BoolTensor<Ember>, _slices: &[Slice]) -> BoolTensor<Ember> {
-        todo!("bool_slice")
+    fn bool_slice(tensor: BoolTensor<Ember>, slices: &[Slice]) -> BoolTensor<Ember> {
+        crate::ops::slice::slice(tensor, slices)
     }
 
     fn bool_empty(shape: Shape, _device: &Device<Ember>) -> BoolTensor<Ember> {
@@ -39,11 +39,11 @@ impl BoolTensorOps<Ember> for Ember {
     }
 
     fn bool_slice_assign(
-        _tensor: BoolTensor<Ember>,
-        _slices: &[Slice],
-        _value: BoolTensor<Ember>,
+        tensor: BoolTensor<Ember>,
+        slices: &[Slice],
+        value: BoolTensor<Ember>,
     ) -> BoolTensor<Ember> {
-        todo!("bool_slice_assign")
+        crate::ops::slice::slice_assign(tensor, slices, value)
     }
 
     fn bool_into_int(_tensor: BoolTensor<Ember>) -> IntTensor<Ember> {

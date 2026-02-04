@@ -83,6 +83,11 @@ impl EmberTensor {
         self.layout.is_contiguous()
     }
 
+    /// Get the raw bytes (for internal use).
+    pub fn bytes(&self) -> &Bytes {
+        &self.data
+    }
+
     /// Zero-copy typed view of the full storage buffer.
     ///
     /// Use with `StridedIter` for non-contiguous access, or with

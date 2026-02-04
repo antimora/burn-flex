@@ -1,6 +1,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
-use burn_std::Shape;
+use burn_std::{Shape, Slice};
 
 /// Layout describes how to interpret a linear buffer as an N-dimensional tensor.
 ///
@@ -119,6 +119,89 @@ impl Layout {
             strides: self.strides.clone(),
             start_offset: self.start_offset + self.strides[dim] * start,
         }
+    }
+
+    /// Apply slices to create a new layout (zero-copy for positive steps).
+    ///
+    /// Returns `(new_layout, needs_copy)`:
+    /// - `needs_copy = false`: Can use zero-copy view with new layout
+    /// - `needs_copy = true`: Has negative steps, requires data copy
+    pub fn slice(&self, slices: &[Slice]) -> (Self, bool) {
+        let ndims = self.num_dims();
+        let mut new_dims = self.shape.dims.clone();
+        let mut new_strides = self.strides.clone();
+        let mut new_offset = self.start_offset;
+        let mut needs_copy = false;
+
+        for (dim, slice) in slices.iter().enumerate() {
+            if dim >= ndims {
+                break;
+            }
+
+            let dim_size = self.shape.dims[dim] as isize;
+            let stride = self.strides[dim];
+
+            // Normalize start index (handle negative)
+            let start = if slice.start < 0 {
+                (dim_size + slice.start).max(0) as usize
+            } else {
+                (slice.start as usize).min(dim_size as usize)
+            };
+
+            // Normalize end index (handle negative and None)
+            let end = match slice.end {
+                Some(e) if e < 0 => (dim_size + e).max(0) as usize,
+                Some(e) => (e as usize).min(dim_size as usize),
+                None if slice.step > 0 => dim_size as usize,
+                None => 0, // For negative step with no end, go to beginning
+            };
+
+            let step = slice.step;
+
+            if step > 0 {
+                // Positive step: forward iteration
+                let len = if end > start {
+                    (end - start + step as usize - 1) / step as usize
+                } else {
+                    0
+                };
+                new_dims[dim] = len;
+                new_strides[dim] = stride * step as usize;
+                new_offset += stride * start;
+            } else {
+                // Negative step: reverse iteration - requires copy
+                needs_copy = true;
+                let abs_step = (-step) as usize;
+                // For negative step, start from higher index going down
+                let (actual_start, actual_end) = if slice.end.is_none() {
+                    // No end specified: start from slice.start going to 0
+                    let s = if slice.start < 0 {
+                        (dim_size + slice.start).max(0) as usize
+                    } else {
+                        (slice.start as usize).min(dim_size.saturating_sub(1) as usize)
+                    };
+                    (s, 0)
+                } else {
+                    (start, end)
+                };
+                let len = if actual_start >= actual_end {
+                    (actual_start - actual_end + abs_step) / abs_step
+                } else {
+                    0
+                };
+                new_dims[dim] = len;
+                new_strides[dim] = stride; // Will be handled during copy
+            }
+        }
+
+        (
+            Self {
+                shape: Shape::from(new_dims),
+                strides: new_strides,
+                start_offset: new_offset,
+            },
+            needs_copy,
+        )
     }
 
     /// Reshape to a new shape. Only works if contiguous with zero offset.

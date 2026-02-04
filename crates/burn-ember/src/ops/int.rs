@@ -30,8 +30,8 @@ impl IntTensorOps<Ember> for Ember {
         tensor.reshape(shape)
     }
 
-    fn int_slice(_tensor: IntTensor<Ember>, _slices: &[Slice]) -> IntTensor<Ember> {
-        todo!("int_slice")
+    fn int_slice(tensor: IntTensor<Ember>, slices: &[Slice]) -> IntTensor<Ember> {
+        crate::ops::slice::slice(tensor, slices)
     }
 
     fn int_empty(shape: Shape, _device: &Device<Ember>, dtype: IntDType) -> IntTensor<Ember> {
@@ -55,11 +55,11 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_slice_assign(
-        _tensor: IntTensor<Ember>,
-        _slices: &[Slice],
-        _value: IntTensor<Ember>,
+        tensor: IntTensor<Ember>,
+        slices: &[Slice],
+        value: IntTensor<Ember>,
     ) -> IntTensor<Ember> {
-        todo!("int_slice_assign")
+        crate::ops::slice::slice_assign(tensor, slices, value)
     }
 
     fn int_gather(

@@ -8,4 +8,5 @@ mod int;
 pub mod matmul;
 mod module;
 mod qtensor;
+pub mod slice;
 mod transaction;

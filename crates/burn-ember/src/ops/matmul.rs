@@ -5,6 +5,7 @@
 //! - Enables parallelism for large matrices (with rayon feature)
 //! - Batched matmul parallelized across batch dimension
 
+use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::DType;
 use burn_std::{Bytes, Shape, bf16, f16};
