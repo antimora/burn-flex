@@ -371,7 +371,10 @@ impl<'a> StridedBlocks<'a> {
 
 /// Iterator over block start indices.
 pub enum BlockStartIter<'a> {
-    Single { start: usize, done: bool },
+    Single {
+        start: usize,
+        done: bool,
+    },
     Multiple {
         layout: &'a Layout,
         multi_index: Vec<usize>,

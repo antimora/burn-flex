@@ -25,7 +25,9 @@ const LARGE: usize = 1024 * 1024; // 1M elements
 
 fn make_tensor<B: Backend>(size: usize) -> Tensor<B, 1> {
     // Use values in range [0.1, 1.1] to avoid domain issues for log/sqrt
-    let data: Vec<f32> = (0..size).map(|i| 0.1 + (i % 1000) as f32 / 1000.0).collect();
+    let data: Vec<f32> = (0..size)
+        .map(|i| 0.1 + (i % 1000) as f32 / 1000.0)
+        .collect();
     Tensor::from_data(TensorData::new(data, [size]), &Default::default())
 }
 
