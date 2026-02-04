@@ -15,8 +15,8 @@ pub fn slice(tensor: EmberTensor, slices: &[Slice]) -> EmberTensor {
     let (new_layout, needs_copy) = tensor.layout().slice(slices);
 
     if !needs_copy {
-        // Zero-copy: just update the layout
-        EmberTensor::new(tensor.bytes().clone(), new_layout, tensor.dtype())
+        // Zero-copy: share data with new layout
+        EmberTensor::from_arc(tensor.data_arc(), new_layout, tensor.dtype())
     } else {
         // Needs copy due to negative steps
         slice_with_copy(&tensor, slices)

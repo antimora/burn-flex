@@ -1,3 +1,4 @@
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -8,12 +9,12 @@ use crate::layout::Layout;
 
 /// CPU tensor primitive for the Ember backend.
 ///
-/// Uses type-erased byte storage with runtime dtype. Operations cast to typed
-/// slices at the boundary, avoiding enum proliferation while maintaining performance.
+/// Uses type-erased byte storage with runtime dtype and Arc-based sharing.
+/// Clone is O(1) (refcount increment). Copy-on-write for mutations.
 #[derive(Clone)]
 pub struct EmberTensor {
-    /// Raw byte storage (aligned, COW semantics via Arc).
-    data: Bytes,
+    /// Shared byte storage. Clone increments refcount.
+    data: Arc<Bytes>,
     /// Layout describing shape, strides, and offset.
     layout: Layout,
     /// Runtime data type.
@@ -26,6 +27,7 @@ impl fmt::Debug for EmberTensor {
             .field("shape", &self.layout.shape().dims)
             .field("dtype", &self.dtype)
             .field("contiguous", &self.layout.is_contiguous())
+            .field("unique", &self.is_unique())
             .finish()
     }
 }
@@ -34,7 +36,7 @@ impl EmberTensor {
     /// Create a new tensor from bytes, layout, and dtype.
     pub fn new(data: Bytes, layout: Layout, dtype: DType) -> Self {
         Self {
-            data,
+            data: Arc::new(data),
             layout,
             dtype,
         }
@@ -46,7 +48,7 @@ impl EmberTensor {
         let layout = Layout::contiguous(shape);
         let dtype = data.dtype;
         Self {
-            data: data.bytes,
+            data: Arc::new(data.bytes),
             layout,
             dtype,
         }
@@ -54,18 +56,38 @@ impl EmberTensor {
 
     /// Convert tensor to TensorData.
     ///
-    /// If non-contiguous, this will copy data to make it contiguous.
+    /// If non-contiguous or shared, this will copy data.
     pub fn into_data(self) -> TensorData {
         if self.layout.is_contiguous() && self.layout.start_offset() == 0 {
-            TensorData {
-                bytes: self.data,
-                shape: self.layout.shape().dims.clone(),
-                dtype: self.dtype,
+            // Try to unwrap Arc without copying if we're the only owner
+            match Arc::try_unwrap(self.data) {
+                Ok(bytes) => TensorData {
+                    bytes,
+                    shape: self.layout.shape().dims.clone(),
+                    dtype: self.dtype,
+                },
+                Err(arc) => {
+                    // Shared, need to copy
+                    let bytes = Bytes::from_bytes_vec((*arc).to_vec());
+                    TensorData {
+                        bytes,
+                        shape: self.layout.shape().dims.clone(),
+                        dtype: self.dtype,
+                    }
+                }
             }
         } else {
             // Non-contiguous: need to copy to contiguous layout
             self.to_contiguous().into_data()
         }
+    }
+
+    /// Check if this tensor has exclusive ownership of its data.
+    ///
+    /// When true, in-place mutations are safe without copying.
+    #[inline]
+    pub fn is_unique(&self) -> bool {
+        Arc::strong_count(&self.data) == 1
     }
 
     /// Get the layout.
@@ -83,14 +105,23 @@ impl EmberTensor {
         self.layout.is_contiguous()
     }
 
-    /// Get the raw bytes (for internal use).
-    pub fn bytes(&self) -> &Bytes {
+    /// Get the raw bytes (read-only).
+    pub fn bytes(&self) -> &[u8] {
         &self.data
     }
 
-    /// Consume tensor and return the raw bytes.
-    pub fn into_bytes(self) -> Bytes {
-        self.data
+    /// Get a clone of the Arc for sharing data with a new layout.
+    ///
+    /// Use this for zero-copy view operations (reshape, transpose, slice).
+    pub fn data_arc(&self) -> Arc<Bytes> {
+        Arc::clone(&self.data)
+    }
+
+    /// Create a tensor from shared data, layout, and dtype.
+    ///
+    /// Use this for zero-copy view operations.
+    pub fn from_arc(data: Arc<Bytes>, layout: Layout, dtype: DType) -> Self {
+        Self { data, layout, dtype }
     }
 
     /// Zero-copy typed view of the full storage buffer.
@@ -111,9 +142,11 @@ impl EmberTensor {
         bytemuck::cast_slice(&self.data)
     }
 
-    /// Mutable typed view of the full storage buffer.
+    /// Mutable typed view with copy-on-write semantics.
     ///
-    /// For in-place operations when you own the tensor.
+    /// If the tensor is shared (refcount > 1), this will copy the data first.
+    /// For in-place operations, prefer `try_storage_mut()` which returns None
+    /// if shared, allowing you to choose an alternative strategy.
     ///
     /// # Panics
     /// Debug-asserts if `E::dtype()` doesn't match the tensor's dtype.
@@ -125,7 +158,30 @@ impl EmberTensor {
             self.dtype,
             E::dtype()
         );
-        bytemuck::cast_slice_mut(&mut self.data)
+        // COW: clone data if shared
+        let bytes = Arc::make_mut(&mut self.data);
+        bytemuck::cast_slice_mut(bytes)
+    }
+
+    /// Try to get mutable storage without copying.
+    ///
+    /// Returns `Some` if tensor is uniquely owned, `None` if shared.
+    /// Use this when you want to avoid the implicit copy in `storage_mut()`.
+    pub fn try_storage_mut<E: Element + bytemuck::Pod>(&mut self) -> Option<&mut [E]> {
+        debug_assert_eq!(
+            E::dtype(),
+            self.dtype,
+            "try_storage_mut: dtype mismatch (expected {:?}, got {:?})",
+            self.dtype,
+            E::dtype()
+        );
+        if self.is_unique() {
+            // Safe: we're the only owner
+            let bytes = Arc::get_mut(&mut self.data)?;
+            Some(bytemuck::cast_slice_mut(bytes))
+        } else {
+            None
+        }
     }
 
     /// Get typed slice view (zero-cost if contiguous and offset is 0).
@@ -148,7 +204,7 @@ impl EmberTensor {
         let bytes = Bytes::from_bytes_vec(alloc::vec![0u8; num_elements * elem_size]);
         let layout = Layout::contiguous(shape);
         Self {
-            data: bytes,
+            data: Arc::new(bytes),
             layout,
             dtype,
         }
@@ -208,7 +264,7 @@ impl EmberTensor {
         let bytes = Bytes::from_elems(dst);
         let layout = Layout::contiguous(self.layout.shape().clone());
         Self {
-            data: bytes,
+            data: Arc::new(bytes),
             layout,
             dtype: self.dtype,
         }
@@ -237,7 +293,7 @@ impl EmberTensor {
         let bytes = Bytes::from_elems(dst);
         let layout = Layout::contiguous(self.layout.shape().clone());
         Self {
-            data: bytes,
+            data: Arc::new(bytes),
             layout,
             dtype: self.dtype,
         }
@@ -266,7 +322,7 @@ impl EmberTensor {
         let bytes = Bytes::from_elems(dst);
         let layout = Layout::contiguous(self.layout.shape().clone());
         Self {
-            data: bytes,
+            data: Arc::new(bytes),
             layout,
             dtype: self.dtype,
         }
@@ -282,7 +338,7 @@ impl EmberTensor {
 
         if let Some(new_layout) = self.layout.reshape(new_shape.clone()) {
             Self {
-                data: self.data.clone(),
+                data: Arc::clone(&self.data),
                 layout: new_layout,
                 dtype: self.dtype,
             }
@@ -295,7 +351,7 @@ impl EmberTensor {
     /// Transpose two dimensions. Zero-copy (metadata only).
     pub fn transpose(&self, dim1: usize, dim2: usize) -> Self {
         Self {
-            data: self.data.clone(),
+            data: Arc::clone(&self.data),
             layout: self.layout.transpose(dim1, dim2),
             dtype: self.dtype,
         }
@@ -304,7 +360,7 @@ impl EmberTensor {
     /// Narrow/slice along a dimension. Zero-copy (metadata only).
     pub fn narrow(&self, dim: usize, start: usize, len: usize) -> Self {
         Self {
-            data: self.data.clone(),
+            data: Arc::clone(&self.data),
             layout: self.layout.narrow(dim, start, len),
             dtype: self.dtype,
         }
@@ -365,5 +421,46 @@ mod tests {
         let transposed = tensor.transpose(0, 1);
         assert_eq!(transposed.shape().dims, vec![3, 2]);
         assert!(!transposed.is_contiguous());
+    }
+
+    #[test]
+    fn test_clone_is_cheap() {
+        let data = TensorData::from([1.0f32, 2.0, 3.0, 4.0]);
+        let tensor = EmberTensor::from_data(data);
+
+        // Before clone, tensor is unique
+        assert!(tensor.is_unique());
+
+        // Clone shares data
+        let cloned = tensor.clone();
+        assert!(!tensor.is_unique());
+        assert!(!cloned.is_unique());
+
+        // Both point to same data
+        assert!(core::ptr::eq(tensor.bytes().as_ptr(), cloned.bytes().as_ptr()));
+    }
+
+    #[test]
+    fn test_cow_on_mutation() {
+        let data = TensorData::from([1.0f32, 2.0, 3.0, 4.0]);
+        let tensor = EmberTensor::from_data(data);
+        let mut cloned = tensor.clone();
+
+        // Both share data
+        assert!(!tensor.is_unique());
+        assert!(!cloned.is_unique());
+
+        // Mutate cloned - triggers COW
+        let storage: &mut [f32] = cloned.storage_mut();
+        storage[0] = 99.0;
+
+        // Now cloned has its own copy, tensor is unique again
+        assert!(tensor.is_unique());
+        assert!(cloned.is_unique());
+
+        // Data is different
+        assert_ne!(tensor.bytes().as_ptr(), cloned.bytes().as_ptr());
+        assert_eq!(tensor.storage::<f32>()[0], 1.0);
+        assert_eq!(cloned.storage::<f32>()[0], 99.0);
     }
 }

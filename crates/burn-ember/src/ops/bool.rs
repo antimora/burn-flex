@@ -115,14 +115,17 @@ impl BoolTensorOps<Ember> for Ember {
         use burn_backend::DType;
         use burn_std::Bytes;
 
-        // Fast path: in-place for contiguous tensors at offset 0
-        if tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0 {
+        // Fast path: in-place for unique, contiguous tensors at offset 0
+        if tensor.is_unique()
+            && tensor.layout().is_contiguous()
+            && tensor.layout().start_offset() == 0
+        {
             let storage = tensor.storage_mut::<u8>();
             crate::simd::bool_not_inplace_u8(storage);
             return tensor;
         }
 
-        // Fallback: allocate new buffer for non-contiguous
+        // Allocating path for shared or non-contiguous tensors
         let shape = tensor.layout().shape().clone();
         let storage: &[u8] = tensor.bytes();
 
@@ -241,7 +244,7 @@ enum BoolBinaryOp {
     Xor,
 }
 
-fn bool_binary_op_simd(mut lhs: EmberTensor, rhs: EmberTensor, op: BoolBinaryOp) -> EmberTensor {
+fn bool_binary_op_simd(mut lhs: EmberTensor, mut rhs: EmberTensor, op: BoolBinaryOp) -> EmberTensor {
     use crate::Layout;
     use crate::strided_index::StridedIter;
     use burn_std::Bytes;
@@ -252,33 +255,50 @@ fn bool_binary_op_simd(mut lhs: EmberTensor, rhs: EmberTensor, op: BoolBinaryOp)
         "bool_binary_op: shape mismatch"
     );
 
-    // In-place fast path: lhs contiguous at offset 0, rhs contiguous
-    if let (Some((0, l_end)), Some((r_start, r_end))) = (
-        lhs.layout().contiguous_offsets(),
-        rhs.layout().contiguous_offsets(),
-    ) {
-        let rhs_storage: &[u8] = rhs.bytes();
-        let r_slice = &rhs_storage[r_start..r_end];
-        let lhs_storage: &mut [u8] = lhs.storage_mut();
-        let l_slice = &mut lhs_storage[..l_end];
+    let shape = lhs.layout().shape().clone();
+    let l_offsets = lhs.layout().contiguous_offsets();
+    let r_offsets = rhs.layout().contiguous_offsets();
 
-        match op {
-            BoolBinaryOp::And => crate::simd::bool_and_inplace_u8(l_slice, r_slice),
-            BoolBinaryOp::Or => crate::simd::bool_or_inplace_u8(l_slice, r_slice),
-            BoolBinaryOp::Xor => crate::simd::bool_xor_inplace_u8(l_slice, r_slice),
+    // Fast path 1: lhs is unique and contiguous at offset 0 -> in-place on lhs
+    if lhs.is_unique() {
+        if let (Some((0, l_end)), Some((r_start, r_end))) = (l_offsets, r_offsets) {
+            let rhs_storage: &[u8] = rhs.bytes();
+            let r_slice = &rhs_storage[r_start..r_end];
+            let lhs_storage: &mut [u8] = lhs.storage_mut();
+            let l_slice = &mut lhs_storage[..l_end];
+
+            match op {
+                BoolBinaryOp::And => crate::simd::bool_and_inplace_u8(l_slice, r_slice),
+                BoolBinaryOp::Or => crate::simd::bool_or_inplace_u8(l_slice, r_slice),
+                BoolBinaryOp::Xor => crate::simd::bool_xor_inplace_u8(l_slice, r_slice),
+            }
+            return lhs;
         }
-        return lhs;
     }
 
-    // Allocating path for non-contiguous or offset tensors
-    let shape = lhs.layout().shape().clone();
+    // Fast path 2: rhs is unique and contiguous at offset 0 -> in-place on rhs
+    // (And/Or/Xor are commutative, so we can swap operands)
+    if rhs.is_unique() {
+        if let (Some((l_start, l_end)), Some((0, r_end))) = (l_offsets, r_offsets) {
+            let lhs_storage: &[u8] = lhs.bytes();
+            let l_slice = &lhs_storage[l_start..l_end];
+            let rhs_storage: &mut [u8] = rhs.storage_mut();
+            let r_slice = &mut rhs_storage[..r_end];
+
+            match op {
+                BoolBinaryOp::And => crate::simd::bool_and_inplace_u8(r_slice, l_slice),
+                BoolBinaryOp::Or => crate::simd::bool_or_inplace_u8(r_slice, l_slice),
+                BoolBinaryOp::Xor => crate::simd::bool_xor_inplace_u8(r_slice, l_slice),
+            }
+            return rhs;
+        }
+    }
+
+    // Allocating path: neither tensor is suitable for in-place
     let lhs_storage: &[u8] = lhs.bytes();
     let rhs_storage: &[u8] = rhs.bytes();
 
-    let result: Vec<u8> = match (
-        lhs.layout().contiguous_offsets(),
-        rhs.layout().contiguous_offsets(),
-    ) {
+    let result: Vec<u8> = match (l_offsets, r_offsets) {
         (Some((l_start, l_end)), Some((r_start, r_end))) => {
             let l_slice = &lhs_storage[l_start..l_end];
             let r_slice = &rhs_storage[r_start..r_end];

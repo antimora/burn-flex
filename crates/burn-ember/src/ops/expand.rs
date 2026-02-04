@@ -114,7 +114,7 @@ pub fn expand(tensor: EmberTensor, target_shape: Shape) -> EmberTensor {
     }
 
     let new_layout = Layout::new(target_shape, new_strides, start_offset);
-    EmberTensor::new(tensor.into_bytes(), new_layout, dtype)
+    EmberTensor::from_arc(tensor.data_arc(), new_layout, dtype)
 }
 
 #[cfg(test)]
