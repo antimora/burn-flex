@@ -55,3 +55,7 @@ harness = false
 [[bench]]
 name = "unary_ops"
 harness = false
+
+[[bench]]
+name = "comparison_ops"
+harness = false
