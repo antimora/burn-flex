@@ -623,6 +623,54 @@ pub fn bool_not_u8(a: &[u8], out: &mut [u8]) {
     bool_not_u8_sequential(a, out);
 }
 
+/// SIMD boolean NOT in-place: a[i] = !a[i]
+#[inline]
+pub fn bool_not_inplace_u8(a: &mut [u8]) {
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        bool_not_inplace_u8_parallel(a);
+        return;
+    }
+
+    bool_not_inplace_u8_sequential(a);
+}
+
+#[inline]
+fn bool_not_inplace_u8_sequential(a: &mut [u8]) {
+    let len = a.len();
+    let chunks = len / U8_LANES;
+    let remainder = len % U8_LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let ptr = a.as_mut_ptr();
+            let ones = vdupq_n_u8(1);
+            let zeros = vdupq_n_u8(0);
+
+            for i in 0..chunks {
+                let offset = i * U8_LANES;
+                let va = vld1q_u8(ptr.add(offset));
+                let is_zero = vceqq_u8(va, zeros);
+                let result = vandq_u8(is_zero, ones);
+                vst1q_u8(ptr.add(offset), result);
+            }
+        }
+    }
+
+    let tail_start = chunks * U8_LANES;
+    for i in 0..remainder {
+        a[tail_start + i] = (a[tail_start + i] == 0) as u8;
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn bool_not_inplace_u8_parallel(a: &mut [u8]) {
+    const CHUNK_SIZE: usize = 4096;
+    a.par_chunks_mut(CHUNK_SIZE).for_each(|chunk| {
+        bool_not_inplace_u8_sequential(chunk);
+    });
+}
+
 #[inline]
 fn bool_not_u8_sequential(a: &[u8], out: &mut [u8]) {
     let len = a.len();

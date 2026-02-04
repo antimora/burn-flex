@@ -109,12 +109,20 @@ impl BoolTensorOps<Ember> for Ember {
         EmberTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
     }
 
-    fn bool_not(tensor: BoolTensor<Ember>) -> BoolTensor<Ember> {
+    fn bool_not(mut tensor: BoolTensor<Ember>) -> BoolTensor<Ember> {
         use crate::Layout;
         use crate::strided_index::StridedIter;
         use burn_backend::DType;
         use burn_std::Bytes;
 
+        // Fast path: in-place for contiguous tensors at offset 0
+        if tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0 {
+            let storage = tensor.storage_mut::<u8>();
+            crate::simd::bool_not_inplace_u8(storage);
+            return tensor;
+        }
+
+        // Fallback: allocate new buffer for non-contiguous
         let shape = tensor.layout().shape().clone();
         let storage: &[u8] = tensor.bytes();
 
