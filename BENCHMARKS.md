@@ -124,6 +124,36 @@ With optimizations, Ember wins for:
 
 256x256 is essentially equal to NdArray. Ember wins at 4/5 square sizes, **all 3 transposed cases**, and **all 4 batched cases**.
 
+### Integer Matrix Multiplication (i32)
+
+**Run with:** `cargo bench --bench matmul --features simd,rayon`
+
+Integer matmul uses naive triple-loop with SIMD dot product (no gemm equivalent for integers).
+
+#### 2D Square Matrices
+
+| Size | Ember | NdArray | Result |
+|------|-------|---------|--------|
+| 64x64 | 114µs | 116µs | ~equal |
+| 128x128 | 976µs | 1.08ms | **Ember 10% faster** |
+| 256x256 | 10.9ms | 10.2ms | NdArray 7% faster |
+| 512x512 | 122ms | 119ms | ~equal |
+
+#### Batched Integer Matmul
+
+| Benchmark | Ember | NdArray | Result |
+|-----------|-------|---------|--------|
+| batch8_64x64 | 945µs | 261µs | NdArray 3.6x faster |
+| batch16_128x128 | 15.5ms | 2.4ms | NdArray 6.5x faster |
+
+#### Integer Matmul Analysis
+
+For 2D matrices, Ember is competitive with NdArray. The SIMD-optimized dot product with rhs transpose provides good performance for single matrix operations.
+
+For batched operations, NdArray is significantly faster. This is likely due to NdArray using more optimized BLAS-like routines internally. Ember's naive approach with per-batch transpose has higher overhead.
+
+**Future optimization:** Tiled/blocked matrix multiplication would improve cache utilization for both 2D and batched cases.
+
 ### Analysis
 
 #### Row-based iteration for 2D tensors

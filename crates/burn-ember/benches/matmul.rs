@@ -182,3 +182,86 @@ macro_rules! bench_backend {
 
 bench_backend!(Ember, ember, "Ember");
 bench_backend!(NdArray, ndarray, "NdArray");
+
+// Integer matmul benchmarks
+fn make_int_matrix<B: Backend>(rows: usize, cols: usize) -> Tensor<B, 2, burn_tensor::Int> {
+    let data: Vec<i32> = (0..rows * cols).map(|i| (i % 1000) as i32 - 500).collect();
+    Tensor::from_data(TensorData::new(data, [rows, cols]), &Default::default())
+}
+
+fn make_int_batch_matrix<B: Backend>(
+    batch: usize,
+    rows: usize,
+    cols: usize,
+) -> Tensor<B, 3, burn_tensor::Int> {
+    let data: Vec<i32> = (0..batch * rows * cols)
+        .map(|i| (i % 1000) as i32 - 500)
+        .collect();
+    Tensor::from_data(TensorData::new(data, [batch, rows, cols]), &Default::default())
+}
+
+macro_rules! bench_int_backend {
+    ($backend:ty, $mod_name:ident, $backend_name:literal) => {
+        #[divan::bench_group(name = $backend_name)]
+        mod $mod_name {
+            use super::*;
+
+            type B = $backend;
+
+            #[divan::bench_group(name = "int_square")]
+            mod square {
+                use super::*;
+
+                #[divan::bench]
+                fn matmul_64x64(bencher: Bencher) {
+                    let a = make_int_matrix::<B>(64, 64);
+                    let b = make_int_matrix::<B>(64, 64);
+                    bencher.bench(|| a.clone().matmul(b.clone()));
+                }
+
+                #[divan::bench]
+                fn matmul_128x128(bencher: Bencher) {
+                    let a = make_int_matrix::<B>(128, 128);
+                    let b = make_int_matrix::<B>(128, 128);
+                    bencher.bench(|| a.clone().matmul(b.clone()));
+                }
+
+                #[divan::bench]
+                fn matmul_256x256(bencher: Bencher) {
+                    let a = make_int_matrix::<B>(256, 256);
+                    let b = make_int_matrix::<B>(256, 256);
+                    bencher.bench(|| a.clone().matmul(b.clone()));
+                }
+
+                #[divan::bench]
+                fn matmul_512x512(bencher: Bencher) {
+                    let a = make_int_matrix::<B>(512, 512);
+                    let b = make_int_matrix::<B>(512, 512);
+                    bencher.bench(|| a.clone().matmul(b.clone()));
+                }
+            }
+
+            #[divan::bench_group(name = "int_batched")]
+            mod batched {
+                use super::*;
+
+                #[divan::bench]
+                fn batch8_64x64(bencher: Bencher) {
+                    let a = make_int_batch_matrix::<B>(8, 64, 64);
+                    let b = make_int_batch_matrix::<B>(8, 64, 64);
+                    bencher.bench(|| a.clone().matmul(b.clone()));
+                }
+
+                #[divan::bench]
+                fn batch16_128x128(bencher: Bencher) {
+                    let a = make_int_batch_matrix::<B>(16, 128, 128);
+                    let b = make_int_batch_matrix::<B>(16, 128, 128);
+                    bencher.bench(|| a.clone().matmul(b.clone()));
+                }
+            }
+        }
+    };
+}
+
+bench_int_backend!(Ember, ember_int, "Ember_Int");
+bench_int_backend!(NdArray, ndarray_int, "NdArray_Int");

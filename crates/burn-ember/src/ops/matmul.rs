@@ -838,6 +838,7 @@ fn matmul_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 }
 
 /// 2D i32 matmul: [M, K] x [K, N] -> [M, N]
+/// Transposes rhs to enable contiguous access for dot product.
 fn matmul_2d_i32(lhs: &EmberTensor, rhs: &EmberTensor) -> EmberTensor {
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
@@ -849,20 +850,22 @@ fn matmul_2d_i32(lhs: &EmberTensor, rhs: &EmberTensor) -> EmberTensor {
     let lhs_data: &[i32] = lhs.storage();
     let rhs_data: &[i32] = rhs.storage();
 
+    // Transpose rhs [K, N] -> [N, K] for contiguous column access
+    let mut rhs_t = vec![0i32; k * n];
+    for i in 0..k {
+        for j in 0..n {
+            rhs_t[j * k + i] = rhs_data[i * n + j];
+        }
+    }
+
     let mut output = vec![0i32; m * n];
 
-    // Naive matmul with SIMD inner loop
+    // Now both lhs rows and rhs columns (transposed rows) are contiguous
     for i in 0..m {
+        let lhs_row = &lhs_data[i * k..(i + 1) * k];
         for j in 0..n {
-            let mut sum = 0i32;
-            let lhs_row = &lhs_data[i * k..(i + 1) * k];
-
-            // Gather rhs column (strided access)
-            // For better perf, we could transpose rhs, but keep it simple for now
-            for l in 0..k {
-                sum = sum.wrapping_add(lhs_row[l].wrapping_mul(rhs_data[l * n + j]));
-            }
-            output[i * n + j] = sum;
+            let rhs_col = &rhs_t[j * k..(j + 1) * k];
+            output[i * n + j] = dot_i32(lhs_row, rhs_col);
         }
     }
 
@@ -872,6 +875,70 @@ fn matmul_2d_i32(lhs: &EmberTensor, rhs: &EmberTensor) -> EmberTensor {
         Layout::contiguous(out_shape),
         DType::I32,
     )
+}
+
+/// SIMD-optimized dot product for i32 slices.
+#[inline]
+fn dot_i32(a: &[i32], b: &[i32]) -> i32 {
+    debug_assert_eq!(a.len(), b.len());
+
+    #[cfg(all(target_arch = "aarch64", feature = "simd"))]
+    {
+        dot_i32_neon(a, b)
+    }
+
+    #[cfg(not(all(target_arch = "aarch64", feature = "simd")))]
+    {
+        dot_i32_scalar(a, b)
+    }
+}
+
+/// Scalar dot product fallback.
+#[inline]
+#[allow(dead_code)]
+fn dot_i32_scalar(a: &[i32], b: &[i32]) -> i32 {
+    let mut sum = 0i32;
+    for i in 0..a.len() {
+        sum = sum.wrapping_add(a[i].wrapping_mul(b[i]));
+    }
+    sum
+}
+
+/// NEON-optimized dot product for i32.
+#[cfg(all(target_arch = "aarch64", feature = "simd"))]
+#[inline]
+fn dot_i32_neon(a: &[i32], b: &[i32]) -> i32 {
+    use core::arch::aarch64::*;
+
+    let len = a.len();
+    let mut sum = 0i32;
+    let mut i = 0;
+
+    // Process 4 elements at a time (128-bit NEON)
+    if len >= 4 {
+        unsafe {
+            let mut acc = vdupq_n_s32(0);
+
+            while i + 4 <= len {
+                let va = vld1q_s32(a.as_ptr().add(i));
+                let vb = vld1q_s32(b.as_ptr().add(i));
+                // Multiply and accumulate: acc += va * vb
+                acc = vmlaq_s32(acc, va, vb);
+                i += 4;
+            }
+
+            // Horizontal sum of acc vector
+            sum = vaddvq_s32(acc);
+        }
+    }
+
+    // Handle remaining elements
+    while i < len {
+        sum = sum.wrapping_add(a[i].wrapping_mul(b[i]));
+        i += 1;
+    }
+
+    sum
 }
 
 /// Batched i32 matmul: [B..., M, K] x [B..., K, N] -> [B..., M, N]
@@ -902,31 +969,84 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let lhs_data: &[i32] = lhs.storage();
     let rhs_data: &[i32] = rhs.storage();
 
-    let mut output = vec![0i32; batch_size * out_matrix_size];
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
 
-    for b in 0..batch_size {
-        let lhs_offset = b * lhs_matrix_size;
-        let rhs_offset = b * rhs_matrix_size;
-        let out_offset = b * out_matrix_size;
+        let mut output = vec![0i32; batch_size * out_matrix_size];
 
-        for i in 0..m {
-            for j in 0..n {
-                let mut sum = 0i32;
-                for l in 0..k {
-                    let lhs_idx = lhs_offset + i * k + l;
-                    let rhs_idx = rhs_offset + l * n + j;
-                    sum = sum.wrapping_add(lhs_data[lhs_idx].wrapping_mul(rhs_data[rhs_idx]));
+        // Parallel over batches using par_chunks_mut
+        output
+            .par_chunks_mut(out_matrix_size)
+            .enumerate()
+            .for_each(|(b, out_slice)| {
+                let lhs_offset = b * lhs_matrix_size;
+                let rhs_offset = b * rhs_matrix_size;
+
+                // Transpose rhs [K, N] -> [N, K] for contiguous column access
+                let mut rhs_t = vec![0i32; k * n];
+                let rhs_slice = &rhs_data[rhs_offset..rhs_offset + rhs_matrix_size];
+                for i in 0..k {
+                    for j in 0..n {
+                        rhs_t[j * k + i] = rhs_slice[i * n + j];
+                    }
                 }
-                output[out_offset + i * n + j] = sum;
-            }
-        }
+
+                // Matmul with SIMD dot product
+                let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
+                for i in 0..m {
+                    let lhs_row = &lhs_slice[i * k..(i + 1) * k];
+                    for j in 0..n {
+                        let rhs_col = &rhs_t[j * k..(j + 1) * k];
+                        out_slice[i * n + j] = dot_i32(lhs_row, rhs_col);
+                    }
+                }
+            });
+
+        return EmberTensor::new(
+            Bytes::from_elems(output),
+            Layout::contiguous(out_shape),
+            DType::I32,
+        );
     }
 
-    EmberTensor::new(
-        Bytes::from_elems(output),
-        Layout::contiguous(out_shape),
-        DType::I32,
-    )
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut output = vec![0i32; batch_size * out_matrix_size];
+
+        // Reusable buffer for transposed rhs per batch
+        let mut rhs_t = vec![0i32; k * n];
+
+        for b in 0..batch_size {
+            let lhs_offset = b * lhs_matrix_size;
+            let rhs_offset = b * rhs_matrix_size;
+            let out_offset = b * out_matrix_size;
+
+            // Transpose rhs [K, N] -> [N, K] for contiguous column access
+            let rhs_slice = &rhs_data[rhs_offset..rhs_offset + rhs_matrix_size];
+            for i in 0..k {
+                for j in 0..n {
+                    rhs_t[j * k + i] = rhs_slice[i * n + j];
+                }
+            }
+
+            // Matmul with SIMD dot product
+            let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
+            for i in 0..m {
+                let lhs_row = &lhs_slice[i * k..(i + 1) * k];
+                for j in 0..n {
+                    let rhs_col = &rhs_t[j * k..(j + 1) * k];
+                    output[out_offset + i * n + j] = dot_i32(lhs_row, rhs_col);
+                }
+            }
+        }
+
+        EmberTensor::new(
+            Bytes::from_elems(output),
+            Layout::contiguous(out_shape),
+            DType::I32,
+        )
+    }
 }
 
 /// i64 matmul using naive triple loop.
