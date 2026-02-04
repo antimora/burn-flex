@@ -241,9 +241,9 @@ impl Backend for Ember {
 
 ---
 
-## FusionBackend: Not Applicable to burn-ember
+## FusionBackend: Possible but Not Beneficial
 
-burn-ember does **not** implement `FusionBackend`. This is a deliberate architectural decision based on how Burn's fusion system works.
+burn-ember does **not** implement `FusionBackend`. The traits could technically be implemented, but without JIT compilation there would be no performance benefit - only added overhead.
 
 ### Understanding Burn's Fusion Architecture
 
@@ -270,13 +270,34 @@ The key insight is that `FusionRuntime::fusers()` returns `OperationFuser` imple
 2. Generate fused kernels via JIT compilation
 3. Execute the fused kernel in a single dispatch
 
-### Why Fusion Requires JIT
+### Technically Possible, But Not Beneficial
 
-Fusion provides performance benefits by:
-- **Reducing memory traffic**: Multiple ops become one kernel, keeping data in registers/cache
-- **Eliminating kernel launch overhead**: One dispatch instead of many
+The FusionBackend traits are generic - we *could* implement them for burn-ember:
 
-These benefits require **runtime code generation** (JIT). Without JIT, "fusion" would just be deferred execution with no actual benefit since we can't generate combined kernels.
+```rust
+// Technically possible
+pub struct EmberFusionRuntime;
+impl FusionRuntime for EmberFusionRuntime {
+    type Optimization = EmberOptimization;
+    type FusionHandle = EmberFusionHandle;
+    // ...
+}
+```
+
+However, this would provide **no performance benefit** without JIT:
+
+| Step | With JIT (burn-cpu) | Without JIT (burn-ember) |
+|------|---------------------|--------------------------|
+| 1. Collect ops | `add`, `mul`, `relu` | `add`, `mul`, `relu` |
+| 2. Optimize | Generate fused kernel | No code generation possible |
+| 3. Execute | 1 kernel, data in registers | 3 separate ops, data to RAM between each |
+
+Fusion's value comes from combining `relu(mul(add(x, y), z))` into a **single memory pass**. Without JIT, our "optimization" would just:
+1. Defer operations into a list (added overhead)
+2. Execute them one-by-one when triggered (no fusion benefit)
+3. Still require intermediate memory allocations
+
+This is actually **worse** than eager execution due to the tracking overhead.
 
 ### burn-cpu: The JIT-Based CPU Backend
 
