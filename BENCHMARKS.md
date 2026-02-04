@@ -76,28 +76,28 @@ SIMD provides modest gains for element-wise ops since they are memory-bound, not
 
 | Size | Ember | NdArray | Result |
 |------|-------|---------|--------|
-| 64x64 | 8.0µs | 23.7µs | **Ember 2.9x faster** |
-| 128x128 | 50.4µs | 68.7µs | **Ember 1.4x faster** |
-| 256x256 | 182µs | 170µs | NdArray 1.07x faster |
-| 512x512 | 653µs | 890µs | **Ember 1.4x faster** |
-| 1024x1024 | 2.79ms | 6.11ms | **Ember 2.2x faster** |
+| 64x64 | 7.1µs | 20.4µs | **Ember 2.9x faster** |
+| 128x128 | 46.8µs | 64.9µs | **Ember 1.4x faster** |
+| 256x256 | 158µs | 170µs | ~equal |
+| 512x512 | 597µs | 895µs | **Ember 1.5x faster** |
+| 1024x1024 | 2.88ms | 6.1ms | **Ember 2.1x faster** |
 
 #### Batched Matmul (with batch-level parallelism)
 
 | Benchmark | Ember | NdArray | Result |
 |-----------|-------|---------|--------|
-| batch8_64x64 | 62µs | 110µs | **Ember 1.8x faster** |
-| batch16_128x128 | 337µs | 630µs | **Ember 1.9x faster** |
-| batch32_64x64 | 108µs | 189µs | **Ember 1.7x faster** |
-| heads12_seq512_dim64 | 885µs | 1.88ms | **Ember 2.1x faster** |
+| batch8_64x64 | 76µs | 112µs | **Ember 1.5x faster** |
+| batch16_128x128 | 336µs | 632µs | **Ember 1.9x faster** |
+| batch32_64x64 | 117µs | 190µs | **Ember 1.6x faster** |
+| heads12_seq512_dim64 | 913µs | 1.84ms | **Ember 2.0x faster** |
 
 #### Transposed Inputs (256x256)
 
 | Input | Ember | NdArray | Result |
 |-------|-------|---------|--------|
-| lhs transposed | 177µs | 200µs | **Ember 1.13x faster** |
-| rhs transposed | 202µs | 185µs | NdArray 1.09x faster |
-| both transposed | 191µs | 212µs | **Ember 1.11x faster** |
+| lhs transposed | 184µs | 208µs | **Ember 1.1x faster** |
+| rhs transposed | 154µs | 191µs | **Ember 1.2x faster** |
+| both transposed | 184µs | 212µs | **Ember 1.2x faster** |
 
 #### Memory Usage
 
@@ -112,7 +112,8 @@ SIMD provides modest gains for element-wise ops since they are memory-bound, not
 1. **Strided gemm**: Transposed inputs use native strides (no copy needed)
 2. **Per-matrix parallelism**: Auto-enabled for matrices > 192^3 ops (~7M) via rayon
 3. **Batch-level parallelism**: For small matrices in batches, parallelize the batch loop
-4. **Memory reduction**: ~30% less allocation by avoiding intermediate buffers
+4. **Batch heuristic**: Prefer batch parallelism when batch_size >= 4 (avoids repeated thread sync)
+5. **Memory reduction**: ~30% less allocation by avoiding intermediate buffers
 
 #### Matmul Analysis
 
@@ -121,7 +122,7 @@ With optimizations, Ember wins for:
 - Large matrices (>=256x256): Parallel gemm beats NdArray BLAS
 - Batched small matrices: Batch-level parallelism beats sequential execution
 
-256x256 is essentially equal to NdArray (only 7% slower). Ember wins at 4/5 square sizes, 2/3 transposed, and **all 4 batched cases**.
+256x256 is essentially equal to NdArray. Ember wins at 4/5 square sizes, **all 3 transposed cases**, and **all 4 batched cases**.
 
 ### Analysis
 
