@@ -241,52 +241,88 @@ impl Backend for Ember {
 
 ---
 
-## FusionBackend Trait (Not Implemented)
+## FusionBackend: Not Applicable to burn-ember
 
-burn-ember does **not** implement `FusionBackend` and cannot be wrapped with `Fusion<B>`. This is intentional and matches burn-ndarray's design.
+burn-ember does **not** implement `FusionBackend`. This is a deliberate architectural decision based on how Burn's fusion system works.
 
-### Why No Fusion Support
+### Understanding Burn's Fusion Architecture
 
-The `Fusion<B>` decorator requires backends to implement `FusionBackend`, which provides:
+The `Fusion<B>` decorator wraps backends implementing `FusionBackend`:
 
 ```rust
-pub trait FusionBackend: Backend {
-    type FusionRuntime: FusionRuntime<...>;
-    // JIT kernel compilation, operation graphs, etc.
+pub trait FusionBackend: BackendIr<Handle = FusionHandle<Self::FusionRuntime>, ...> {
+    type FusionRuntime: FusionRuntime;
+    type FullPrecisionBackend: FusionBackend;
+    fn cast_float(tensor: FloatTensor<Self>, dtype: DType) -> Self::Handle;
+}
+
+pub trait FusionRuntime: Send + Sync + 'static {
+    type OptimizationState: Serialize + DeserializeOwned;
+    type Optimization: Optimization<Self>;
+    type FusionHandle: Clone + Send;
+    type FusionDevice: DeviceOps;
+    fn fusers(device: Self::FusionDevice) -> Vec<Box<dyn OperationFuser<Self::Optimization>>>;
 }
 ```
 
-**Fusion is designed for:**
-- GPU backends (Wgpu, CUDA, ROCm) that benefit from kernel fusion
-- Backends with JIT compilation capability
-- Reducing GPU kernel launch overhead by combining operations
+The key insight is that `FusionRuntime::fusers()` returns `OperationFuser` implementations that:
+1. Accumulate operations into an optimization graph
+2. Generate fused kernels via JIT compilation
+3. Execute the fused kernel in a single dispatch
 
-**burn-ember and burn-ndarray are:**
-- CPU backends executing operations eagerly
-- Direct computation without operation graphs
-- No JIT compilation or kernel generation
+### Why Fusion Requires JIT
 
-### The Fusion Feature Flag
+Fusion provides performance benefits by:
+- **Reducing memory traffic**: Multiple ops become one kernel, keeping data in registers/cache
+- **Eliminating kernel launch overhead**: One dispatch instead of many
 
-In the main `burn` crate, the `fusion` feature only enables GPU backends:
+These benefits require **runtime code generation** (JIT). Without JIT, "fusion" would just be deferred execution with no actual benefit since we can't generate combined kernels.
 
-```toml
-# From burn/Cargo.toml
-fusion = ["burn-jit?/fusion", "burn-cuda?/fusion", "burn-rocm?/fusion"]
+### burn-cpu: The JIT-Based CPU Backend
+
+For users who need CPU fusion, Burn provides `burn-cpu`:
+
+```rust
+// From burn-cpu/src/lib.rs
+#[cfg(feature = "fusion")]
+pub type Cpu<F = f32, I = i32> = burn_fusion::Fusion<CubeBackend<CpuRuntime, F, I, u8>>;
 ```
 
-Note: `burn-ndarray` is explicitly excluded because it doesn't implement `FusionBackend`.
+`burn-cpu` uses cubecl's MLIR-based CPU runtime, which CAN JIT-compile fused kernels for CPU execution. It implements `FusionBackend` via `CubeBackend<CpuRuntime, ...>`.
 
-### Alternative Optimization Strategies
+### burn-ember's Design Goals
 
-Instead of kernel fusion, burn-ember optimizes through:
+burn-ember intentionally avoids JIT in favor of:
 
-1. **In-place mutation** - Reuse buffers when tensor is uniquely owned
-2. **SIMD kernels** - Vectorized operations for contiguous data
-3. **Batch parallelism** - Rayon for parallel batch processing
-4. **Memory layout optimization** - Minimize copies via strided views
+| Goal | Why it matters |
+|------|----------------|
+| **Pure Rust** | No LLVM/MLIR dependencies, simple builds |
+| **no_std support** | Embedded systems, bare metal |
+| **WASM compatibility** | Browser execution without heavy toolchains |
+| **Predictable performance** | No JIT warmup, no compilation pauses |
+| **Small binary size** | No bundled compiler infrastructure |
 
-These strategies work directly at the operation level rather than requiring an operation graph.
+These goals are incompatible with the JIT-based fusion model.
+
+### burn-ember's Optimization Strategies
+
+Instead of kernel fusion, burn-ember optimizes at the operation level:
+
+1. **In-place mutation** - Reuse buffers when tensor is uniquely owned (avoids write-allocate traffic)
+2. **SIMD kernels** - NEON intrinsics for ARM64, auto-vectorization for x86
+3. **Rayon parallelism** - Scale with available cores for large tensors
+4. **Row-based iteration** - 5.9x faster for transposed 2D tensors vs naive StridedIter
+
+These optimizations work without operation graphs or deferred execution.
+
+### When to Use Which Backend
+
+| Use case | Recommended backend |
+|----------|---------------------|
+| GPU acceleration | burn-wgpu, burn-cuda |
+| CPU with fusion/JIT | burn-cpu |
+| Pure Rust, no_std, WASM | burn-ember |
+| Lightweight, familiar API | burn-ndarray |
 
 ---
 
