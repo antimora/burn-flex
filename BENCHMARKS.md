@@ -305,10 +305,11 @@ Note: Optimized outer-product broadcast pattern uses SIMD scalar comparison per 
 
 | Operation | Size       | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
 | --------- | ---------- | ---------- | ------------ | ------- | --------- | ----------- |
-| bool_not  | large (1M) | 32.3 us    | 19.7 us      | 0.6x    | 1.0 MB    | 1.0 MB      |
-| bool_and  | large (1M) | 61.4 us    | 28.9 us      | 0.5x    | 3.1 MB    | 1.0 MB      |
+| bool_not  | large (1M) | 31.2 us    | 19.7 us      | 0.63x   | 1.0 MB    | 1.0 MB      |
+| bool_and  | large (1M) | 52.9 us    | 29.6 us      | 0.56x   | 2.1 MB    | 1.0 MB      |
 
-Note: bool_not now uses in-place modification (50% less memory). bool_and/or/xor still allocate output.
+Note: Both operations now use in-place modification when possible. Despite SIMD and in-place
+optimizations, NdArray maintains ~2x advantage on boolean ops.
 
 ---
 
@@ -337,8 +338,35 @@ Note: bool_not now uses in-place modification (50% less memory). bool_and/or/xor
 1. **Transposed sum**: NdArray wins by 2-3x on transposed tensor sums
 2. **Large slice copies**: NdArray faster on 1M+ element 1D slices
 3. **Integer matmul**: Both backends are similar; neither has SIMD optimization
-4. **Boolean binary ops**: NdArray 2x faster on bool_and/or/xor (allocation overhead)
-5. **In-place operations**: NdArray benefits from aggressive in-place; Ember can adopt this
+4. **Boolean binary ops**: NdArray 2x faster on bool_and/or/xor (see analysis below)
+
+### Boolean Operations Analysis
+
+Investigation into why NdArray achieves ~2x performance on bool ops reveals a fundamental
+architectural difference:
+
+**NdArray approach (via burn-ndarray + ndarray + macerator):**
+- Uses `Arc<Vec<T>>` for storage with `is_unique()` check
+- When `Arc::strong_count() == 1`, modifies in-place without allocation
+- SIMD via `macerator` crate with 8-wide loop unrolling
+- Copy-on-write only triggers when tensor is shared
+
+**Ember approach (via Bytes + Box<dyn AllocationController>):**
+- Uses `Box<dyn AllocationController>` for type-erased storage
+- No reference counting - `DerefMut` always available
+- COW via `duplicate()` method if controller supports it
+- Cannot detect unique ownership to skip allocation
+
+**Why the gap persists:**
+1. **No uniqueness check**: Ember's `Bytes` type doesn't expose a way to check if the
+   allocation is uniquely owned, so we always allocate output buffers
+2. **Memory allocation overhead**: Each bool_and/or/xor allocates 2.1MB vs NdArray's 1.0MB
+3. **SIMD is comparable**: Both use SIMD (Ember via NEON, NdArray via macerator)
+
+**Potential solutions (future work):**
+1. Add `is_unique()` to Bytes/AllocationController trait
+2. Use a different storage type (e.g., `Arc<Vec<u8>>`) for bool tensors
+3. Implement tensor fusion to eliminate intermediate allocations
 
 ---
 
