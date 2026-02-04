@@ -41,3 +41,7 @@ harness = false
 [[bench]]
 name = "matmul"
 harness = false
+
+[[bench]]
+name = "slice_ops"
+harness = false

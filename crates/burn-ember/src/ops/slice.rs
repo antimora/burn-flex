@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::{DType, Element};
-use burn_std::{Bytes, Shape, Slice};
+use burn_std::{Bytes, Shape, Slice, bf16, f16};
 
 use crate::{EmberTensor, Layout};
 
@@ -28,6 +28,8 @@ fn slice_with_copy(tensor: &EmberTensor, slices: &[Slice]) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => slice_copy_impl::<f32>(tensor, slices),
         DType::F64 => slice_copy_impl::<f64>(tensor, slices),
+        DType::F16 => slice_copy_impl::<f16>(tensor, slices),
+        DType::BF16 => slice_copy_impl::<bf16>(tensor, slices),
         DType::I32 => slice_copy_impl::<i32>(tensor, slices),
         DType::I64 => slice_copy_impl::<i64>(tensor, slices),
         DType::I16 => slice_copy_impl::<i16>(tensor, slices),
@@ -188,6 +190,8 @@ pub fn slice_assign(
     match tensor.dtype() {
         DType::F32 => slice_assign_impl::<f32>(tensor, slices, value),
         DType::F64 => slice_assign_impl::<f64>(tensor, slices, value),
+        DType::F16 => slice_assign_impl::<f16>(tensor, slices, value),
+        DType::BF16 => slice_assign_impl::<bf16>(tensor, slices, value),
         DType::I32 => slice_assign_impl::<i32>(tensor, slices, value),
         DType::I64 => slice_assign_impl::<i64>(tensor, slices, value),
         DType::I16 => slice_assign_impl::<i16>(tensor, slices, value),
@@ -214,112 +218,176 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
 
     // Get value data
     let value = value.to_contiguous();
-    let val_src: Vec<E> = value.storage::<E>().to_vec();
+    let val_src: &[E] = value.storage::<E>();
 
-    // Calculate slice info
-    let mut slice_info: Vec<(usize, usize, isize)> = Vec::with_capacity(ndims);
-
-    for dim in 0..ndims {
-        let dim_size = dst_layout.shape().dims[dim] as isize;
-
-        let slice = if dim < slices.len() {
-            &slices[dim]
-        } else {
-            &Slice::new(0, None, 1)
-        };
-
-        let step = slice.step;
-        let abs_step = step.unsigned_abs();
-
-        if step > 0 {
-            let start = normalize_index(slice.start, dim_size);
-            let end = match slice.end {
-                Some(e) => normalize_index(e, dim_size).min(dim_size as usize),
-                None => dim_size as usize,
-            };
-            let len = if end > start {
-                (end - start + abs_step - 1) / abs_step
+    // Calculate slice info: (start, len, step) for each dimension
+    let slice_info: Vec<(usize, usize, isize)> = (0..ndims)
+        .map(|dim| {
+            let dim_size = dst_layout.shape().dims[dim] as isize;
+            let slice = if dim < slices.len() {
+                &slices[dim]
             } else {
-                0
+                &Slice::new(0, None, 1)
             };
-            slice_info.push((start, len, step));
+            compute_slice_info(slice, dim_size)
+        })
+        .collect();
+
+    // Get mutable access
+    let dst = tensor.storage_mut::<E>();
+
+    // Check if innermost dimension is contiguous (step=1)
+    let inner_contiguous = slice_info.last().map(|(_, _, step)| *step == 1).unwrap_or(false);
+
+    if ndims == 1 {
+        // 1D case: simple loop or memcpy
+        let (start, len, step) = slice_info[0];
+        if step == 1 {
+            // Contiguous: use memcpy
+            dst[start..start + len].copy_from_slice(&val_src[..len]);
         } else {
-            let start = match slice.start {
-                s if s < 0 => (dim_size + s).max(0) as usize,
-                s => (s as usize).min((dim_size - 1).max(0) as usize),
-            };
-            let end = match slice.end {
-                Some(e) if e < 0 => (dim_size + e).max(-1) as isize,
-                Some(e) => (e as isize - 1).max(-1),
-                None => -1,
-            };
-            let len = if (start as isize) > end {
-                ((start as isize - end) as usize + abs_step - 1) / abs_step
+            // Strided: element-by-element
+            for i in 0..len {
+                let dst_i = if step > 0 {
+                    start + i * step as usize
+                } else {
+                    (start as isize - (i as isize) * (-step)) as usize
+                };
+                dst[dst_i] = val_src[i].clone();
+            }
+        }
+    } else if ndims == 2 && inner_contiguous {
+        // 2D with contiguous inner: row-based memcpy
+        let (row_start, row_len, row_step) = slice_info[0];
+        let (col_start, col_len, _) = slice_info[1];
+        let dst_cols = dst_layout.shape().dims[1];
+
+        let mut val_offset = 0;
+        for r in 0..row_len {
+            let row_idx = if row_step > 0 {
+                row_start + r * row_step as usize
             } else {
-                0
+                (row_start as isize - (r as isize) * (-row_step)) as usize
             };
-            slice_info.push((start, len, step));
+            let dst_row_start = row_idx * dst_cols + col_start;
+            dst[dst_row_start..dst_row_start + col_len]
+                .copy_from_slice(&val_src[val_offset..val_offset + col_len]);
+            val_offset += col_len;
+        }
+    } else if inner_contiguous {
+        // ND with contiguous inner: iterate outer dims, memcpy inner
+        let inner_len = slice_info[ndims - 1].1;
+        let outer_dims = ndims - 1;
+        let dst_strides = dst_layout.strides();
+
+        // Compute total iterations for outer dimensions
+        let mut outer_count = 1usize;
+        for i in 0..outer_dims {
+            outer_count *= slice_info[i].1;
+        }
+
+        // Iterate using flat index for outer dimensions
+        let mut outer_indices = vec![0usize; outer_dims];
+        let mut val_offset = 0;
+
+        for _ in 0..outer_count {
+            // Compute destination offset for current outer indices
+            let mut dst_offset = dst_layout.start_offset();
+            for (dim, &idx) in outer_indices.iter().enumerate() {
+                let (start, _, step) = slice_info[dim];
+                let src_i = if step > 0 {
+                    start + idx * step as usize
+                } else {
+                    (start as isize - (idx as isize) * (-step)) as usize
+                };
+                dst_offset += src_i * dst_strides[dim];
+            }
+            // Add inner dimension start
+            dst_offset += slice_info[ndims - 1].0 * dst_strides[ndims - 1];
+
+            // Copy inner row
+            dst[dst_offset..dst_offset + inner_len]
+                .copy_from_slice(&val_src[val_offset..val_offset + inner_len]);
+            val_offset += inner_len;
+
+            // Increment outer indices (odometer style)
+            for dim in (0..outer_dims).rev() {
+                outer_indices[dim] += 1;
+                if outer_indices[dim] < slice_info[dim].1 {
+                    break;
+                }
+                outer_indices[dim] = 0;
+            }
+        }
+    } else {
+        // Fallback: element-by-element with iterative approach
+        let total_elements: usize = slice_info.iter().map(|(_, len, _)| len).product();
+        let dst_strides = dst_layout.strides();
+        let mut indices = vec![0usize; ndims];
+
+        for val_idx in 0..total_elements {
+            // Compute destination index
+            let mut dst_offset = dst_layout.start_offset();
+            for (dim, &idx) in indices.iter().enumerate() {
+                let (start, _, step) = slice_info[dim];
+                let src_i = if step > 0 {
+                    start + idx * step as usize
+                } else {
+                    (start as isize - (idx as isize) * (-step)) as usize
+                };
+                dst_offset += src_i * dst_strides[dim];
+            }
+
+            dst[dst_offset] = val_src[val_idx].clone();
+
+            // Increment indices (odometer style)
+            for dim in (0..ndims).rev() {
+                indices[dim] += 1;
+                if indices[dim] < slice_info[dim].1 {
+                    break;
+                }
+                indices[dim] = 0;
+            }
         }
     }
-
-    // Get mutable access and assign values
-    let dst = tensor.storage_mut::<E>();
-    let mut indices = vec![0usize; ndims];
-    let mut val_idx = 0usize;
-    assign_slice_recursive(
-        dst,
-        &dst_layout,
-        &val_src,
-        &slice_info,
-        &mut indices,
-        0,
-        &mut val_idx,
-    );
 
     tensor
 }
 
-/// Recursively assign values to slice.
-fn assign_slice_recursive<E: Clone>(
-    dst: &mut [E],
-    dst_layout: &Layout,
-    val_src: &[E],
-    slice_info: &[(usize, usize, isize)],
-    indices: &mut [usize],
-    dim: usize,
-    val_idx: &mut usize,
-) {
-    let ndims = dst_layout.num_dims();
+/// Compute slice info (start, len, step) for a dimension.
+fn compute_slice_info(slice: &Slice, dim_size: isize) -> (usize, usize, isize) {
+    let step = slice.step;
+    let abs_step = step.unsigned_abs();
 
-    if dim == ndims {
-        // Base case: assign single element
-        let dst_idx = compute_dst_index(dst_layout, slice_info, indices);
-        dst[dst_idx] = val_src[*val_idx].clone();
-        *val_idx += 1;
-        return;
-    }
-
-    let (_, len, _) = slice_info[dim];
-
-    for i in 0..len {
-        indices[dim] = i;
-        assign_slice_recursive(dst, dst_layout, val_src, slice_info, indices, dim + 1, val_idx);
-    }
-}
-
-/// Compute destination index from output indices and slice info.
-fn compute_dst_index(layout: &Layout, slice_info: &[(usize, usize, isize)], out_indices: &[usize]) -> usize {
-    let mut idx = layout.start_offset();
-    for (dim, &out_i) in out_indices.iter().enumerate() {
-        let (start, _, step) = slice_info[dim];
-        let dst_i = if step > 0 {
-            start + out_i * step as usize
-        } else {
-            (start as isize - (out_i as isize) * (-step)) as usize
+    if step > 0 {
+        let start = normalize_index(slice.start, dim_size);
+        let end = match slice.end {
+            Some(e) => normalize_index(e, dim_size).min(dim_size as usize),
+            None => dim_size as usize,
         };
-        idx += dst_i * layout.strides()[dim];
+        let len = if end > start {
+            (end - start + abs_step - 1) / abs_step
+        } else {
+            0
+        };
+        (start, len, step)
+    } else {
+        let start = match slice.start {
+            s if s < 0 => (dim_size + s).max(0) as usize,
+            s => (s as usize).min((dim_size - 1).max(0) as usize),
+        };
+        let end = match slice.end {
+            Some(e) if e < 0 => (dim_size + e).max(-1) as isize,
+            Some(e) => (e as isize - 1).max(-1),
+            None => -1,
+        };
+        let len = if (start as isize) > end {
+            ((start as isize - end) as usize + abs_step - 1) / abs_step
+        } else {
+            0
+        };
+        (start, len, step)
     }
-    idx
 }
 
 #[cfg(test)]
@@ -392,5 +460,68 @@ mod tests {
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![4.0, 3.0, 2.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn test_slice_assign_1d() {
+        // Create a 1D tensor: [0, 1, 2, 3, 4]
+        let data: Vec<f32> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [5]));
+
+        // Assign [10, 11, 12] to positions [1:4]
+        let value_data: Vec<f32> = vec![10.0, 11.0, 12.0];
+        let value = EmberTensor::from_data(TensorData::new(value_data, [3]));
+        let slices = vec![Slice::new(1, Some(4), 1)];
+        let result = slice_assign(tensor, &slices, value);
+
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![0.0, 10.0, 11.0, 12.0, 4.0]);
+    }
+
+    #[test]
+    fn test_slice_assign_2d() {
+        // Create a 3x3 tensor
+        let data: Vec<f32> = vec![
+            0.0, 1.0, 2.0,
+            3.0, 4.0, 5.0,
+            6.0, 7.0, 8.0,
+        ];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [3, 3]));
+
+        // Assign [[10, 11], [12, 13]] to [1:3, 1:3]
+        let value_data: Vec<f32> = vec![10.0, 11.0, 12.0, 13.0];
+        let value = EmberTensor::from_data(TensorData::new(value_data, [2, 2]));
+        let slices = vec![Slice::new(1, Some(3), 1), Slice::new(1, Some(3), 1)];
+        let result = slice_assign(tensor, &slices, value);
+
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![
+            0.0, 1.0, 2.0,
+            3.0, 10.0, 11.0,
+            6.0, 12.0, 13.0,
+        ]);
+    }
+
+    #[test]
+    fn test_slice_assign_2d_full_row() {
+        // Create a 3x4 tensor
+        let data: Vec<f32> = (0..12).map(|i| i as f32).collect();
+        let tensor = EmberTensor::from_data(TensorData::new(data, [3, 4]));
+
+        // Assign [100, 101, 102, 103] to row 1
+        let value_data: Vec<f32> = vec![100.0, 101.0, 102.0, 103.0];
+        let value = EmberTensor::from_data(TensorData::new(value_data, [1, 4]));
+        let slices = vec![Slice::new(1, Some(2), 1), Slice::new(0, None, 1)];
+        let result = slice_assign(tensor, &slices, value);
+
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![
+            0.0, 1.0, 2.0, 3.0,
+            100.0, 101.0, 102.0, 103.0,
+            8.0, 9.0, 10.0, 11.0,
+        ]);
     }
 }

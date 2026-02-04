@@ -7,6 +7,7 @@ Tracking performance compared to burn-ndarray.
 ```bash
 cargo bench --bench binary_ops --features simd
 cargo bench --bench matmul --features simd,gemm
+cargo bench --bench slice_ops --features simd
 ```
 
 ## Results (with SIMD)
@@ -158,6 +159,92 @@ For batched operations, NdArray is faster due to better cache utilization in its
 3. Batch-level rayon parallelism
 
 **Future optimization:** Cache-blocked (tiled) matmul would improve locality for batched cases.
+
+### Slice Operations
+
+**Run with:** `cargo bench --bench slice_ops --features simd`
+
+Ember's slice operation is zero-copy for positive steps (metadata only). This section compares slicing performance across different patterns.
+
+#### Basic Slice
+
+| Benchmark | Ember | NdArray | Result |
+|-----------|-------|---------|--------|
+| slice_1d_1k | 339ns | 343ns | ~equal |
+| slice_1d_1m | 159µs | 80µs | NdArray 2.0x faster |
+| slice_2d_256x256 | 7.8µs | 8.1µs | ~equal |
+| slice_2d_1024x1024 | 165µs | 86µs | NdArray 1.9x faster |
+| slice_3d_64x64x64 | 28.8µs | 29.3µs | ~equal |
+
+#### Slice on Transposed Tensor (non-contiguous)
+
+| Benchmark | Ember | NdArray | Result |
+|-----------|-------|---------|--------|
+| transposed_256x256 | 7.3µs | 8.3µs | **Ember 1.14x faster** |
+| transposed_1024x1024 | 145µs | 233µs | **Ember 1.60x faster** |
+
+#### Slice with Step
+
+| Benchmark | Ember | NdArray | Result |
+|-----------|-------|---------|--------|
+| step2_1d_1k | 318ns | 478ns | **Ember 1.50x faster** |
+| step2_1d_1m | 149µs | 195µs | **Ember 1.31x faster** |
+| step4_2d_256x256 | 7.4µs | 6.7µs | ~equal |
+| step2_2d_1024x1024 | 160µs | 140µs | ~equal |
+
+#### Narrow (single dimension slice)
+
+| Benchmark | Ember | NdArray | Result |
+|-----------|-------|---------|--------|
+| narrow_dim0_256x256 | 8.0µs | 6.3µs | NdArray 1.27x faster |
+| narrow_dim1_256x256 | 8.2µs | 11.1µs | **Ember 1.36x faster** |
+| narrow_dim0_1024x1024 | 168µs | 80µs | NdArray 2.1x faster |
+
+#### Slice Assign
+
+| Benchmark | Ember | NdArray | Result |
+|-----------|-------|---------|--------|
+| assign_1d_1k | 587ns | 904ns | **Ember 1.5x faster** |
+| assign_2d_256x256 | 12.4µs | 14.6µs | **Ember 1.2x faster** |
+| assign_2d_1024x1024 | 199µs | 198µs | ~equal |
+
+#### Memory Comparison (Slice Operations)
+
+| Benchmark | Ember Max Alloc | NdArray Max Alloc |
+|-----------|-----------------|-------------------|
+| slice_1d_1k | 8.3 KB | 6.3 KB |
+| slice_1d_1m | 8.4 MB | 6.3 MB |
+| slice_2d_1024x1024 | 8.4 MB | 5.2 MB |
+| slice_assign_2d_1024x1024 | 10.5 MB | 10.5 MB |
+
+#### Slice Analysis
+
+**Wins for Ember:**
+- Transposed tensor slicing (1.14-1.60x faster)
+- Step-based slicing on 1D tensors (1.31-1.50x faster)
+- narrow_dim1 (slicing along non-contiguous dimension)
+- Slice assign (1.2-1.5x faster after row-based optimization)
+
+**Wins for NdArray:**
+- Large contiguous slices (1.9-2.0x faster on 1M+ elements)
+- narrow_dim0 on large tensors
+
+**Key insight:** Ember's slice is metadata-only (zero-copy) for positive steps. The benchmark overhead comes from tensor cloning in the test setup. For actual workloads, slice itself is O(1).
+
+#### Slice Assign Optimization
+
+The initial recursive implementation was 3-5x slower than NdArray. After optimization:
+
+| Benchmark | Before | After | Speedup |
+|-----------|--------|-------|---------|
+| assign_1d_1k | 2.2µs | 587ns | **3.8x** |
+| assign_2d_256x256 | 73µs | 12.4µs | **5.9x** |
+| assign_2d_1024x1024 | 1.03ms | 199µs | **5.2x** |
+
+**Optimizations applied:**
+1. `copy_from_slice` for contiguous inner dimensions (memcpy-based)
+2. Direct row/column loops for 2D tensors (no recursion)
+3. Iterative odometer-style index computation for ND tensors
 
 ### Analysis
 
