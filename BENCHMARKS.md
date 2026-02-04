@@ -18,7 +18,8 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Comparison Ops  | 13         | 4            | 0     |
 | Convolutions    | 19         | 0            | 0     |
 | Pooling         | 17         | 0            | 0     |
-| **Total**       | **125**    | **9**        | **5** |
+| Conv Transpose  | 14         | 0            | 0     |
+| **Total**       | **139**    | **9**        | **5** |
 
 ---
 
@@ -470,6 +471,71 @@ Ember uses significantly less memory for pooling operations:
 
 ---
 
+## Transposed Convolutions
+
+Transposed convolutions (deconvolutions) for upsampling in generators, decoders, and segmentation networks. Uses unified 3D implementation with scatter-based algorithm.
+
+**Key optimizations:**
+- Unified 3D core: 1D/2D expand dimensions, call 3D, squeeze result
+- Scatter pattern with atomic f32 adds for thread safety
+- Rayon parallelism over (batch, output_channel) pairs
+
+### Conv Transpose 2D
+
+| Input Shape      | Output Size | Ember Time | NdArray Time | Speedup  |
+| ---------------- | ----------- | ---------- | ------------ | -------- |
+| 1x64x7x7         | 14x14       | 1.38 ms    | 1.93 ms      | **1.4x** |
+| 1x128x14x14      | 28x28       | 10.0 ms    | 15.3 ms      | **1.5x** |
+| 1x256x28x28      | 56x56       | 169 ms     | 230 ms       | **1.4x** |
+| 1x512x7x7 k3s1   | 7x7         | 49.6 ms    | 55.9 ms      | **1.1x** |
+| 8x64x14x14       | 28x28       | 43.3 ms    | 53.4 ms      | **1.2x** |
+
+### DCGAN Generator Layers
+
+Common layer configurations for Deep Convolutional GAN generators:
+
+| Layer           | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------------- | ---------- | ------------ | -------- | --------- | ----------- |
+| 1x1 to 4x4      | 1.34 ms    | 1.79 ms      | **1.3x** | 50 KB     | 16.8 MB     |
+| 4x4 to 8x8      | 3.19 ms    | 4.13 ms      | **1.3x** | 99 KB     | 4.3 MB      |
+| 8x8 to 16x16    | 3.44 ms    | 4.75 ms      | **1.4x** | 197 KB    | 1.2 MB      |
+| 16x16 to 32x32  | 1.12 ms    | 1.49 ms      | **1.3x** | 38 KB     | 168 KB      |
+
+### Conv Transpose 1D
+
+| Input Shape   | Ember Time | NdArray Time | Speedup  |
+| ------------- | ---------- | ------------ | -------- |
+| 1x64x32       | 344 us     | 442 us       | **1.3x** |
+| 8x128x64      | 7.0 ms     | 10.8 ms      | **1.5x** |
+| 1x256x128     | 7.0 ms     | 10.7 ms      | **1.5x** |
+
+### Conv Transpose 3D
+
+| Input Shape      | Output Size | Ember Time | NdArray Time | Speedup  |
+| ---------------- | ----------- | ---------- | ------------ | -------- |
+| 1x32x4x4x4       | 8x8x8       | 1.51 ms    | 2.72 ms      | **1.8x** |
+| 1x64x8x8x8       | 16x16x16    | 26.6 ms    | 50.6 ms      | **1.9x** |
+
+### Memory Efficiency
+
+Ember uses dramatically less memory, especially for small inputs:
+
+| Operation             | Ember Mem | NdArray Mem | Ratio     |
+| --------------------- | --------- | ----------- | --------- |
+| DCGAN layer1 (1x1)    | 50 KB     | 16.8 MB     | **336x**  |
+| DCGAN layer2 (4x4)    | 99 KB     | 4.3 MB      | **43x**   |
+| conv_transpose2d k3s1 | 302 KB    | 19.2 MB     | **64x**   |
+| conv_transpose3d 8x8  | 1.57 MB   | 1.84 MB     | **1.2x**  |
+
+**Key observations:**
+
+1. **All conv_transpose operations win**: 1.1-1.9x faster across all configurations
+2. **3D conv_transpose**: Largest speedup (1.8-1.9x) due to efficient scatter algorithm
+3. **Memory efficiency**: 1.2-336x less memory, with extreme savings on small/early layers
+4. **GAN generators**: Consistent 1.3-1.4x speedup with massive memory savings
+
+---
+
 ## Key Observations
 
 ### Performance Wins
@@ -488,6 +554,8 @@ Ember uses significantly less memory for pooling operations:
 12. **Conv1d**: Ember 3-9x faster via unified 3D tiled approach
 13. **Pooling**: Ember 1.2-12x faster with rayon parallelism over (batch, channel) pairs
 14. **Pooling memory**: Ember uses 8-128x less memory for pooling operations
+15. **Conv transpose**: Ember 1.1-1.9x faster with scatter-based algorithm
+16. **Conv transpose memory**: Ember uses 1.2-336x less memory (extreme savings on small inputs)
 
 ### Memory Efficiency
 

@@ -566,6 +566,65 @@ Max pool stores flat indices into input spatial dimensions (as i64):
 - Used by backward pass to route gradients to correct input positions
 - Matches Burn's IntElem type for compatibility
 
+### Conv Transpose (Unified 3D)
+
+Transposed convolutions (deconvolutions) for upsampling. Uses the same unified 3D pattern:
+
+```
+conv_transpose1d([B, C_in, W])
+  → expand dims → conv_transpose3d([B, C_in, 1, 1, W])
+  → squeeze → [B, C_out, W_out]
+
+conv_transpose2d([B, C_in, H, W])
+  → expand dims → conv_transpose3d([B, C_in, 1, H, W])
+  → squeeze → [B, C_out, H_out, W_out]
+```
+
+**Algorithm**
+
+Unlike regular convolution (which gathers input into output), transposed convolution scatters:
+
+```rust
+for each input position (id, ih, iw):
+    for each kernel position (kd, kh, kw):
+        od = id * stride_d + kd * dilation_d - padding_d
+        oh = ih * stride_h + kh * dilation_h - padding_h
+        ow = iw * stride_w + kw * dilation_w - padding_w
+        if (od, oh, ow) in bounds:
+            output[od, oh, ow] += input[id, ih, iw] * weight[kd, kh, kw]
+```
+
+**Weight Shape**
+
+Conv transpose weight shape is opposite of regular conv:
+- Regular conv: `[out_channels, in_channels_per_group, kd, kh, kw]`
+- Transpose conv: `[in_channels, out_channels_per_group, kd, kh, kw]`
+
+**Output Size Formula**
+
+```
+output_size = (input - 1) * stride + dilation * (kernel - 1) + 1 + padding_out - 2 * padding
+```
+
+**Parallelization**
+
+Uses rayon over (batch, output_channel) pairs. For f32, uses atomic adds for thread-safe accumulation:
+
+```rust
+(0..batch_size * out_channels).into_par_iter().for_each(|k| {
+    // Scatter input values to output using atomic f32 adds
+});
+```
+
+**Dtype Support**
+
+| Dtype | Implementation |
+|-------|----------------|
+| f32   | Native with atomic adds |
+| f64   | Native (sequential per output channel) |
+| f16   | Native (sequential) |
+| bf16  | Convert to f32, compute, convert back |
+
 ---
 
 ## Optimization Decisions
@@ -631,7 +690,7 @@ this in `Arc` for cheap cloning while preserving zero-copy capabilities.
 - Reductions: sum, mean, max, min
 - Matmul via gemm crate
 
-### Phase 3: Module Operations (In Progress)
+### Phase 3: Module Operations (Done)
 
 - **Convolutions** (done): conv1d, conv2d, conv3d via unified im2col + gemm
   - All dtypes: f32, f64, f16 (native), bf16 (via f32)
@@ -639,8 +698,10 @@ this in `Arc` for cheap cloning while preserving zero-copy capabilities.
 - **Pooling** (done): max_pool, avg_pool, adaptive_avg_pool via unified 3D
   - All dtypes: f32, f64, f16 (native), bf16 (via f32)
   - Forward and backward passes with indices for max pool
-- conv_transpose (todo)
-- Full `ModuleOps` trait
+- **Conv Transpose** (done): conv_transpose1d, conv_transpose2d, conv_transpose3d via unified 3D
+  - All dtypes: f32, f64, f16 (native), bf16 (via f32)
+  - Scatter-based algorithm with atomic f32 adds for parallelism
+- Full `ModuleOps` trait (partial - deform_conv, interpolate pending)
 
 ### Phase 4: Optimization
 
