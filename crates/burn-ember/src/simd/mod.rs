@@ -39,19 +39,60 @@ pub const PARALLEL_THRESHOLD: usize = 8192;
 // Re-export platform-specific implementations
 #[cfg(target_arch = "aarch64")]
 pub use neon::{
-    add_f32, add_inplace_f32, add_scalar_f32, div_f32, div_inplace_f32, mul_f32, mul_inplace_f32,
-    mul_scalar_f32, sub_f32, sub_inplace_f32,
+    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, cmp_f32, cmp_scalar_f32, div_f32,
+    div_inplace_f32, mul_f32, mul_inplace_f32, mul_scalar_f32, sub_f32, sub_inplace_f32,
 };
 
 // Scalar fallback for other platforms
 #[cfg(not(target_arch = "aarch64"))]
 pub use scalar::{
-    add_f32, add_inplace_f32, add_scalar_f32, div_f32, div_inplace_f32, mul_f32, mul_inplace_f32,
-    mul_scalar_f32, sub_f32, sub_inplace_f32,
+    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, cmp_f32, cmp_scalar_f32, div_f32,
+    div_inplace_f32, mul_f32, mul_inplace_f32, mul_scalar_f32, sub_f32, sub_inplace_f32,
 };
 
 #[cfg(not(target_arch = "aarch64"))]
 mod scalar {
+    /// Comparison operation type.
+    #[derive(Clone, Copy)]
+    pub enum CmpOp {
+        Gt,
+        Ge,
+        Lt,
+        Le,
+        Eq,
+        Ne,
+    }
+
+    /// Scalar comparison for f32 slices, output as u8.
+    #[inline]
+    pub fn cmp_f32(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
+        for i in 0..a.len() {
+            out[i] = match op {
+                CmpOp::Gt => (a[i] > b[i]) as u8,
+                CmpOp::Ge => (a[i] >= b[i]) as u8,
+                CmpOp::Lt => (a[i] < b[i]) as u8,
+                CmpOp::Le => (a[i] <= b[i]) as u8,
+                CmpOp::Eq => (a[i] == b[i]) as u8,
+                CmpOp::Ne => (a[i] != b[i]) as u8,
+            };
+        }
+    }
+
+    /// Scalar comparison with scalar value.
+    #[inline]
+    pub fn cmp_scalar_f32(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
+        for i in 0..a.len() {
+            out[i] = match op {
+                CmpOp::Gt => (a[i] > scalar) as u8,
+                CmpOp::Ge => (a[i] >= scalar) as u8,
+                CmpOp::Lt => (a[i] < scalar) as u8,
+                CmpOp::Le => (a[i] <= scalar) as u8,
+                CmpOp::Eq => (a[i] == scalar) as u8,
+                CmpOp::Ne => (a[i] != scalar) as u8,
+            };
+        }
+    }
+
     /// Scalar add for f32 slices.
     #[inline]
     pub fn add_f32(a: &[f32], b: &[f32], out: &mut [f32]) {

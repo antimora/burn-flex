@@ -15,7 +15,8 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Slice Ops       | 11         | 7            | 0     |
 | Reduce Ops      | 14         | 2            | 0     |
 | Unary Ops       | 15         | 0            | 4     |
-| **Total**       | **64**     | **14**       | **4** |
+| Comparison Ops  | 9          | 6            | 0     |
+| **Total**       | **73**     | **20**       | **4** |
 
 ---
 
@@ -186,12 +187,13 @@ Sum, mean, argmax reductions with portable SIMD via pulp.
 
 ### Sum Dim on Transposed Tensor
 
-| Size      | Dim | Ember Time | NdArray Time | Speedup | Note |
-| --------- | --- | ---------- | ------------ | ------- | ---- |
+| Size      | Dim | Ember Time | NdArray Time | Speedup | Note                                         |
+| --------- | --- | ---------- | ------------ | ------- | -------------------------------------------- |
 | 256x256   | 0   | 10.1 us    | 4.57 us      | 0.5x    | NdArray fast on storage-contiguous reduction |
-| 1024x1024 | 0   | 192 us     | 84.2 us      | 0.4x    | Ember matches contiguous perf (was 3.3ms) |
+| 1024x1024 | 0   | 192 us     | 84.2 us      | 0.4x    | Ember matches contiguous perf (was 3.3ms)    |
 
-Note: For contiguous tensors, Ember sum_dim is **2.1x faster** than NdArray. The transposed case is where NdArray excels.
+Note: For contiguous tensors, Ember sum_dim is **2.1x faster** than NdArray. The transposed case is
+where NdArray excels.
 
 ### Mean Along Dimension
 
@@ -252,6 +254,64 @@ Element-wise math functions (exp, log, sqrt, trig, etc.).
 
 ---
 
+## Comparison & Boolean Operations
+
+Element-wise comparisons with NEON SIMD optimization for f32.
+
+### Tensor-Tensor Comparisons
+
+| Operation | Size         | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | ------------ | ---------- | ------------ | -------- | --------- | ----------- |
+| greater   | small (4K)   | 961 ns     | 1.62 us      | **1.7x** | 37 KB     | 70 KB       |
+| greater   | medium (64K) | 14.0 us    | 21.4 us      | **1.5x** | 590 KB    | 1.1 MB      |
+| greater   | large (1M)   | 223 us     | 318 us       | **1.4x** | 9.4 MB    | 17.8 MB     |
+| equal     | small (4K)   | 1.08 us    | 1.66 us      | **1.5x** | 37 KB     | 70 KB       |
+| equal     | large (1M)   | 224 us     | 327 us       | **1.5x** | 9.4 MB    | 17.8 MB     |
+| lower     | large (1M)   | 242 us     | 305 us       | **1.3x** | 9.4 MB    | 17.8 MB     |
+
+### Scalar Comparisons
+
+| Operation    | Size       | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| ------------ | ---------- | ---------- | ------------ | -------- | --------- | ----------- |
+| greater_elem | large (1M) | 151 us     | 200 us       | **1.3x** | 5.2 MB    | 9.4 MB      |
+
+### Transposed (Non-contiguous) Comparisons
+
+| Operation | Size      | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
+| --------- | --------- | ---------- | ------------ | ------- | --------- | ----------- |
+| greater   | 256x256   | 66 us      | 51.5 us      | 0.8x    | 590 KB    | 590 KB      |
+| greater   | 1024x1024 | 1.13 ms    | 1.06 ms      | 0.9x    | 9.4 MB    | 9.4 MB      |
+
+Note: Transposed comparisons now use 2D strided fast path, competitive with NdArray.
+
+### Broadcast Comparisons
+
+| Operation | Shape     | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
+| --------- | --------- | ---------- | ------------ | ------- | --------- | ----------- |
+| greater   | 256x256   | 41 us      | 25.5 us      | 0.6x    | 68 KB     | 70 KB       |
+| greater   | 1024x1024 | 718 us     | 316 us       | 0.4x    | 1.1 MB    | 1.1 MB      |
+
+Note: Broadcast comparisons involve stride=0 expansions requiring element-by-element iteration.
+
+### Expand Operation (Broadcasting)
+
+| Operation                  | Ember Time | NdArray Time | Speedup    | Note               |
+| -------------------------- | ---------- | ------------ | ---------- | ------------------ |
+| expand 1x1 to 1000x1000    | 188 ns     | 291 us       | **~1500x** | Zero-copy view     |
+| expand 1024x1 to 1024x1024 | 222 ns     | 311 us       | **~1400x** | Just stride change |
+| expand 1x1024 to 1024x1024 | 227 ns     | 78 us        | **~340x**  | No data copy       |
+
+### Boolean Operations
+
+| Operation | Size       | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
+| --------- | ---------- | ---------- | ------------ | ------- | --------- | ----------- |
+| bool_not  | large (1M) | 31.8 us    | 20.3 us      | 0.6x    | 2.1 MB    | 1.0 MB      |
+| bool_and  | large (1M) | 55.7 us    | 30.2 us      | 0.5x    | 3.1 MB    | 1.0 MB      |
+
+Note: Boolean ops slower due to extra allocations; could be optimized with SIMD for u8.
+
+---
+
 ## Key Observations
 
 ### Performance Wins
@@ -262,6 +322,8 @@ Element-wise math functions (exp, log, sqrt, trig, etc.).
 3. **Reduce dim=0**: Ember 1.7-2.1x faster using cache-friendly scatter-add pattern
 4. **Scalar ops**: Ember 1.8x faster with half the memory allocation
 5. **Unary trig ops**: Ember 1.3-1.9x faster on tanh, sin, cos (using libm functions)
+6. **Expand (broadcast)**: Ember 340-1500x faster using zero-copy stride manipulation
+7. **Comparison ops (contiguous)**: Ember 1.3-1.7x faster with NEON SIMD for f32
 
 ### Memory Efficiency
 
@@ -274,6 +336,8 @@ Element-wise math functions (exp, log, sqrt, trig, etc.).
 1. **Transposed sum**: NdArray wins by 2-3x on transposed tensor sums
 2. **Large slice copies**: NdArray faster on 1M+ element 1D slices
 3. **Integer matmul**: Both backends are similar; neither has SIMD optimization
+4. **Boolean ops**: NdArray faster; Ember needs SIMD optimization for u8
+5. **Broadcast comparisons**: Stride-0 expanded tensors require scalar iteration
 
 ---
 

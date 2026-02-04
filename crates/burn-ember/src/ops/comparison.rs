@@ -8,6 +8,20 @@ use bytemuck::Pod;
 use crate::strided_index::StridedIter;
 use crate::{EmberTensor, Layout};
 
+#[cfg(feature = "simd")]
+use crate::simd;
+
+/// Comparison operation type for SIMD dispatch.
+#[derive(Clone, Copy)]
+pub enum CompareOp {
+    Greater,
+    GreaterEqual,
+    Lower,
+    LowerEqual,
+    Equal,
+    NotEqual,
+}
+
 /// Compare two tensors element-wise, returning a boolean tensor.
 pub fn compare<F32Cmp, F64Cmp>(
     lhs: EmberTensor,
@@ -27,11 +41,71 @@ where
     let dtype = lhs.dtype();
 
     match dtype {
-        DType::F32 => compare_typed(lhs, &rhs, f32_cmp),
+        DType::F32 => compare_f32(lhs, &rhs, f32_cmp),
         DType::F64 => compare_typed(lhs, &rhs, f64_cmp),
         DType::F16 => compare_f16(lhs, &rhs, |a, b| f32_cmp(a.to_f32(), b.to_f32())),
         DType::BF16 => compare_bf16(lhs, &rhs, |a, b| f32_cmp(a.to_f32(), b.to_f32())),
         _ => panic!("compare: unsupported dtype {:?}", dtype),
+    }
+}
+
+/// Specialized comparison for f32 with SIMD fast path.
+#[cfg(feature = "simd")]
+fn compare_f32<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp) -> EmberTensor
+where
+    Cmp: Fn(f32, f32) -> bool,
+{
+    // SIMD fast path: both tensors contiguous
+    if let (Some((l_start, l_end)), Some((r_start, r_end))) = (
+        lhs.layout().contiguous_offsets(),
+        rhs.layout().contiguous_offsets(),
+    ) && let Some(simd_op) = detect_cmp_op(&cmp)
+    {
+        let shape = lhs.layout().shape().clone();
+        let lhs_storage: &[f32] = lhs.storage();
+        let rhs_storage: &[f32] = rhs.storage();
+
+        let l_slice = &lhs_storage[l_start..l_end];
+        let r_slice = &rhs_storage[r_start..r_end];
+
+        let mut result = vec![0u8; l_slice.len()];
+        simd::cmp_f32(l_slice, r_slice, &mut result, simd_op);
+
+        return make_bool_tensor(result, shape);
+    }
+
+    // Fallback to generic path
+    compare_typed(lhs, rhs, cmp)
+}
+
+/// Fallback when SIMD is disabled.
+#[cfg(not(feature = "simd"))]
+fn compare_f32<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp) -> EmberTensor
+where
+    Cmp: Fn(f32, f32) -> bool,
+{
+    compare_typed(lhs, rhs, cmp)
+}
+
+/// Detect which comparison operation is being performed by testing sample values.
+#[cfg(feature = "simd")]
+fn detect_cmp_op<Cmp>(cmp: &Cmp) -> Option<simd::CmpOp>
+where
+    Cmp: Fn(f32, f32) -> bool,
+{
+    // Test with values that distinguish operations
+    let gt = cmp(3.0, 2.0); // true for GT, GE
+    let lt = cmp(2.0, 3.0); // true for LT, LE
+    let eq = cmp(2.0, 2.0); // true for GE, LE, EQ
+
+    match (gt, lt, eq) {
+        (true, false, false) => Some(simd::CmpOp::Gt), // only 3>2 is true
+        (true, false, true) => Some(simd::CmpOp::Ge),  // 3>=2 and 2>=2
+        (false, true, false) => Some(simd::CmpOp::Lt), // only 2<3 is true
+        (false, true, true) => Some(simd::CmpOp::Le),  // 2<3 and 2<=2
+        (false, false, true) => Some(simd::CmpOp::Eq), // only 2==2 is true
+        (true, true, false) => Some(simd::CmpOp::Ne),  // 3!=2 and 2!=3, but 2!=2 is false
+        _ => None,
     }
 }
 
@@ -49,12 +123,45 @@ where
     let dtype = lhs.dtype();
 
     match dtype {
-        DType::F32 => compare_elem_typed(lhs, rhs as f32, f32_cmp),
+        DType::F32 => compare_elem_f32(lhs, rhs as f32, f32_cmp),
         DType::F64 => compare_elem_typed(lhs, rhs, f64_cmp),
         DType::F16 => compare_elem_f16(lhs, rhs as f32, |a, b| f32_cmp(a.to_f32(), b)),
         DType::BF16 => compare_elem_bf16(lhs, rhs as f32, |a, b| f32_cmp(a.to_f32(), b)),
         _ => panic!("compare_elem: unsupported dtype {:?}", dtype),
     }
+}
+
+/// Specialized scalar comparison for f32 with SIMD fast path.
+#[cfg(feature = "simd")]
+fn compare_elem_f32<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp) -> EmberTensor
+where
+    Cmp: Fn(f32, f32) -> bool,
+{
+    // SIMD fast path: tensor is contiguous
+    if let Some((start, end)) = lhs.layout().contiguous_offsets()
+        && let Some(simd_op) = detect_cmp_op(&cmp)
+    {
+        let shape = lhs.layout().shape().clone();
+        let lhs_storage: &[f32] = lhs.storage();
+        let l_slice = &lhs_storage[start..end];
+
+        let mut result = vec![0u8; l_slice.len()];
+        simd::cmp_scalar_f32(l_slice, rhs, &mut result, simd_op);
+
+        return make_bool_tensor(result, shape);
+    }
+
+    // Fallback to generic path
+    compare_elem_typed(lhs, rhs, cmp)
+}
+
+/// Fallback when SIMD is disabled.
+#[cfg(not(feature = "simd"))]
+fn compare_elem_f32<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp) -> EmberTensor
+where
+    Cmp: Fn(f32, f32) -> bool,
+{
+    compare_elem_typed(lhs, rhs, cmp)
 }
 
 fn compare_typed<E, Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp) -> EmberTensor
@@ -79,6 +186,10 @@ where
                 .map(|(&a, &b)| cmp(a, b) as u8)
                 .collect()
         }
+        // Fast path for 2D non-contiguous (common for transpose)
+        _ if lhs.layout().num_dims() == 2 => {
+            compare_2d_strided(lhs_storage, rhs_storage, lhs.layout(), rhs.layout(), cmp)
+        }
         _ => {
             let lhs_iter = StridedIter::new(lhs.layout());
             let rhs_iter = StridedIter::new(rhs.layout());
@@ -90,6 +201,39 @@ where
     };
 
     make_bool_tensor(result, shape)
+}
+
+/// Fast 2D strided comparison using row-based iteration.
+#[inline]
+fn compare_2d_strided<E, Cmp>(
+    lhs: &[E],
+    rhs: &[E],
+    lhs_layout: &Layout,
+    rhs_layout: &Layout,
+    cmp: Cmp,
+) -> Vec<u8>
+where
+    E: Copy,
+    Cmp: Fn(E, E) -> bool,
+{
+    let (rows, cols, l_row_stride, l_col_stride) = lhs_layout.as_2d_strides().unwrap();
+    let (_, _, r_row_stride, r_col_stride) = rhs_layout.as_2d_strides().unwrap();
+    let l_offset = lhs_layout.start_offset();
+    let r_offset = rhs_layout.start_offset();
+
+    let mut result = Vec::with_capacity(rows * cols);
+
+    for row in 0..rows {
+        let l_row_start = l_offset + row * l_row_stride;
+        let r_row_start = r_offset + row * r_row_stride;
+        for col in 0..cols {
+            let l_idx = l_row_start + col * l_col_stride;
+            let r_idx = r_row_start + col * r_col_stride;
+            result.push(cmp(lhs[l_idx], rhs[r_idx]) as u8);
+        }
+    }
+
+    result
 }
 
 fn compare_f16<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp) -> EmberTensor

@@ -424,6 +424,185 @@ fn div_inplace_f32_parallel(a: &mut [f32], b: &[f32]) {
         });
 }
 
+// ===================
+// Comparison operations (f32 -> u8 bool)
+// ===================
+
+/// Comparison operation type.
+#[derive(Clone, Copy)]
+pub enum CmpOp {
+    Gt, // greater than
+    Ge, // greater than or equal
+    Lt, // less than
+    Le, // less than or equal
+    Eq, // equal
+    Ne, // not equal
+}
+
+/// SIMD comparison for f32 slices, output as u8 (0 or 1).
+///
+/// Uses parallel execution for large arrays when rayon feature is enabled.
+#[inline]
+pub fn cmp_f32(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
+    debug_assert_eq!(a.len(), b.len());
+    debug_assert_eq!(a.len(), out.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        cmp_f32_parallel(a, b, out, op);
+        return;
+    }
+
+    cmp_f32_sequential(a, b, out, op);
+}
+
+#[inline]
+fn cmp_f32_sequential(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
+    let len = a.len();
+    let chunks = len / LANES;
+    let remainder = len % LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_ptr();
+            let b_ptr = b.as_ptr();
+            let out_ptr = out.as_mut_ptr();
+
+            for i in 0..chunks {
+                let offset = i * LANES;
+                let va = vld1q_f32(a_ptr.add(offset));
+                let vb = vld1q_f32(b_ptr.add(offset));
+
+                // Perform comparison based on operation type
+                let mask: uint32x4_t = match op {
+                    CmpOp::Gt => vcgtq_f32(va, vb),
+                    CmpOp::Ge => vcgeq_f32(va, vb),
+                    CmpOp::Lt => vcltq_f32(va, vb),
+                    CmpOp::Le => vcleq_f32(va, vb),
+                    CmpOp::Eq => vceqq_f32(va, vb),
+                    CmpOp::Ne => vmvnq_u32(vceqq_f32(va, vb)),
+                };
+
+                // Convert mask (0xFFFFFFFF or 0) to u8 (1 or 0)
+                // Shift right by 31 to get 1 or 0
+                let shifted = vshrq_n_u32::<31>(mask);
+                // Narrow from u32x4 -> u16x4 -> u8x8
+                let narrow16 = vmovn_u32(shifted);
+                let narrow8 = vmovn_u16(vcombine_u16(narrow16, narrow16));
+
+                // Store first 4 bytes
+                vst1_lane_u32::<0>(
+                    out_ptr.add(offset) as *mut u32,
+                    vreinterpret_u32_u8(narrow8),
+                );
+            }
+        }
+    }
+
+    // Scalar tail
+    let tail_start = chunks * LANES;
+    for i in 0..remainder {
+        let av = a[tail_start + i];
+        let bv = b[tail_start + i];
+        out[tail_start + i] = match op {
+            CmpOp::Gt => (av > bv) as u8,
+            CmpOp::Ge => (av >= bv) as u8,
+            CmpOp::Lt => (av < bv) as u8,
+            CmpOp::Le => (av <= bv) as u8,
+            CmpOp::Eq => (av == bv) as u8,
+            CmpOp::Ne => (av != bv) as u8,
+        };
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn cmp_f32_parallel(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
+    const CHUNK_SIZE: usize = 4096;
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(a.len());
+            cmp_f32_sequential(&a[start..end], &b[start..end], out_chunk, op);
+        });
+}
+
+/// SIMD scalar comparison for f32 slice vs scalar, output as u8.
+#[inline]
+pub fn cmp_scalar_f32(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
+    debug_assert_eq!(a.len(), out.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        cmp_scalar_f32_parallel(a, scalar, out, op);
+        return;
+    }
+
+    cmp_scalar_f32_sequential(a, scalar, out, op);
+}
+
+#[inline]
+fn cmp_scalar_f32_sequential(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
+    let len = a.len();
+    let chunks = len / LANES;
+    let remainder = len % LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_ptr();
+            let out_ptr = out.as_mut_ptr();
+            let vs = vdupq_n_f32(scalar);
+
+            for i in 0..chunks {
+                let offset = i * LANES;
+                let va = vld1q_f32(a_ptr.add(offset));
+
+                let mask: uint32x4_t = match op {
+                    CmpOp::Gt => vcgtq_f32(va, vs),
+                    CmpOp::Ge => vcgeq_f32(va, vs),
+                    CmpOp::Lt => vcltq_f32(va, vs),
+                    CmpOp::Le => vcleq_f32(va, vs),
+                    CmpOp::Eq => vceqq_f32(va, vs),
+                    CmpOp::Ne => vmvnq_u32(vceqq_f32(va, vs)),
+                };
+
+                let shifted = vshrq_n_u32::<31>(mask);
+                let narrow16 = vmovn_u32(shifted);
+                let narrow8 = vmovn_u16(vcombine_u16(narrow16, narrow16));
+                vst1_lane_u32::<0>(
+                    out_ptr.add(offset) as *mut u32,
+                    vreinterpret_u32_u8(narrow8),
+                );
+            }
+        }
+    }
+
+    let tail_start = chunks * LANES;
+    for i in 0..remainder {
+        let av = a[tail_start + i];
+        out[tail_start + i] = match op {
+            CmpOp::Gt => (av > scalar) as u8,
+            CmpOp::Ge => (av >= scalar) as u8,
+            CmpOp::Lt => (av < scalar) as u8,
+            CmpOp::Le => (av <= scalar) as u8,
+            CmpOp::Eq => (av == scalar) as u8,
+            CmpOp::Ne => (av != scalar) as u8,
+        };
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn cmp_scalar_f32_parallel(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
+    const CHUNK_SIZE: usize = 4096;
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(a.len());
+            cmp_scalar_f32_sequential(&a[start..end], scalar, out_chunk, op);
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,5 +648,53 @@ mod tests {
         add_scalar_f32(&a, 10.0, &mut out);
 
         assert_eq!(out, [11.0, 12.0, 13.0, 14.0, 15.0]);
+    }
+
+    // Comparison tests
+    #[test]
+    fn test_cmp_gt_f32() {
+        let a = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+        let b = [2.0f32, 2.0, 2.0, 4.0, 4.0, 4.0, 4.0];
+        let mut out = [0u8; 7];
+
+        cmp_f32(&a, &b, &mut out, CmpOp::Gt);
+
+        // 1>2=F, 2>2=F, 3>2=T, 4>4=F, 5>4=T, 6>4=T, 7>4=T
+        assert_eq!(out, [0, 0, 1, 0, 1, 1, 1]);
+    }
+
+    #[test]
+    fn test_cmp_ge_f32() {
+        let a = [1.0f32, 2.0, 3.0, 4.0];
+        let b = [2.0f32, 2.0, 2.0, 5.0];
+        let mut out = [0u8; 4];
+
+        cmp_f32(&a, &b, &mut out, CmpOp::Ge);
+
+        // 1>=2=F, 2>=2=T, 3>=2=T, 4>=5=F
+        assert_eq!(out, [0, 1, 1, 0]);
+    }
+
+    #[test]
+    fn test_cmp_eq_f32() {
+        let a = [1.0f32, 2.0, 3.0, 4.0, 5.0];
+        let b = [1.0f32, 3.0, 3.0, 5.0, 5.0];
+        let mut out = [0u8; 5];
+
+        cmp_f32(&a, &b, &mut out, CmpOp::Eq);
+
+        // 1==1=T, 2==3=F, 3==3=T, 4==5=F, 5==5=T
+        assert_eq!(out, [1, 0, 1, 0, 1]);
+    }
+
+    #[test]
+    fn test_cmp_scalar_gt_f32() {
+        let a = [1.0f32, 2.0, 3.0, 4.0, 5.0];
+        let mut out = [0u8; 5];
+
+        cmp_scalar_f32(&a, 3.0, &mut out, CmpOp::Gt);
+
+        // 1>3=F, 2>3=F, 3>3=F, 4>3=T, 5>3=T
+        assert_eq!(out, [0, 0, 0, 1, 1]);
     }
 }
