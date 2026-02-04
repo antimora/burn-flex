@@ -396,8 +396,51 @@ fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor
             outer_stride,
             dim_stride,
         )
+    } else if dim_stride == 1 && matches!(op, ReduceOp::Sum) && outer_size == 1 {
+        // Reduction dimension is contiguous, no outer batch (e.g., transposed 2D reducing dim=0)
+        // Storage is [inner_size rows of dim_size elements each] - use sum_rows_f32
+        #[cfg(feature = "simd")]
+        {
+            let mut result = vec![0.0f32; inner_size];
+            kernels::sum_rows_f32(
+                &data[start_offset..],
+                &mut result,
+                inner_size, // number of rows (output positions)
+                dim_size,   // elements per row (to sum)
+            );
+            result
+        }
+        #[cfg(not(feature = "simd"))]
+        {
+            let inner_stride = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+            let mut result = Vec::with_capacity(out_size);
+            for inner in 0..inner_size {
+                let base = start_offset + inner * inner_stride;
+                let slice = &data[base..base + dim_size];
+                result.push(slice.iter().copied().sum());
+            }
+            result
+        }
+    } else if dim_stride == 1 && matches!(op, ReduceOp::Sum) {
+        // Reduction dimension is contiguous but with outer batches
+        let outer_stride = if dim > 0 { strides[dim - 1] } else { 0 };
+        let inner_stride = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+
+        let mut result = Vec::with_capacity(out_size);
+        for outer in 0..outer_size {
+            for inner in 0..inner_size {
+                let base = start_offset + outer * outer_stride + inner * inner_stride;
+                let slice = &data[base..base + dim_size];
+                #[cfg(feature = "simd")]
+                let acc = kernels::sum_f32(slice);
+                #[cfg(not(feature = "simd"))]
+                let acc = slice.iter().copied().sum();
+                result.push(acc);
+            }
+        }
+        result
     } else {
-        // General case
+        // General strided case
         let outer_stride = if dim > 0 { strides[dim - 1] } else { 0 };
         let inner_stride = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
 

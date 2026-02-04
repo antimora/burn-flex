@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use burn_backend::DType;
 use burn_std::{Bytes, bf16, f16};
 
-use crate::strided_index::StridedIter;
+use crate::layout::StridedBlocks;
 use crate::{EmberTensor, Layout};
 
 /// Apply a unary operation element-wise to a tensor.
@@ -32,26 +32,47 @@ where
 {
     let layout = tensor.layout().clone();
     let n = layout.num_elements();
-
-    // Fast path: contiguous tensor
-    if let Some((start, end)) = layout.contiguous_offsets() {
-        let src: &[E] = tensor.storage();
-        let slice = &src[start..end];
-        let result: Vec<E> = slice.iter().map(|&x| op(x)).collect();
-        let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(
-            bytes,
-            Layout::contiguous(layout.shape().clone()),
-            E::dtype(),
-        );
-    }
-
-    // Non-contiguous: use strided iteration
     let src: &[E] = tensor.storage();
-    let mut result = Vec::with_capacity(n);
-    for idx in StridedIter::new(&layout) {
-        result.push(op(src[idx]));
+
+    // Fast path: storage exactly matches tensor view (covers transposed tensors)
+    // Iterate in storage order (contiguous) and preserve original layout.
+    if layout.start_offset() == 0 && src.len() == n {
+        let result: Vec<E> = src.iter().map(|&x| op(x)).collect();
+        let bytes = Bytes::from_elems(result);
+        return EmberTensor::new(bytes, layout, E::dtype());
     }
+
+    // General path for views/slices with offset or extra storage
+    let result = match layout.strided_blocks() {
+        // Single contiguous block (with offset)
+        StridedBlocks::Single { start, len } => {
+            src[start..start + len].iter().map(|&x| op(x)).collect()
+        }
+        // Strided: iterate over contiguous blocks
+        StridedBlocks::Multiple {
+            block_len,
+            num_blocks,
+            ..
+        } => {
+            let blocks = layout.strided_blocks();
+            let mut result = Vec::with_capacity(n);
+
+            if block_len == 1 {
+                for block_start in blocks.block_starts() {
+                    result.push(op(src[block_start]));
+                }
+            } else {
+                for block_start in blocks.block_starts() {
+                    for i in 0..block_len {
+                        result.push(op(src[block_start + i]));
+                    }
+                }
+            }
+            debug_assert_eq!(result.len(), num_blocks * block_len);
+            result
+        }
+    };
+
     let bytes = Bytes::from_elems(result);
     EmberTensor::new(
         bytes,
@@ -69,21 +90,36 @@ where
     let n = layout.num_elements();
     let src: &[f16] = bytemuck::cast_slice(tensor.bytes());
 
-    if let Some((start, end)) = layout.contiguous_offsets() {
-        let slice = &src[start..end];
-        let result: Vec<f16> = slice.iter().map(|&x| op(x)).collect();
+    // Fast path: storage exactly matches tensor view
+    if layout.start_offset() == 0 && src.len() == n {
+        let result: Vec<f16> = src.iter().map(|&x| op(x)).collect();
         let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(
-            bytes,
-            Layout::contiguous(layout.shape().clone()),
-            DType::F16,
-        );
+        return EmberTensor::new(bytes, layout, DType::F16);
     }
 
-    let mut result = Vec::with_capacity(n);
-    for idx in StridedIter::new(&layout) {
-        result.push(op(src[idx]));
-    }
+    let result = match layout.strided_blocks() {
+        StridedBlocks::Single { start, len } => {
+            src[start..start + len].iter().map(|&x| op(x)).collect()
+        }
+        StridedBlocks::Multiple { block_len, .. } => {
+            let blocks = layout.strided_blocks();
+            let mut result = Vec::with_capacity(n);
+
+            if block_len == 1 {
+                for block_start in blocks.block_starts() {
+                    result.push(op(src[block_start]));
+                }
+            } else {
+                for block_start in blocks.block_starts() {
+                    for i in 0..block_len {
+                        result.push(op(src[block_start + i]));
+                    }
+                }
+            }
+            result
+        }
+    };
+
     let bytes = Bytes::from_elems(result);
     EmberTensor::new(
         bytes,
@@ -101,21 +137,36 @@ where
     let n = layout.num_elements();
     let src: &[bf16] = bytemuck::cast_slice(tensor.bytes());
 
-    if let Some((start, end)) = layout.contiguous_offsets() {
-        let slice = &src[start..end];
-        let result: Vec<bf16> = slice.iter().map(|&x| op(x)).collect();
+    // Fast path: storage exactly matches tensor view
+    if layout.start_offset() == 0 && src.len() == n {
+        let result: Vec<bf16> = src.iter().map(|&x| op(x)).collect();
         let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(
-            bytes,
-            Layout::contiguous(layout.shape().clone()),
-            DType::BF16,
-        );
+        return EmberTensor::new(bytes, layout, DType::BF16);
     }
 
-    let mut result = Vec::with_capacity(n);
-    for idx in StridedIter::new(&layout) {
-        result.push(op(src[idx]));
-    }
+    let result = match layout.strided_blocks() {
+        StridedBlocks::Single { start, len } => {
+            src[start..start + len].iter().map(|&x| op(x)).collect()
+        }
+        StridedBlocks::Multiple { block_len, .. } => {
+            let blocks = layout.strided_blocks();
+            let mut result = Vec::with_capacity(n);
+
+            if block_len == 1 {
+                for block_start in blocks.block_starts() {
+                    result.push(op(src[block_start]));
+                }
+            } else {
+                for block_start in blocks.block_starts() {
+                    for i in 0..block_len {
+                        result.push(op(src[block_start + i]));
+                    }
+                }
+            }
+            result
+        }
+    };
+
     let bytes = Bytes::from_elems(result);
     EmberTensor::new(
         bytes,

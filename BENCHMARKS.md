@@ -14,7 +14,8 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Matrix Multiply | 14         | 3            | 0     |
 | Slice Ops       | 11         | 7            | 0     |
 | Reduce Ops      | 14         | 2            | 0     |
-| **Total**       | **49**     | **14**       | **0** |
+| Unary Ops       | 15         | 0            | 4     |
+| **Total**       | **64**     | **14**       | **4** |
 
 ---
 
@@ -176,12 +177,21 @@ Sum, mean, argmax reductions with portable SIMD via pulp.
 | 32x256x256 | 1   | 291 us     | 528 us       | **1.8x** | 8.4 MB    | 16.8 MB     |
 | 32x256x256 | 2   | 332 us     | 348 us       | **1.0x** | 8.4 MB    | 16.8 MB     |
 
-### Sum Transposed
+### Sum Transposed (total sum)
 
 | Size      | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
 | --------- | ---------- | ------------ | ------- | --------- | ----------- |
-| 256x256   | 16.2 us    | 6.45 us      | 0.4x    | 262 KB    | 44 B        |
-| 1024x1024 | 145 us     | 103 us       | 0.7x    | 4.2 MB    | 44 B        |
+| 256x256   | 15.8 us    | 5.70 us      | 0.4x    | 262 KB    | 44 B        |
+| 1024x1024 | 134 us     | 95.1 us      | 0.7x    | 4.2 MB    | 44 B        |
+
+### Sum Dim on Transposed Tensor
+
+| Size      | Dim | Ember Time | NdArray Time | Speedup | Note |
+| --------- | --- | ---------- | ------------ | ------- | ---- |
+| 256x256   | 0   | 10.1 us    | 4.57 us      | 0.5x    | NdArray fast on storage-contiguous reduction |
+| 1024x1024 | 0   | 192 us     | 84.2 us      | 0.4x    | Ember matches contiguous perf (was 3.3ms) |
+
+Note: For contiguous tensors, Ember sum_dim is **2.1x faster** than NdArray. The transposed case is where NdArray excels.
 
 ### Mean Along Dimension
 
@@ -200,6 +210,48 @@ Sum, mean, argmax reductions with portable SIMD via pulp.
 
 ---
 
+## Unary Operations
+
+Element-wise math functions (exp, log, sqrt, trig, etc.).
+
+### Basic Math Operations
+
+| Operation | Size         | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | ------------ | ---------- | ------------ | -------- | --------- | ----------- |
+| exp       | small (4K)   | 5.34 us    | 5.69 us      | **1.1x** | 32.9 KB   | 32.8 KB     |
+| exp       | medium (64K) | 85.2 us    | 87.2 us      | 1.0x     | 524 KB    | 524 KB      |
+| exp       | large (1M)   | 1.37 ms    | 1.41 ms      | **1.0x** | 8.4 MB    | 8.4 MB      |
+| log       | small (4K)   | 7.26 us    | 7.03 us      | 1.0x     | 32.9 KB   | 32.8 KB     |
+| log       | medium (64K) | 110 us     | 113 us       | **1.0x** | 524 KB    | 524 KB      |
+| log       | large (1M)   | 1.81 ms    | 1.83 ms      | 1.0x     | 8.4 MB    | 8.4 MB      |
+| sqrt      | small (4K)   | 949 ns     | 1.13 us      | **1.2x** | 24.6 KB   | 24.6 KB     |
+| sqrt      | medium (64K) | 13.6 us    | 17.4 us      | **1.3x** | 524 KB    | 524 KB      |
+| sqrt      | large (1M)   | 212 us     | 284 us       | **1.3x** | 8.4 MB    | 8.4 MB      |
+| abs       | large (1M)   | 133 us     | 194 us       | **1.5x** | 8.4 MB    | 8.4 MB      |
+| recip     | large (1M)   | 154 us     | 197 us       | **1.3x** | 8.4 MB    | 8.4 MB      |
+
+### Trigonometric Operations
+
+| Operation | Size         | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | ------------ | ---------- | ------------ | -------- | --------- | ----------- |
+| sin       | small (4K)   | 5.93 us    | 8.63 us      | **1.5x** | 32.9 KB   | 32.8 KB     |
+| sin       | medium (64K) | 94.2 us    | 143 us       | **1.5x** | 524 KB    | 524 KB      |
+| sin       | large (1M)   | 1.51 ms    | 2.18 ms      | **1.4x** | 8.4 MB    | 8.4 MB      |
+| cos       | small (4K)   | 6.76 us    | 8.61 us      | **1.3x** | 32.9 KB   | 32.8 KB     |
+| cos       | large (1M)   | 1.77 ms    | 2.33 ms      | **1.3x** | 8.4 MB    | 8.4 MB      |
+| tanh      | small (4K)   | 7.34 us    | 13.7 us      | **1.9x** | 32.9 KB   | 32.8 KB     |
+| tanh      | medium (64K) | 123 us     | 225 us       | **1.8x** | 524 KB    | 524 KB      |
+| tanh      | large (1M)   | 1.89 ms    | 3.64 ms      | **1.9x** | 8.4 MB    | 8.4 MB      |
+
+### Transposed (Non-contiguous) Input
+
+| Operation | Size      | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
+| --------- | --------- | ---------- | ------------ | ------- | --------- | ----------- |
+| exp       | 256x256   | 85.0 us    | 82.8 us      | 1.0x    | 524 KB    | 262 KB      |
+| exp       | 1024x1024 | 1.44 ms    | 1.34 ms      | 0.9x    | 8.4 MB    | 4.2 MB      |
+
+---
+
 ## Key Observations
 
 ### Performance Wins
@@ -209,6 +261,7 @@ Sum, mean, argmax reductions with portable SIMD via pulp.
 2. **Matrix multiply**: Ember 1.5-2.9x faster on square matrices, 2.0-2.5x on batched ops
 3. **Reduce dim=0**: Ember 1.7-2.1x faster using cache-friendly scatter-add pattern
 4. **Scalar ops**: Ember 1.8x faster with half the memory allocation
+5. **Unary trig ops**: Ember 1.3-1.9x faster on tanh, sin, cos (using libm functions)
 
 ### Memory Efficiency
 
@@ -232,4 +285,5 @@ cargo bench --bench binary_ops --features simd,rayon,gemm
 cargo bench --bench matmul --features simd,rayon,gemm
 cargo bench --bench slice_ops --features simd,rayon,gemm
 cargo bench --bench reduce_ops --features simd,rayon,gemm
+cargo bench --bench unary_ops --features simd,rayon,gemm
 ```

@@ -159,6 +159,24 @@ macro_rules! bench_backend {
                 }
             }
 
+            // Sum_dim on transposed tensor (tests dim_stride=1 optimization)
+            #[divan::bench_group(name = "sum_dim_transposed")]
+            mod sum_dim_transposed {
+                use super::*;
+
+                #[divan::bench]
+                fn _256x256_dim0(bencher: Bencher) {
+                    let t = make_tensor_2d::<B>(256, 256).transpose();
+                    bencher.bench(|| t.clone().sum_dim(0));
+                }
+
+                #[divan::bench]
+                fn _1024x1024_dim0(bencher: Bencher) {
+                    let t = make_tensor_2d::<B>(1024, 1024).transpose();
+                    bencher.bench(|| t.clone().sum_dim(0));
+                }
+            }
+
             // 3D reductions (batch-like)
             #[divan::bench_group(name = "sum_3d")]
             mod sum_3d {

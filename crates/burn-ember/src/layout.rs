@@ -254,7 +254,195 @@ impl Layout {
             self.strides[1],
         ))
     }
+
+    /// Compute strided blocks for efficient iteration.
+    ///
+    /// Returns (block_len, num_blocks, block_stride) where:
+    /// - block_len: number of contiguous elements in each block
+    /// - num_blocks: total number of blocks
+    /// - block_stride: stride between consecutive blocks (0 if single block)
+    ///
+    /// For contiguous tensors: single block covering all elements.
+    /// For transposed/strided: multiple blocks of contiguous data.
+    pub fn strided_blocks(&self) -> StridedBlocks<'_> {
+        let n = self.num_elements();
+        if n == 0 {
+            return StridedBlocks::Single { start: 0, len: 0 };
+        }
+
+        // Fast path: fully contiguous
+        if self.is_contiguous() {
+            return StridedBlocks::Single {
+                start: self.start_offset,
+                len: n,
+            };
+        }
+
+        // Find contiguous inner dimensions
+        // Start from innermost and work outward while strides match contiguous pattern
+        let ndims = self.num_dims();
+        let mut block_len = 1usize;
+        let mut expected_stride = 1usize;
+
+        for i in (0..ndims).rev() {
+            if self.strides[i] == expected_stride {
+                block_len *= self.shape.dims[i];
+                expected_stride *= self.shape.dims[i];
+            } else {
+                break;
+            }
+        }
+
+        if block_len == n {
+            // All dimensions contiguous (just offset)
+            return StridedBlocks::Single {
+                start: self.start_offset,
+                len: n,
+            };
+        }
+
+        let num_blocks = n / block_len;
+        StridedBlocks::Multiple {
+            layout: self,
+            block_len,
+            num_blocks,
+        }
+    }
 }
+
+/// Result of strided block analysis.
+#[derive(Debug, Clone)]
+pub enum StridedBlocks<'a> {
+    /// Single contiguous block - direct slice access.
+    Single { start: usize, len: usize },
+    /// Multiple blocks requiring iteration.
+    Multiple {
+        layout: &'a Layout,
+        block_len: usize,
+        num_blocks: usize,
+    },
+}
+
+impl<'a> StridedBlocks<'a> {
+    /// Get the block length (elements per block).
+    pub fn block_len(&self) -> usize {
+        match self {
+            Self::Single { len, .. } => *len,
+            Self::Multiple { block_len, .. } => *block_len,
+        }
+    }
+
+    /// Iterator over block start indices.
+    pub fn block_starts(&self) -> BlockStartIter<'_> {
+        match self {
+            Self::Single { start, .. } => BlockStartIter::Single {
+                start: *start,
+                done: false,
+            },
+            Self::Multiple {
+                layout,
+                block_len,
+                num_blocks,
+            } => {
+                // Calculate dimensions for outer iteration (non-contiguous part)
+                let ndims = layout.num_dims();
+                let mut outer_dims = 0;
+                let mut expected_stride = 1usize;
+
+                for i in (0..ndims).rev() {
+                    if layout.strides[i] == expected_stride {
+                        expected_stride *= layout.shape.dims[i];
+                    } else {
+                        outer_dims = ndims - i;
+                        break;
+                    }
+                }
+
+                BlockStartIter::Multiple {
+                    layout,
+                    multi_index: vec![0; outer_dims],
+                    remaining: *num_blocks,
+                    block_len: *block_len,
+                }
+            }
+        }
+    }
+}
+
+/// Iterator over block start indices.
+pub enum BlockStartIter<'a> {
+    Single { start: usize, done: bool },
+    Multiple {
+        layout: &'a Layout,
+        multi_index: Vec<usize>,
+        remaining: usize,
+        block_len: usize,
+    },
+}
+
+impl Iterator for BlockStartIter<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        match self {
+            Self::Single { start, done } => {
+                if *done {
+                    None
+                } else {
+                    *done = true;
+                    Some(*start)
+                }
+            }
+            Self::Multiple {
+                layout,
+                multi_index,
+                remaining,
+                block_len: _,
+            } => {
+                if *remaining == 0 {
+                    return None;
+                }
+
+                // Compute current block start
+                let outer_dims = multi_index.len();
+                let mut offset = layout.start_offset;
+                for (i, &idx) in multi_index.iter().enumerate() {
+                    offset += idx * layout.strides[i];
+                }
+
+                *remaining -= 1;
+
+                // Advance multi-index for next iteration
+                let shape = &layout.shape;
+                for d in (0..outer_dims).rev() {
+                    multi_index[d] += 1;
+                    if multi_index[d] < shape.dims[d] {
+                        break;
+                    }
+                    multi_index[d] = 0;
+                }
+
+                Some(offset)
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = match self {
+            Self::Single { done, .. } => {
+                if *done {
+                    0
+                } else {
+                    1
+                }
+            }
+            Self::Multiple { remaining, .. } => *remaining,
+        };
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for BlockStartIter<'_> {}
 
 #[cfg(test)]
 mod tests {
