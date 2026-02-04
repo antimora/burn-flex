@@ -10,6 +10,7 @@ mod float;
 mod int;
 pub mod matmul;
 mod module;
+pub mod pool;
 mod qtensor;
 pub mod reduce;
 pub mod slice;
