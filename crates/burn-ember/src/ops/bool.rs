@@ -66,28 +66,86 @@ impl BoolTensorOps<Ember> for Ember {
         todo!("bool_flip")
     }
 
-    fn bool_equal(_lhs: BoolTensor<Ember>, _rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("bool_equal")
+    fn bool_equal(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
+        use crate::Layout;
+        use crate::strided_index::StridedIter;
+        use burn_backend::DType;
+        use burn_std::Bytes;
+
+        debug_assert_eq!(
+            lhs.layout().shape(),
+            rhs.layout().shape(),
+            "bool_equal: shape mismatch"
+        );
+
+        let shape = lhs.layout().shape().clone();
+        let lhs_storage: &[u8] = lhs.bytes();
+        let rhs_storage: &[u8] = rhs.bytes();
+
+        let result: Vec<u8> = match (
+            lhs.layout().contiguous_offsets(),
+            rhs.layout().contiguous_offsets(),
+        ) {
+            (Some((l_start, l_end)), Some((r_start, r_end))) => {
+                let l_slice = &lhs_storage[l_start..l_end];
+                let r_slice = &rhs_storage[r_start..r_end];
+                l_slice
+                    .iter()
+                    .zip(r_slice)
+                    .map(|(&a, &b)| (a == b) as u8)
+                    .collect()
+            }
+            _ => {
+                let lhs_iter = StridedIter::new(lhs.layout());
+                let rhs_iter = StridedIter::new(rhs.layout());
+                lhs_iter
+                    .zip(rhs_iter)
+                    .map(|(li, ri)| (lhs_storage[li] == rhs_storage[ri]) as u8)
+                    .collect()
+            }
+        };
+
+        let bytes = Bytes::from_elems(result);
+        EmberTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
     }
 
-    fn bool_not(_tensor: BoolTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("bool_not")
+    fn bool_not(tensor: BoolTensor<Ember>) -> BoolTensor<Ember> {
+        use crate::Layout;
+        use crate::strided_index::StridedIter;
+        use burn_backend::DType;
+        use burn_std::Bytes;
+
+        let shape = tensor.layout().shape().clone();
+        let storage: &[u8] = tensor.bytes();
+
+        let result: Vec<u8> = match tensor.layout().contiguous_offsets() {
+            Some((start, end)) => storage[start..end]
+                .iter()
+                .map(|&v| (v == 0) as u8)
+                .collect(),
+            None => StridedIter::new(tensor.layout())
+                .map(|idx| (storage[idx] == 0) as u8)
+                .collect(),
+        };
+
+        let bytes = Bytes::from_elems(result);
+        EmberTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
     }
 
-    fn bool_and(_lhs: BoolTensor<Ember>, _rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("bool_and")
+    fn bool_and(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
+        bool_binary_op(lhs, rhs, |a, b| a & b)
     }
 
-    fn bool_or(_lhs: BoolTensor<Ember>, _rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("bool_or")
+    fn bool_or(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
+        bool_binary_op(lhs, rhs, |a, b| a | b)
     }
 
-    fn bool_xor(_lhs: BoolTensor<Ember>, _rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("bool_xor")
+    fn bool_xor(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
+        bool_binary_op(lhs, rhs, |a, b| a ^ b)
     }
 
-    fn bool_expand(_tensor: BoolTensor<Ember>, _shape: Shape) -> BoolTensor<Ember> {
-        todo!("bool_expand")
+    fn bool_expand(tensor: BoolTensor<Ember>, shape: Shape) -> BoolTensor<Ember> {
+        crate::ops::expand::expand(tensor, shape)
     }
 
     // Missing methods
@@ -132,8 +190,27 @@ impl BoolTensorOps<Ember> for Ember {
         todo!("bool_scatter_or")
     }
 
-    fn bool_equal_elem(_lhs: BoolTensor<Ember>, _rhs: bool) -> BoolTensor<Ember> {
-        todo!("bool_equal_elem")
+    fn bool_equal_elem(lhs: BoolTensor<Ember>, rhs: bool) -> BoolTensor<Ember> {
+        use crate::Layout;
+        use crate::strided_index::StridedIter;
+        use burn_std::Bytes;
+
+        let shape = lhs.layout().shape().clone();
+        let storage: &[u8] = lhs.bytes();
+        let rhs_val = rhs as u8;
+
+        let result: Vec<u8> = match lhs.layout().contiguous_offsets() {
+            Some((start, end)) => storage[start..end]
+                .iter()
+                .map(|&v| (v == rhs_val) as u8)
+                .collect(),
+            None => StridedIter::new(lhs.layout())
+                .map(|idx| (storage[idx] == rhs_val) as u8)
+                .collect(),
+        };
+
+        let bytes = Bytes::from_elems(result);
+        EmberTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
     }
 
     fn bool_unfold(
@@ -144,4 +221,49 @@ impl BoolTensorOps<Ember> for Ember {
     ) -> BoolTensor<Ember> {
         todo!("bool_unfold")
     }
+}
+
+fn bool_binary_op<F>(lhs: EmberTensor, rhs: EmberTensor, op: F) -> EmberTensor
+where
+    F: Fn(u8, u8) -> u8,
+{
+    use crate::Layout;
+    use crate::strided_index::StridedIter;
+    use burn_std::Bytes;
+
+    debug_assert_eq!(
+        lhs.layout().shape(),
+        rhs.layout().shape(),
+        "bool_binary_op: shape mismatch"
+    );
+
+    let shape = lhs.layout().shape().clone();
+    let lhs_storage: &[u8] = lhs.bytes();
+    let rhs_storage: &[u8] = rhs.bytes();
+
+    let result: Vec<u8> = match (
+        lhs.layout().contiguous_offsets(),
+        rhs.layout().contiguous_offsets(),
+    ) {
+        (Some((l_start, l_end)), Some((r_start, r_end))) => {
+            let l_slice = &lhs_storage[l_start..l_end];
+            let r_slice = &rhs_storage[r_start..r_end];
+            l_slice
+                .iter()
+                .zip(r_slice)
+                .map(|(&a, &b)| op(a, b))
+                .collect()
+        }
+        _ => {
+            let lhs_iter = StridedIter::new(lhs.layout());
+            let rhs_iter = StridedIter::new(rhs.layout());
+            lhs_iter
+                .zip(rhs_iter)
+                .map(|(li, ri)| op(lhs_storage[li], rhs_storage[ri]))
+                .collect()
+        }
+    };
+
+    let bytes = Bytes::from_elems(result);
+    EmberTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
 }

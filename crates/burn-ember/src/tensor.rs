@@ -88,6 +88,11 @@ impl EmberTensor {
         &self.data
     }
 
+    /// Consume tensor and return the raw bytes.
+    pub fn into_bytes(self) -> Bytes {
+        self.data
+    }
+
     /// Zero-copy typed view of the full storage buffer.
     ///
     /// Use with `StridedIter` for non-contiguous access, or with

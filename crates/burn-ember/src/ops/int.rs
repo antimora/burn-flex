@@ -6,6 +6,7 @@ use burn_backend::{
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
 use burn_std::{IntDType, Shape, Slice};
+use num_traits::ToPrimitive;
 
 use crate::{Ember, EmberTensor, ops::matmul};
 
@@ -96,44 +97,44 @@ impl IntTensorOps<Ember> for Ember {
         todo!("int_select_add")
     }
 
-    fn int_equal(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("int_equal")
+    fn int_equal(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_equal(lhs, rhs)
     }
 
-    fn int_equal_elem(_lhs: IntTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("int_equal_elem")
+    fn int_equal_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_equal_elem(lhs, rhs.to_f64().unwrap() as i64)
     }
 
-    fn int_greater(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("int_greater")
+    fn int_greater(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_greater(lhs, rhs)
     }
 
-    fn int_greater_elem(_lhs: IntTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("int_greater_elem")
+    fn int_greater_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_greater_elem(lhs, rhs.to_f64().unwrap() as i64)
     }
 
-    fn int_greater_equal(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("int_greater_equal")
+    fn int_greater_equal(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_greater_equal(lhs, rhs)
     }
 
-    fn int_greater_equal_elem(_lhs: IntTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("int_greater_equal_elem")
+    fn int_greater_equal_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_greater_equal_elem(lhs, rhs.to_f64().unwrap() as i64)
     }
 
-    fn int_lower(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("int_lower")
+    fn int_lower(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_lower(lhs, rhs)
     }
 
-    fn int_lower_elem(_lhs: IntTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("int_lower_elem")
+    fn int_lower_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_lower_elem(lhs, rhs.to_f64().unwrap() as i64)
     }
 
-    fn int_lower_equal(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("int_lower_equal")
+    fn int_lower_equal(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_lower_equal(lhs, rhs)
     }
 
-    fn int_lower_equal_elem(_lhs: IntTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("int_lower_equal_elem")
+    fn int_lower_equal_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::int_lower_equal_elem(lhs, rhs.to_f64().unwrap() as i64)
     }
 
     fn int_add(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
@@ -200,8 +201,8 @@ impl IntTensorOps<Ember> for Ember {
         todo!("int_random")
     }
 
-    fn int_expand(_tensor: IntTensor<Ember>, _shape: Shape) -> IntTensor<Ember> {
-        todo!("int_expand")
+    fn int_expand(tensor: IntTensor<Ember>, shape: Shape) -> IntTensor<Ember> {
+        crate::ops::expand::expand(tensor, shape)
     }
 
     fn int_matmul(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {

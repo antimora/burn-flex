@@ -186,47 +186,52 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_mask_fill")
     }
 
-    fn float_equal(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("float_equal")
+    fn float_equal(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::equal(lhs, rhs)
     }
 
-    fn float_equal_elem(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("float_equal_elem")
+    fn float_equal_elem(lhs: FloatTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::equal_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_greater(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("float_greater")
+    fn float_greater(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::greater(lhs, rhs)
     }
 
-    fn float_greater_elem(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("float_greater_elem")
+    fn float_greater_elem(lhs: FloatTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::greater_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_greater_equal(
-        _lhs: FloatTensor<Ember>,
-        _rhs: FloatTensor<Ember>,
-    ) -> BoolTensor<Ember> {
-        todo!("float_greater_equal")
+    fn float_greater_equal(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::greater_equal(lhs, rhs)
     }
 
-    fn float_greater_equal_elem(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("float_greater_equal_elem")
+    fn float_greater_equal_elem(lhs: FloatTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::greater_equal_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_lower(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("float_lower")
+    fn float_lower(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::lower(lhs, rhs)
     }
 
-    fn float_lower_elem(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("float_lower_elem")
+    fn float_lower_elem(lhs: FloatTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::lower_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_lower_equal(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
-        todo!("float_lower_equal")
+    fn float_lower_equal(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::lower_equal(lhs, rhs)
     }
 
-    fn float_lower_equal_elem(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> BoolTensor<Ember> {
-        todo!("float_lower_equal_elem")
+    fn float_lower_equal_elem(lhs: FloatTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::lower_equal_elem(lhs, rhs.to_f64().unwrap())
+    }
+
+    fn float_not_equal(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::not_equal(lhs, rhs)
+    }
+
+    fn float_not_equal_elem(lhs: FloatTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
+        crate::ops::comparison::not_equal_elem(lhs, rhs.to_f64().unwrap())
     }
 
     fn float_sum(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
@@ -369,8 +374,8 @@ impl FloatTensorOps<Ember> for Ember {
         crate::ops::reduce::argmin(tensor, dim)
     }
 
-    fn float_expand(_tensor: FloatTensor<Ember>, _shape: Shape) -> FloatTensor<Ember> {
-        todo!("float_expand")
+    fn float_expand(tensor: FloatTensor<Ember>, shape: Shape) -> FloatTensor<Ember> {
+        crate::ops::expand::expand(tensor, shape)
     }
 
     fn float_unfold(

@@ -3,6 +3,8 @@
 mod activation;
 pub mod binary;
 mod bool;
+pub mod comparison;
+pub mod expand;
 mod float;
 mod int;
 pub mod matmul;
