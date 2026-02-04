@@ -51,11 +51,21 @@ fn sum_f32(tensor: &EmberTensor) -> EmberTensor {
             sum_f32_contiguous(slice)
         }
         None => {
-            // Non-contiguous: use strided iteration (no copy!)
+            // Non-contiguous: check if we can sum the buffer directly.
+            // For transposed tensors that use all elements (no slicing),
+            // the sum is the same regardless of element order.
             let data: &[f32] = tensor.storage();
-            StridedIter::new(tensor.layout())
-                .map(|idx| data[idx])
-                .sum()
+            let elem_count = tensor.layout().num_elements();
+
+            if data.len() == elem_count {
+                // Tensor uses entire buffer - sum directly (order doesn't matter for sum)
+                sum_f32_contiguous(data)
+            } else {
+                // Sliced or partial view - must use strided iteration
+                StridedIter::new(tensor.layout())
+                    .map(|idx| data[idx])
+                    .sum()
+            }
         }
     };
 
@@ -82,36 +92,73 @@ fn sum_f32_contiguous(data: &[f32]) -> f32 {
     }
 }
 
-/// SIMD sum using NEON horizontal add.
+/// SIMD sum using NEON with 4 accumulators (16 elements per iteration).
+/// Matches Candle's approach for better instruction-level parallelism.
 #[cfg(all(feature = "simd", target_arch = "aarch64"))]
 #[inline]
 fn sum_f32_simd(data: &[f32]) -> f32 {
     const LANES: usize = 4;
+    const UNROLL: usize = 4; // 4 vectors = 16 elements per iteration
+    const STEP: usize = LANES * UNROLL;
+
     let len = data.len();
-    let chunks = len / LANES;
-    let remainder = len % LANES;
+    let main_chunks = len / STEP;
 
     let mut acc = 0.0f32;
 
-    if chunks > 0 {
+    if main_chunks > 0 {
         unsafe {
             let ptr = data.as_ptr();
-            let mut vacc = vdupq_n_f32(0.0);
+            // 4 accumulators for better ILP
+            let mut vacc0 = vdupq_n_f32(0.0);
+            let mut vacc1 = vdupq_n_f32(0.0);
+            let mut vacc2 = vdupq_n_f32(0.0);
+            let mut vacc3 = vdupq_n_f32(0.0);
 
-            for i in 0..chunks {
-                let v = vld1q_f32(ptr.add(i * LANES));
-                vacc = vaddq_f32(vacc, v);
+            for i in 0..main_chunks {
+                let base = i * STEP;
+                let v0 = vld1q_f32(ptr.add(base));
+                let v1 = vld1q_f32(ptr.add(base + LANES));
+                let v2 = vld1q_f32(ptr.add(base + LANES * 2));
+                let v3 = vld1q_f32(ptr.add(base + LANES * 3));
+                vacc0 = vaddq_f32(vacc0, v0);
+                vacc1 = vaddq_f32(vacc1, v1);
+                vacc2 = vaddq_f32(vacc2, v2);
+                vacc3 = vaddq_f32(vacc3, v3);
             }
 
-            // Horizontal sum: add all 4 lanes
-            acc = vaddvq_f32(vacc);
+            // Tree reduction: combine 4 accumulators into 1
+            vacc0 = vaddq_f32(vacc0, vacc1);
+            vacc2 = vaddq_f32(vacc2, vacc3);
+            vacc0 = vaddq_f32(vacc0, vacc2);
+
+            // Horizontal sum
+            acc = vaddvq_f32(vacc0);
         }
     }
 
-    // Scalar tail
-    let tail_start = chunks * LANES;
-    for i in 0..remainder {
-        acc += data[tail_start + i];
+    // Handle remaining elements (< 16)
+    let tail_start = main_chunks * STEP;
+    let tail = &data[tail_start..];
+
+    // Process 4 elements at a time if possible
+    let tail_chunks = tail.len() / LANES;
+    if tail_chunks > 0 {
+        unsafe {
+            let ptr = tail.as_ptr();
+            let mut vacc = vdupq_n_f32(0.0);
+            for i in 0..tail_chunks {
+                let v = vld1q_f32(ptr.add(i * LANES));
+                vacc = vaddq_f32(vacc, v);
+            }
+            acc += vaddvq_f32(vacc);
+        }
+    }
+
+    // Scalar remainder (< 4 elements)
+    let final_start = tail_start + tail_chunks * LANES;
+    for i in final_start..len {
+        acc += data[i];
     }
 
     acc
@@ -395,6 +442,21 @@ fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor
     let result: Vec<f32> = if inner_contiguous && dim == ndims - 1 {
         // Reducing last dimension with contiguous data: use SIMD
         reduce_last_dim_f32(data, start_offset, outer_size, dim_size, strides, dim, op)
+    } else if dim == 0 && inner_contiguous && matches!(op, ReduceOp::Sum) {
+        // First-dim reduction with contiguous inner: use cache-friendly accumulation
+        reduce_first_dim_f32(data, start_offset, dim_size, inner_size, dim_stride)
+    } else if dim > 0 && dim < ndims - 1 && inner_contiguous && matches!(op, ReduceOp::Sum) {
+        // Middle-dim reduction (e.g., [B, M, K] reducing dim=1): cache-friendly accumulation
+        let outer_stride = strides[dim - 1];
+        reduce_middle_dim_f32(
+            data,
+            start_offset,
+            outer_size,
+            dim_size,
+            inner_size,
+            outer_stride,
+            dim_stride,
+        )
     } else {
         // General case
         let outer_stride = if dim > 0 { strides[dim - 1] } else { 0 };
@@ -417,6 +479,171 @@ fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor
 
     let bytes = Bytes::from_elems(result);
     EmberTensor::new(bytes, Layout::contiguous(Shape::from(out_shape)), DType::F32)
+}
+
+/// Reduce middle dimension (e.g., [B, M, K] reducing dim=1) with cache-friendly iteration.
+/// For each batch, iterate over rows (dim to reduce) sequentially and accumulate into columns.
+#[inline]
+fn reduce_middle_dim_f32(
+    data: &[f32],
+    start_offset: usize,
+    outer_size: usize,  // batch size
+    dim_size: usize,    // rows to sum
+    inner_size: usize,  // columns (output per batch)
+    outer_stride: usize,
+    dim_stride: usize,
+) -> Vec<f32> {
+    let out_size = outer_size * inner_size;
+    let mut result = vec![0.0f32; out_size];
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        const LANES: usize = 4;
+        const UNROLL: usize = 4;
+        const STEP: usize = LANES * UNROLL;
+
+        let main_cols = inner_size / STEP * STEP;
+
+        for batch in 0..outer_size {
+            let batch_start = start_offset + batch * outer_stride;
+            let out_batch_start = batch * inner_size;
+
+            // Process rows sequentially (cache-friendly)
+            for row in 0..dim_size {
+                let row_start = batch_start + row * dim_stride;
+
+                // SIMD: process 16 columns at a time
+                let mut col = 0;
+                while col < main_cols {
+                    unsafe {
+                        let src_ptr = data.as_ptr().add(row_start + col);
+                        let dst_ptr = result.as_mut_ptr().add(out_batch_start + col);
+
+                        let v0 = vld1q_f32(src_ptr);
+                        let v1 = vld1q_f32(src_ptr.add(LANES));
+                        let v2 = vld1q_f32(src_ptr.add(LANES * 2));
+                        let v3 = vld1q_f32(src_ptr.add(LANES * 3));
+
+                        let a0 = vld1q_f32(dst_ptr);
+                        let a1 = vld1q_f32(dst_ptr.add(LANES));
+                        let a2 = vld1q_f32(dst_ptr.add(LANES * 2));
+                        let a3 = vld1q_f32(dst_ptr.add(LANES * 3));
+
+                        let r0 = vaddq_f32(a0, v0);
+                        let r1 = vaddq_f32(a1, v1);
+                        let r2 = vaddq_f32(a2, v2);
+                        let r3 = vaddq_f32(a3, v3);
+
+                        vst1q_f32(dst_ptr, r0);
+                        vst1q_f32(dst_ptr.add(LANES), r1);
+                        vst1q_f32(dst_ptr.add(LANES * 2), r2);
+                        vst1q_f32(dst_ptr.add(LANES * 3), r3);
+                    }
+                    col += STEP;
+                }
+
+                // Scalar tail
+                for c in col..inner_size {
+                    result[out_batch_start + c] += data[row_start + c];
+                }
+            }
+        }
+    }
+
+    #[cfg(not(all(feature = "simd", target_arch = "aarch64")))]
+    {
+        for batch in 0..outer_size {
+            let batch_start = start_offset + batch * outer_stride;
+            let out_batch_start = batch * inner_size;
+
+            for row in 0..dim_size {
+                let row_start = batch_start + row * dim_stride;
+                for c in 0..inner_size {
+                    result[out_batch_start + c] += data[row_start + c];
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Reduce first dimension with cache-friendly row iteration.
+/// Instead of iterating per-output (col) and gathering from rows (cache-unfriendly),
+/// iterate over rows (sequential access) and scatter-accumulate into outputs.
+#[inline]
+fn reduce_first_dim_f32(
+    data: &[f32],
+    start_offset: usize,
+    dim_size: usize,   // number of rows to sum
+    inner_size: usize, // number of columns (output positions)
+    dim_stride: usize, // stride between rows
+) -> Vec<f32> {
+    let mut result = vec![0.0f32; inner_size];
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        const LANES: usize = 4;
+        const UNROLL: usize = 4;
+        const STEP: usize = LANES * UNROLL;
+
+        let main_cols = inner_size / STEP * STEP;
+
+        // Process rows sequentially (cache-friendly)
+        for row in 0..dim_size {
+            let row_start = start_offset + row * dim_stride;
+
+            // SIMD: process 16 columns at a time
+            let mut col = 0;
+            while col < main_cols {
+                unsafe {
+                    let src_ptr = data.as_ptr().add(row_start + col);
+                    let dst_ptr = result.as_mut_ptr().add(col);
+
+                    // Load 16 values from input and accumulator
+                    let v0 = vld1q_f32(src_ptr);
+                    let v1 = vld1q_f32(src_ptr.add(LANES));
+                    let v2 = vld1q_f32(src_ptr.add(LANES * 2));
+                    let v3 = vld1q_f32(src_ptr.add(LANES * 3));
+
+                    let a0 = vld1q_f32(dst_ptr);
+                    let a1 = vld1q_f32(dst_ptr.add(LANES));
+                    let a2 = vld1q_f32(dst_ptr.add(LANES * 2));
+                    let a3 = vld1q_f32(dst_ptr.add(LANES * 3));
+
+                    // Accumulate
+                    let r0 = vaddq_f32(a0, v0);
+                    let r1 = vaddq_f32(a1, v1);
+                    let r2 = vaddq_f32(a2, v2);
+                    let r3 = vaddq_f32(a3, v3);
+
+                    // Store back
+                    vst1q_f32(dst_ptr, r0);
+                    vst1q_f32(dst_ptr.add(LANES), r1);
+                    vst1q_f32(dst_ptr.add(LANES * 2), r2);
+                    vst1q_f32(dst_ptr.add(LANES * 3), r3);
+                }
+                col += STEP;
+            }
+
+            // Scalar tail
+            for c in col..inner_size {
+                result[c] += data[row_start + c];
+            }
+        }
+    }
+
+    #[cfg(not(all(feature = "simd", target_arch = "aarch64")))]
+    {
+        for row in 0..dim_size {
+            let row_start = start_offset + row * dim_stride;
+            for c in 0..inner_size {
+                result[c] += data[row_start + c];
+            }
+        }
+    }
+
+    result
 }
 
 /// Reduce last dimension with SIMD (most common case).
