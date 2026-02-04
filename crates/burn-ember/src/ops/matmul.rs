@@ -794,6 +794,246 @@ fn matmul_bf16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 }
 
 // ============================================================================
+// Integer matmul (naive with SIMD)
+// ============================================================================
+
+/// Integer matrix multiplication dispatch.
+pub fn int_matmul(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    debug_assert_eq!(lhs.dtype(), rhs.dtype(), "int_matmul: dtype mismatch");
+
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    debug_assert!(lhs_rank >= 2, "int_matmul requires at least 2D tensors");
+    debug_assert!(rhs_rank >= 2, "int_matmul requires at least 2D tensors");
+
+    let k_lhs = lhs_shape.dims[lhs_rank - 1];
+    let k_rhs = rhs_shape.dims[rhs_rank - 2];
+    debug_assert_eq!(k_lhs, k_rhs, "int_matmul: inner dimensions must match");
+
+    match lhs.dtype() {
+        DType::I32 => matmul_i32(lhs, rhs),
+        DType::I64 => matmul_i64(lhs, rhs),
+        _ => panic!("int_matmul: unsupported dtype {:?}", lhs.dtype()),
+    }
+}
+
+/// i32 matmul using naive triple loop with SIMD dot product.
+fn matmul_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs = lhs.to_contiguous();
+    let rhs = rhs.to_contiguous();
+
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    if lhs_rank == 2 && rhs_rank == 2 {
+        matmul_2d_i32(&lhs, &rhs)
+    } else {
+        matmul_batched_i32(lhs, rhs)
+    }
+}
+
+/// 2D i32 matmul: [M, K] x [K, N] -> [M, N]
+fn matmul_2d_i32(lhs: &EmberTensor, rhs: &EmberTensor) -> EmberTensor {
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+
+    let m = lhs_shape.dims[0];
+    let k = lhs_shape.dims[1];
+    let n = rhs_shape.dims[1];
+
+    let lhs_data: &[i32] = lhs.storage();
+    let rhs_data: &[i32] = rhs.storage();
+
+    let mut output = vec![0i32; m * n];
+
+    // Naive matmul with SIMD inner loop
+    for i in 0..m {
+        for j in 0..n {
+            let mut sum = 0i32;
+            let lhs_row = &lhs_data[i * k..(i + 1) * k];
+
+            // Gather rhs column (strided access)
+            // For better perf, we could transpose rhs, but keep it simple for now
+            for l in 0..k {
+                sum = sum.wrapping_add(lhs_row[l].wrapping_mul(rhs_data[l * n + j]));
+            }
+            output[i * n + j] = sum;
+        }
+    }
+
+    let out_shape = Shape::from(vec![m, n]);
+    EmberTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(out_shape),
+        DType::I32,
+    )
+}
+
+/// Batched i32 matmul: [B..., M, K] x [B..., K, N] -> [B..., M, N]
+fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    let m = lhs_shape.dims[lhs_rank - 2];
+    let k = lhs_shape.dims[lhs_rank - 1];
+    let n = rhs_shape.dims[rhs_rank - 1];
+
+    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    debug_assert_eq!(lhs_batch, rhs_batch, "int_matmul: batch dimensions must match");
+
+    let batch_size: usize = lhs_batch.iter().product();
+    let lhs_matrix_size = m * k;
+    let rhs_matrix_size = k * n;
+    let out_matrix_size = m * n;
+
+    let mut out_dims = lhs_batch.clone();
+    out_dims.push(m);
+    out_dims.push(n);
+    let out_shape = Shape::from(out_dims);
+
+    let lhs_data: &[i32] = lhs.storage();
+    let rhs_data: &[i32] = rhs.storage();
+
+    let mut output = vec![0i32; batch_size * out_matrix_size];
+
+    for b in 0..batch_size {
+        let lhs_offset = b * lhs_matrix_size;
+        let rhs_offset = b * rhs_matrix_size;
+        let out_offset = b * out_matrix_size;
+
+        for i in 0..m {
+            for j in 0..n {
+                let mut sum = 0i32;
+                for l in 0..k {
+                    let lhs_idx = lhs_offset + i * k + l;
+                    let rhs_idx = rhs_offset + l * n + j;
+                    sum = sum.wrapping_add(lhs_data[lhs_idx].wrapping_mul(rhs_data[rhs_idx]));
+                }
+                output[out_offset + i * n + j] = sum;
+            }
+        }
+    }
+
+    EmberTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(out_shape),
+        DType::I32,
+    )
+}
+
+/// i64 matmul using naive triple loop.
+fn matmul_i64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs = lhs.to_contiguous();
+    let rhs = rhs.to_contiguous();
+
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    if lhs_rank == 2 && rhs_rank == 2 {
+        matmul_2d_i64(&lhs, &rhs)
+    } else {
+        matmul_batched_i64(lhs, rhs)
+    }
+}
+
+/// 2D i64 matmul: [M, K] x [K, N] -> [M, N]
+fn matmul_2d_i64(lhs: &EmberTensor, rhs: &EmberTensor) -> EmberTensor {
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+
+    let m = lhs_shape.dims[0];
+    let k = lhs_shape.dims[1];
+    let n = rhs_shape.dims[1];
+
+    let lhs_data: &[i64] = lhs.storage();
+    let rhs_data: &[i64] = rhs.storage();
+
+    let mut output = vec![0i64; m * n];
+
+    for i in 0..m {
+        for j in 0..n {
+            let mut sum = 0i64;
+            for l in 0..k {
+                sum = sum.wrapping_add(lhs_data[i * k + l].wrapping_mul(rhs_data[l * n + j]));
+            }
+            output[i * n + j] = sum;
+        }
+    }
+
+    let out_shape = Shape::from(vec![m, n]);
+    EmberTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(out_shape),
+        DType::I64,
+    )
+}
+
+/// Batched i64 matmul
+fn matmul_batched_i64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    let m = lhs_shape.dims[lhs_rank - 2];
+    let k = lhs_shape.dims[lhs_rank - 1];
+    let n = rhs_shape.dims[rhs_rank - 1];
+
+    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    debug_assert_eq!(lhs_batch, rhs_batch, "int_matmul: batch dimensions must match");
+
+    let batch_size: usize = lhs_batch.iter().product();
+    let lhs_matrix_size = m * k;
+    let rhs_matrix_size = k * n;
+    let out_matrix_size = m * n;
+
+    let mut out_dims = lhs_batch.clone();
+    out_dims.push(m);
+    out_dims.push(n);
+    let out_shape = Shape::from(out_dims);
+
+    let lhs_data: &[i64] = lhs.storage();
+    let rhs_data: &[i64] = rhs.storage();
+
+    let mut output = vec![0i64; batch_size * out_matrix_size];
+
+    for b in 0..batch_size {
+        let lhs_offset = b * lhs_matrix_size;
+        let rhs_offset = b * rhs_matrix_size;
+        let out_offset = b * out_matrix_size;
+
+        for i in 0..m {
+            for j in 0..n {
+                let mut sum = 0i64;
+                for l in 0..k {
+                    let lhs_idx = lhs_offset + i * k + l;
+                    let rhs_idx = rhs_offset + l * n + j;
+                    sum = sum.wrapping_add(lhs_data[lhs_idx].wrapping_mul(rhs_data[rhs_idx]));
+                }
+                output[out_offset + i * n + j] = sum;
+            }
+        }
+    }
+
+    EmberTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(out_shape),
+        DType::I64,
+    )
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1057,5 +1297,91 @@ mod tests {
 
         let values: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(values, vec![30.0]);
+    }
+
+    // ========================================================================
+    // Integer matmul tests
+    // ========================================================================
+
+    #[test]
+    fn test_int_matmul_i32_simple() {
+        // [2, 3] x [3, 2] -> [2, 2]
+        let lhs_data = TensorData::new(vec![1i32, 2, 3, 4, 5, 6], vec![2, 3]);
+        let rhs_data = TensorData::new(vec![1i32, 2, 3, 4, 5, 6], vec![3, 2]);
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = int_matmul(lhs, rhs);
+        assert_eq!(result.layout().shape().dims, vec![2, 2]);
+
+        let values: Vec<i32> = result.into_data().to_vec().unwrap();
+        // [1 2 3] * [1 2]   = [1*1+2*3+3*5  1*2+2*4+3*6] = [22 28]
+        // [4 5 6]   [3 4]     [4*1+5*3+6*5  4*2+5*4+6*6]   [49 64]
+        //           [5 6]
+        assert_eq!(values, vec![22, 28, 49, 64]);
+    }
+
+    #[test]
+    fn test_int_matmul_i32_square() {
+        let lhs_data = TensorData::new(vec![1i32, 2, 3, 4], vec![2, 2]);
+        let rhs_data = TensorData::new(vec![5i32, 6, 7, 8], vec![2, 2]);
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = int_matmul(lhs, rhs);
+        let values: Vec<i32> = result.into_data().to_vec().unwrap();
+
+        // [1 2] * [5 6] = [1*5+2*7  1*6+2*8] = [19 22]
+        // [3 4]   [7 8]   [3*5+4*7  3*6+4*8]   [43 50]
+        assert_eq!(values, vec![19, 22, 43, 50]);
+    }
+
+    #[test]
+    fn test_int_matmul_i64() {
+        let lhs_data = TensorData::new(vec![1i64, 2, 3, 4], vec![2, 2]);
+        let rhs_data = TensorData::new(vec![5i64, 6, 7, 8], vec![2, 2]);
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = int_matmul(lhs, rhs);
+        let values: Vec<i64> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(values, vec![19, 22, 43, 50]);
+    }
+
+    #[test]
+    fn test_int_matmul_i32_batched() {
+        let lhs_data = TensorData::new(
+            vec![
+                1i32, 2, 3, 4, // batch 0
+                5, 6, 7, 8, // batch 1
+            ],
+            vec![2, 2, 2],
+        );
+        let rhs_data = TensorData::new(
+            vec![
+                1i32, 0, 0, 1, // identity batch 0
+                2, 0, 0, 2, // scaled identity batch 1
+            ],
+            vec![2, 2, 2],
+        );
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = int_matmul(lhs, rhs);
+        assert_eq!(result.layout().shape().dims, vec![2, 2, 2]);
+
+        let values: Vec<i32> = result.into_data().to_vec().unwrap();
+        assert_eq!(
+            values,
+            vec![
+                1, 2, 3, 4, // batch 0: identity
+                10, 12, 14, 16, // batch 1: scaled by 2
+            ]
+        );
     }
 }

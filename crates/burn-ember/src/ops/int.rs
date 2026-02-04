@@ -7,7 +7,7 @@ use burn_backend::{
 };
 use burn_std::{IntDType, Shape, Slice};
 
-use crate::{Ember, EmberTensor};
+use crate::{Ember, EmberTensor, ops::matmul};
 
 impl IntTensorOps<Ember> for Ember {
     fn int_from_data(data: TensorData, _device: &Device<Ember>) -> IntTensor<Ember> {
@@ -204,9 +204,8 @@ impl IntTensorOps<Ember> for Ember {
         todo!("int_expand")
     }
 
-    // Missing methods
-    fn int_matmul(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_matmul")
+    fn int_matmul(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        matmul::int_matmul(lhs, rhs)
     }
 
     fn int_sum(_tensor: IntTensor<Ember>) -> IntTensor<Ember> {
