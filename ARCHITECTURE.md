@@ -241,6 +241,55 @@ impl Backend for Ember {
 
 ---
 
+## FusionBackend Trait (Not Implemented)
+
+burn-ember does **not** implement `FusionBackend` and cannot be wrapped with `Fusion<B>`. This is intentional and matches burn-ndarray's design.
+
+### Why No Fusion Support
+
+The `Fusion<B>` decorator requires backends to implement `FusionBackend`, which provides:
+
+```rust
+pub trait FusionBackend: Backend {
+    type FusionRuntime: FusionRuntime<...>;
+    // JIT kernel compilation, operation graphs, etc.
+}
+```
+
+**Fusion is designed for:**
+- GPU backends (Wgpu, CUDA, ROCm) that benefit from kernel fusion
+- Backends with JIT compilation capability
+- Reducing GPU kernel launch overhead by combining operations
+
+**burn-ember and burn-ndarray are:**
+- CPU backends executing operations eagerly
+- Direct computation without operation graphs
+- No JIT compilation or kernel generation
+
+### The Fusion Feature Flag
+
+In the main `burn` crate, the `fusion` feature only enables GPU backends:
+
+```toml
+# From burn/Cargo.toml
+fusion = ["burn-jit?/fusion", "burn-cuda?/fusion", "burn-rocm?/fusion"]
+```
+
+Note: `burn-ndarray` is explicitly excluded because it doesn't implement `FusionBackend`.
+
+### Alternative Optimization Strategies
+
+Instead of kernel fusion, burn-ember optimizes through:
+
+1. **In-place mutation** - Reuse buffers when tensor is uniquely owned
+2. **SIMD kernels** - Vectorized operations for contiguous data
+3. **Batch parallelism** - Rayon for parallel batch processing
+4. **Memory layout optimization** - Minimize copies via strided views
+
+These strategies work directly at the operation level rather than requiring an operation graph.
+
+---
+
 ## Execution Strategy
 
 ### Contiguous Fast Path
