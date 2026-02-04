@@ -39,17 +39,19 @@ pub const PARALLEL_THRESHOLD: usize = 8192;
 // Re-export platform-specific implementations
 #[cfg(target_arch = "aarch64")]
 pub use neon::{
-    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, bool_and_u8, bool_not_inplace_u8, bool_not_u8,
-    bool_or_u8, bool_xor_u8, cmp_f32, cmp_scalar_f32, div_f32, div_inplace_f32, mul_f32,
-    mul_inplace_f32, mul_scalar_f32, sub_f32, sub_inplace_f32,
+    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, bool_and_inplace_u8, bool_and_u8,
+    bool_not_inplace_u8, bool_not_u8, bool_or_inplace_u8, bool_or_u8, bool_xor_inplace_u8,
+    bool_xor_u8, cmp_f32, cmp_scalar_f32, div_f32, div_inplace_f32, mul_f32, mul_inplace_f32,
+    mul_scalar_f32, sub_f32, sub_inplace_f32,
 };
 
 // Scalar fallback for other platforms
 #[cfg(not(target_arch = "aarch64"))]
 pub use scalar::{
-    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, bool_and_u8, bool_not_inplace_u8, bool_not_u8,
-    bool_or_u8, bool_xor_u8, cmp_f32, cmp_scalar_f32, div_f32, div_inplace_f32, mul_f32,
-    mul_inplace_f32, mul_scalar_f32, sub_f32, sub_inplace_f32,
+    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, bool_and_inplace_u8, bool_and_u8,
+    bool_not_inplace_u8, bool_not_u8, bool_or_inplace_u8, bool_or_u8, bool_xor_inplace_u8,
+    bool_xor_u8, cmp_f32, cmp_scalar_f32, div_f32, div_inplace_f32, mul_f32, mul_inplace_f32,
+    mul_scalar_f32, sub_f32, sub_inplace_f32,
 };
 
 #[cfg(not(target_arch = "aarch64"))]
@@ -212,6 +214,30 @@ mod scalar {
     pub fn bool_xor_u8(a: &[u8], b: &[u8], out: &mut [u8]) {
         for i in 0..a.len() {
             out[i] = a[i] ^ b[i];
+        }
+    }
+
+    /// Scalar boolean AND in-place: a[i] &= b[i]
+    #[inline]
+    pub fn bool_and_inplace_u8(a: &mut [u8], b: &[u8]) {
+        for i in 0..a.len() {
+            a[i] &= b[i];
+        }
+    }
+
+    /// Scalar boolean OR in-place: a[i] |= b[i]
+    #[inline]
+    pub fn bool_or_inplace_u8(a: &mut [u8], b: &[u8]) {
+        for i in 0..a.len() {
+            a[i] |= b[i];
+        }
+    }
+
+    /// Scalar boolean XOR in-place: a[i] ^= b[i]
+    #[inline]
+    pub fn bool_xor_inplace_u8(a: &mut [u8], b: &[u8]) {
+        for i in 0..a.len() {
+            a[i] ^= b[i];
         }
     }
 }

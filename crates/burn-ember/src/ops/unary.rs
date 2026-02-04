@@ -25,13 +25,24 @@ where
 }
 
 /// Generic unary operation for any element type.
-fn unary_op_typed<E, Op>(tensor: EmberTensor, op: Op) -> EmberTensor
+fn unary_op_typed<E, Op>(mut tensor: EmberTensor, op: Op) -> EmberTensor
 where
     E: burn_backend::Element + bytemuck::Pod,
     Op: Fn(E) -> E,
 {
+    let n = tensor.layout().num_elements();
+
+    // In-place fast path: contiguous at offset 0
+    if tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0 {
+        let storage: &mut [E] = tensor.storage_mut();
+        for x in storage[..n].iter_mut() {
+            *x = op(*x);
+        }
+        return tensor;
+    }
+
+    // Allocating path for non-contiguous or offset tensors
     let layout = tensor.layout().clone();
-    let n = layout.num_elements();
     let src: &[E] = tensor.storage();
 
     // Fast path: storage exactly matches tensor view (covers transposed tensors)
@@ -82,12 +93,23 @@ where
 }
 
 /// Unary operation for f16.
-fn unary_op_f16<Op>(tensor: EmberTensor, op: Op) -> EmberTensor
+fn unary_op_f16<Op>(mut tensor: EmberTensor, op: Op) -> EmberTensor
 where
     Op: Fn(f16) -> f16,
 {
+    let n = tensor.layout().num_elements();
+
+    // In-place fast path: contiguous at offset 0
+    if tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0 {
+        let storage: &mut [f16] = tensor.storage_mut();
+        for x in storage[..n].iter_mut() {
+            *x = op(*x);
+        }
+        return tensor;
+    }
+
+    // Allocating path
     let layout = tensor.layout().clone();
-    let n = layout.num_elements();
     let src: &[f16] = bytemuck::cast_slice(tensor.bytes());
 
     // Fast path: storage exactly matches tensor view
@@ -129,12 +151,23 @@ where
 }
 
 /// Unary operation for bf16.
-fn unary_op_bf16<Op>(tensor: EmberTensor, op: Op) -> EmberTensor
+fn unary_op_bf16<Op>(mut tensor: EmberTensor, op: Op) -> EmberTensor
 where
     Op: Fn(bf16) -> bf16,
 {
+    let n = tensor.layout().num_elements();
+
+    // In-place fast path: contiguous at offset 0
+    if tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0 {
+        let storage: &mut [bf16] = tensor.storage_mut();
+        for x in storage[..n].iter_mut() {
+            *x = op(*x);
+        }
+        return tensor;
+    }
+
+    // Allocating path
     let layout = tensor.layout().clone();
-    let n = layout.num_elements();
     let src: &[bf16] = bytemuck::cast_slice(tensor.bytes());
 
     // Fast path: storage exactly matches tensor view

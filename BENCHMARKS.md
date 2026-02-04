@@ -2,7 +2,7 @@
 
 Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 
-**Date**: 2026-02-03 **Platform**: darwin (aarch64) **Features**: simd, rayon, gemm
+**Date**: 2026-02-04 **Platform**: darwin (aarch64) **Features**: simd, rayon, gemm
 
 ---
 
@@ -15,8 +15,8 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Slice Ops       | 11         | 7            | 0     |
 | Reduce Ops      | 14         | 2            | 0     |
 | Unary Ops       | 15         | 0            | 4     |
-| Comparison Ops  | 9          | 6            | 0     |
-| **Total**       | **73**     | **20**       | **4** |
+| Comparison Ops  | 13         | 4            | 0     |
+| **Total**       | **77**     | **18**       | **4** |
 
 ---
 
@@ -284,14 +284,14 @@ Element-wise comparisons with NEON SIMD optimization for f32.
 
 Note: Transposed comparisons now use 2D strided fast path, competitive with NdArray.
 
-### Broadcast Comparisons
+### Broadcast Comparisons (Outer-Product Pattern)
 
-| Operation | Shape     | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
-| --------- | --------- | ---------- | ------------ | ------- | --------- | ----------- |
-| greater   | 256x256   | 41 us      | 25.5 us      | 0.6x    | 68 KB     | 70 KB       |
-| greater   | 1024x1024 | 718 us     | 316 us       | 0.4x    | 1.1 MB    | 1.1 MB      |
+| Operation | Shape     | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | --------- | ---------- | ------------ | -------- | --------- | ----------- |
+| greater   | 256x256   | 8.0 us     | 26.0 us      | **3.2x** | 69 KB     | 70 KB       |
+| greater   | 1024x1024 | 118 us     | 311 us       | **2.6x** | 1.1 MB    | 1.1 MB      |
 
-Note: Broadcast comparisons involve stride=0 expansions requiring element-by-element iteration.
+Note: Optimized outer-product broadcast pattern uses SIMD scalar comparison per row.
 
 ### Expand Operation (Broadcasting)
 
@@ -305,10 +305,10 @@ Note: Broadcast comparisons involve stride=0 expansions requiring element-by-ele
 
 | Operation | Size       | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
 | --------- | ---------- | ---------- | ------------ | ------- | --------- | ----------- |
-| bool_not  | large (1M) | 31.8 us    | 20.3 us      | 0.6x    | 2.1 MB    | 1.0 MB      |
-| bool_and  | large (1M) | 55.7 us    | 30.2 us      | 0.5x    | 3.1 MB    | 1.0 MB      |
+| bool_not  | large (1M) | 32.3 us    | 19.7 us      | 0.6x    | 1.0 MB    | 1.0 MB      |
+| bool_and  | large (1M) | 61.4 us    | 28.9 us      | 0.5x    | 3.1 MB    | 1.0 MB      |
 
-Note: Boolean ops slower due to extra allocations; could be optimized with SIMD for u8.
+Note: bool_not now uses in-place modification (50% less memory). bool_and/or/xor still allocate output.
 
 ---
 
@@ -324,6 +324,7 @@ Note: Boolean ops slower due to extra allocations; could be optimized with SIMD 
 5. **Unary trig ops**: Ember 1.3-1.9x faster on tanh, sin, cos (using libm functions)
 6. **Expand (broadcast)**: Ember 340-1500x faster using zero-copy stride manipulation
 7. **Comparison ops (contiguous)**: Ember 1.3-1.7x faster with NEON SIMD for f32
+8. **Broadcast comparisons**: Ember 2.6-3.2x faster with optimized outer-product SIMD
 
 ### Memory Efficiency
 
@@ -336,8 +337,8 @@ Note: Boolean ops slower due to extra allocations; could be optimized with SIMD 
 1. **Transposed sum**: NdArray wins by 2-3x on transposed tensor sums
 2. **Large slice copies**: NdArray faster on 1M+ element 1D slices
 3. **Integer matmul**: Both backends are similar; neither has SIMD optimization
-4. **Boolean ops**: NdArray faster; Ember needs SIMD optimization for u8
-5. **Broadcast comparisons**: Stride-0 expanded tensors require scalar iteration
+4. **Boolean binary ops**: NdArray 2x faster on bool_and/or/xor (allocation overhead)
+5. **In-place operations**: NdArray benefits from aggressive in-place; Ember can adopt this
 
 ---
 

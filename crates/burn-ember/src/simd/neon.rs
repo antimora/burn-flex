@@ -879,6 +879,159 @@ fn bool_xor_u8_parallel(a: &[u8], b: &[u8], out: &mut [u8]) {
         });
 }
 
+/// SIMD boolean AND in-place: a[i] &= b[i]
+#[inline]
+pub fn bool_and_inplace_u8(a: &mut [u8], b: &[u8]) {
+    debug_assert_eq!(a.len(), b.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        bool_and_inplace_u8_parallel(a, b);
+        return;
+    }
+
+    bool_and_inplace_u8_sequential(a, b);
+}
+
+#[inline]
+fn bool_and_inplace_u8_sequential(a: &mut [u8], b: &[u8]) {
+    let len = a.len();
+    let chunks = len / U8_LANES;
+    let remainder = len % U8_LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_mut_ptr();
+            let b_ptr = b.as_ptr();
+
+            for i in 0..chunks {
+                let offset = i * U8_LANES;
+                let va = vld1q_u8(a_ptr.add(offset));
+                let vb = vld1q_u8(b_ptr.add(offset));
+                let result = vandq_u8(va, vb);
+                vst1q_u8(a_ptr.add(offset), result);
+            }
+        }
+    }
+
+    let tail_start = chunks * U8_LANES;
+    for i in 0..remainder {
+        a[tail_start + i] &= b[tail_start + i];
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn bool_and_inplace_u8_parallel(a: &mut [u8], b: &[u8]) {
+    const CHUNK_SIZE: usize = 4096;
+    a.par_chunks_mut(CHUNK_SIZE)
+        .zip(b.par_chunks(CHUNK_SIZE))
+        .for_each(|(a_chunk, b_chunk)| {
+            bool_and_inplace_u8_sequential(a_chunk, b_chunk);
+        });
+}
+
+/// SIMD boolean OR in-place: a[i] |= b[i]
+#[inline]
+pub fn bool_or_inplace_u8(a: &mut [u8], b: &[u8]) {
+    debug_assert_eq!(a.len(), b.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        bool_or_inplace_u8_parallel(a, b);
+        return;
+    }
+
+    bool_or_inplace_u8_sequential(a, b);
+}
+
+#[inline]
+fn bool_or_inplace_u8_sequential(a: &mut [u8], b: &[u8]) {
+    let len = a.len();
+    let chunks = len / U8_LANES;
+    let remainder = len % U8_LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_mut_ptr();
+            let b_ptr = b.as_ptr();
+
+            for i in 0..chunks {
+                let offset = i * U8_LANES;
+                let va = vld1q_u8(a_ptr.add(offset));
+                let vb = vld1q_u8(b_ptr.add(offset));
+                let result = vorrq_u8(va, vb);
+                vst1q_u8(a_ptr.add(offset), result);
+            }
+        }
+    }
+
+    let tail_start = chunks * U8_LANES;
+    for i in 0..remainder {
+        a[tail_start + i] |= b[tail_start + i];
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn bool_or_inplace_u8_parallel(a: &mut [u8], b: &[u8]) {
+    const CHUNK_SIZE: usize = 4096;
+    a.par_chunks_mut(CHUNK_SIZE)
+        .zip(b.par_chunks(CHUNK_SIZE))
+        .for_each(|(a_chunk, b_chunk)| {
+            bool_or_inplace_u8_sequential(a_chunk, b_chunk);
+        });
+}
+
+/// SIMD boolean XOR in-place: a[i] ^= b[i]
+#[inline]
+pub fn bool_xor_inplace_u8(a: &mut [u8], b: &[u8]) {
+    debug_assert_eq!(a.len(), b.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        bool_xor_inplace_u8_parallel(a, b);
+        return;
+    }
+
+    bool_xor_inplace_u8_sequential(a, b);
+}
+
+#[inline]
+fn bool_xor_inplace_u8_sequential(a: &mut [u8], b: &[u8]) {
+    let len = a.len();
+    let chunks = len / U8_LANES;
+    let remainder = len % U8_LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_mut_ptr();
+            let b_ptr = b.as_ptr();
+
+            for i in 0..chunks {
+                let offset = i * U8_LANES;
+                let va = vld1q_u8(a_ptr.add(offset));
+                let vb = vld1q_u8(b_ptr.add(offset));
+                let result = veorq_u8(va, vb);
+                vst1q_u8(a_ptr.add(offset), result);
+            }
+        }
+    }
+
+    let tail_start = chunks * U8_LANES;
+    for i in 0..remainder {
+        a[tail_start + i] ^= b[tail_start + i];
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn bool_xor_inplace_u8_parallel(a: &mut [u8], b: &[u8]) {
+    const CHUNK_SIZE: usize = 4096;
+    a.par_chunks_mut(CHUNK_SIZE)
+        .zip(b.par_chunks(CHUNK_SIZE))
+        .for_each(|(a_chunk, b_chunk)| {
+            bool_xor_inplace_u8_sequential(a_chunk, b_chunk);
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

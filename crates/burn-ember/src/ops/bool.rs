@@ -241,7 +241,7 @@ enum BoolBinaryOp {
     Xor,
 }
 
-fn bool_binary_op_simd(lhs: EmberTensor, rhs: EmberTensor, op: BoolBinaryOp) -> EmberTensor {
+fn bool_binary_op_simd(mut lhs: EmberTensor, rhs: EmberTensor, op: BoolBinaryOp) -> EmberTensor {
     use crate::Layout;
     use crate::strided_index::StridedIter;
     use burn_std::Bytes;
@@ -252,6 +252,25 @@ fn bool_binary_op_simd(lhs: EmberTensor, rhs: EmberTensor, op: BoolBinaryOp) -> 
         "bool_binary_op: shape mismatch"
     );
 
+    // In-place fast path: lhs contiguous at offset 0, rhs contiguous
+    if let (Some((0, l_end)), Some((r_start, r_end))) = (
+        lhs.layout().contiguous_offsets(),
+        rhs.layout().contiguous_offsets(),
+    ) {
+        let rhs_storage: &[u8] = rhs.bytes();
+        let r_slice = &rhs_storage[r_start..r_end];
+        let lhs_storage: &mut [u8] = lhs.storage_mut();
+        let l_slice = &mut lhs_storage[..l_end];
+
+        match op {
+            BoolBinaryOp::And => crate::simd::bool_and_inplace_u8(l_slice, r_slice),
+            BoolBinaryOp::Or => crate::simd::bool_or_inplace_u8(l_slice, r_slice),
+            BoolBinaryOp::Xor => crate::simd::bool_xor_inplace_u8(l_slice, r_slice),
+        }
+        return lhs;
+    }
+
+    // Allocating path for non-contiguous or offset tensors
     let shape = lhs.layout().shape().clone();
     let lhs_storage: &[u8] = lhs.bytes();
     let rhs_storage: &[u8] = rhs.bytes();
