@@ -1,0 +1,818 @@
+//! Matrix multiplication via gemm crate.
+//!
+//! Optimizations:
+//! - Uses strided gemm to avoid copying transposed tensors
+//! - Enables parallelism for large matrices (with rayon feature)
+//! - Batched matmul parallelized across batch dimension
+
+use alloc::vec::Vec;
+use burn_backend::DType;
+use burn_std::{Bytes, Shape, bf16, f16};
+
+use crate::{EmberTensor, Layout};
+
+/// Threshold for enabling parallelism (M*N*K operations).
+/// 192^3 = ~7M ops - balance between 128x128 (no parallel) and 256x256 (parallel)
+const PARALLEL_THRESHOLD: usize = 192 * 192 * 192;
+
+/// Get parallelism setting based on matrix size.
+#[cfg(feature = "gemm")]
+fn get_parallelism(m: usize, n: usize, k: usize) -> gemm::Parallelism {
+    let ops = m * n * k;
+    if ops >= PARALLEL_THRESHOLD {
+        #[cfg(feature = "rayon")]
+        {
+            gemm::Parallelism::Rayon(0) // 0 = use all available threads
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            gemm::Parallelism::None
+        }
+    } else {
+        gemm::Parallelism::None
+    }
+}
+
+/// Dispatch matrix multiplication based on dtype.
+pub fn matmul(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    debug_assert_eq!(lhs.dtype(), rhs.dtype(), "matmul: dtype mismatch");
+
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    debug_assert!(lhs_rank >= 2, "matmul requires at least 2D tensors");
+    debug_assert!(rhs_rank >= 2, "matmul requires at least 2D tensors");
+
+    // Check inner dimensions match: lhs[..., M, K] x rhs[..., K, N]
+    let k_lhs = lhs_shape.dims[lhs_rank - 1];
+    let k_rhs = rhs_shape.dims[rhs_rank - 2];
+    debug_assert_eq!(k_lhs, k_rhs, "matmul: inner dimensions must match");
+
+    match lhs.dtype() {
+        DType::F32 => matmul_f32(lhs, rhs),
+        DType::F64 => matmul_f64(lhs, rhs),
+        DType::F16 => matmul_f16(lhs, rhs),
+        DType::BF16 => matmul_bf16(lhs, rhs),
+        _ => panic!("matmul: unsupported dtype {:?}", lhs.dtype()),
+    }
+}
+
+/// Extract 2D matrix strides from a tensor layout.
+/// Returns (row_stride, col_stride) for the last two dimensions.
+fn get_2d_strides(layout: &Layout) -> (isize, isize) {
+    let strides = layout.strides();
+    let ndim = strides.len();
+    let row_stride = strides[ndim - 2] as isize;
+    let col_stride = strides[ndim - 1] as isize;
+    (row_stride, col_stride)
+}
+
+// ============================================================================
+// f32 matmul
+// ============================================================================
+
+#[cfg(feature = "gemm")]
+fn matmul_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs_rank = lhs.layout().shape().num_dims();
+    let rhs_rank = rhs.layout().shape().num_dims();
+
+    if lhs_rank == 2 && rhs_rank == 2 {
+        matmul_2d_strided_f32(lhs, rhs)
+    } else {
+        matmul_batched_f32(lhs, rhs)
+    }
+}
+
+#[cfg(not(feature = "gemm"))]
+fn matmul_f32(_lhs: EmberTensor, _rhs: EmberTensor) -> EmberTensor {
+    panic!("matmul requires the 'gemm' feature to be enabled")
+}
+
+/// 2D matmul with strided support: [M, K] x [K, N] -> [M, N]
+/// Avoids copying transposed tensors by passing strides directly to gemm.
+#[cfg(feature = "gemm")]
+fn matmul_2d_strided_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+
+    let m = lhs_shape.dims[0];
+    let k = lhs_shape.dims[1];
+    let n = rhs_shape.dims[1];
+
+    // Get strides for both inputs (handles transposed tensors)
+    let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
+    let (rhs_row_stride, rhs_col_stride) = get_2d_strides(rhs.layout());
+
+    // Get data pointers with offset
+    let lhs_data: &[f32] = lhs.storage();
+    let rhs_data: &[f32] = rhs.storage();
+    let lhs_ptr = unsafe { lhs_data.as_ptr().add(lhs.layout().start_offset()) };
+    let rhs_ptr = unsafe { rhs_data.as_ptr().add(rhs.layout().start_offset()) };
+
+    // Allocate contiguous output
+    let out_shape = Shape::from(vec![m, n]);
+    let mut output = EmberTensor::empty(out_shape, DType::F32);
+    let out_data: &mut [f32] = output.storage_mut();
+
+    let parallelism = get_parallelism(m, n, k);
+
+    unsafe {
+        gemm::gemm(
+            m,
+            n,
+            k,
+            out_data.as_mut_ptr(),
+            1,               // dst col stride (contiguous)
+            n as isize,      // dst row stride
+            false,           // don't read dst
+            lhs_ptr,
+            lhs_col_stride,
+            lhs_row_stride,
+            rhs_ptr,
+            rhs_col_stride,
+            rhs_row_stride,
+            0.0f32,
+            1.0f32,
+            false,
+            false,
+            false,
+            parallelism,
+        );
+    }
+
+    output
+}
+
+/// Batched matmul for f32: [B..., M, K] x [B..., K, N] -> [B..., M, N]
+#[cfg(feature = "gemm")]
+fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    // For batched, we need contiguous layout to iterate over batches
+    let lhs = lhs.to_contiguous();
+    let rhs = rhs.to_contiguous();
+
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    let m = lhs_shape.dims[lhs_rank - 2];
+    let k = lhs_shape.dims[lhs_rank - 1];
+    let n = rhs_shape.dims[rhs_rank - 1];
+
+    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    debug_assert_eq!(lhs_batch, rhs_batch, "matmul: batch dimensions must match");
+
+    let batch_size: usize = lhs_batch.iter().product();
+    let lhs_matrix_size = m * k;
+    let rhs_matrix_size = k * n;
+    let out_matrix_size = m * n;
+
+    let mut out_dims = lhs_batch.clone();
+    out_dims.push(m);
+    out_dims.push(n);
+    let out_shape = Shape::from(out_dims);
+
+    let mut output = EmberTensor::empty(out_shape, DType::F32);
+
+    let lhs_data: &[f32] = lhs.storage();
+    let rhs_data: &[f32] = rhs.storage();
+    let out_data: &mut [f32] = output.storage_mut();
+
+    // Use parallelism for individual matmuls if large enough
+    let parallelism = get_parallelism(m, n, k);
+
+    // Process batches (could parallelize this loop with rayon too)
+    for b in 0..batch_size {
+        let lhs_offset = b * lhs_matrix_size;
+        let rhs_offset = b * rhs_matrix_size;
+        let out_offset = b * out_matrix_size;
+
+        unsafe {
+            gemm::gemm(
+                m,
+                n,
+                k,
+                out_data[out_offset..].as_mut_ptr(),
+                1,
+                n as isize,
+                false,
+                lhs_data[lhs_offset..].as_ptr(),
+                1,
+                k as isize,
+                rhs_data[rhs_offset..].as_ptr(),
+                1,
+                n as isize,
+                0.0f32,
+                1.0f32,
+                false,
+                false,
+                false,
+                parallelism,
+            );
+        }
+    }
+
+    output
+}
+
+// ============================================================================
+// f64 matmul
+// ============================================================================
+
+#[cfg(feature = "gemm")]
+fn matmul_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs_rank = lhs.layout().shape().num_dims();
+    let rhs_rank = rhs.layout().shape().num_dims();
+
+    if lhs_rank == 2 && rhs_rank == 2 {
+        matmul_2d_strided_f64(lhs, rhs)
+    } else {
+        matmul_batched_f64(lhs, rhs)
+    }
+}
+
+#[cfg(not(feature = "gemm"))]
+fn matmul_f64(_lhs: EmberTensor, _rhs: EmberTensor) -> EmberTensor {
+    panic!("matmul requires the 'gemm' feature to be enabled")
+}
+
+#[cfg(feature = "gemm")]
+fn matmul_2d_strided_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+
+    let m = lhs_shape.dims[0];
+    let k = lhs_shape.dims[1];
+    let n = rhs_shape.dims[1];
+
+    let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
+    let (rhs_row_stride, rhs_col_stride) = get_2d_strides(rhs.layout());
+
+    let lhs_data: &[f64] = lhs.storage();
+    let rhs_data: &[f64] = rhs.storage();
+    let lhs_ptr = unsafe { lhs_data.as_ptr().add(lhs.layout().start_offset()) };
+    let rhs_ptr = unsafe { rhs_data.as_ptr().add(rhs.layout().start_offset()) };
+
+    let out_shape = Shape::from(vec![m, n]);
+    let mut output = EmberTensor::empty(out_shape, DType::F64);
+    let out_data: &mut [f64] = output.storage_mut();
+
+    let parallelism = get_parallelism(m, n, k);
+
+    unsafe {
+        gemm::gemm(
+            m,
+            n,
+            k,
+            out_data.as_mut_ptr(),
+            1,
+            n as isize,
+            false,
+            lhs_ptr,
+            lhs_col_stride,
+            lhs_row_stride,
+            rhs_ptr,
+            rhs_col_stride,
+            rhs_row_stride,
+            0.0f64,
+            1.0f64,
+            false,
+            false,
+            false,
+            parallelism,
+        );
+    }
+
+    output
+}
+
+#[cfg(feature = "gemm")]
+fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs = lhs.to_contiguous();
+    let rhs = rhs.to_contiguous();
+
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    let m = lhs_shape.dims[lhs_rank - 2];
+    let k = lhs_shape.dims[lhs_rank - 1];
+    let n = rhs_shape.dims[rhs_rank - 1];
+
+    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    debug_assert_eq!(lhs_batch, rhs_batch, "matmul: batch dimensions must match");
+
+    let batch_size: usize = lhs_batch.iter().product();
+    let lhs_matrix_size = m * k;
+    let rhs_matrix_size = k * n;
+    let out_matrix_size = m * n;
+
+    let mut out_dims = lhs_batch.clone();
+    out_dims.push(m);
+    out_dims.push(n);
+    let out_shape = Shape::from(out_dims);
+
+    let mut output = EmberTensor::empty(out_shape, DType::F64);
+
+    let lhs_data: &[f64] = lhs.storage();
+    let rhs_data: &[f64] = rhs.storage();
+    let out_data: &mut [f64] = output.storage_mut();
+
+    let parallelism = get_parallelism(m, n, k);
+
+    for b in 0..batch_size {
+        let lhs_offset = b * lhs_matrix_size;
+        let rhs_offset = b * rhs_matrix_size;
+        let out_offset = b * out_matrix_size;
+
+        unsafe {
+            gemm::gemm(
+                m,
+                n,
+                k,
+                out_data[out_offset..].as_mut_ptr(),
+                1,
+                n as isize,
+                false,
+                lhs_data[lhs_offset..].as_ptr(),
+                1,
+                k as isize,
+                rhs_data[rhs_offset..].as_ptr(),
+                1,
+                n as isize,
+                0.0f64,
+                1.0f64,
+                false,
+                false,
+                false,
+                parallelism,
+            );
+        }
+    }
+
+    output
+}
+
+// ============================================================================
+// f16 matmul (native gemm support)
+// ============================================================================
+
+#[cfg(feature = "gemm")]
+fn matmul_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs_rank = lhs.layout().shape().num_dims();
+    let rhs_rank = rhs.layout().shape().num_dims();
+
+    if lhs_rank == 2 && rhs_rank == 2 {
+        matmul_2d_strided_f16(lhs, rhs)
+    } else {
+        matmul_batched_f16(lhs, rhs)
+    }
+}
+
+#[cfg(not(feature = "gemm"))]
+fn matmul_f16(_lhs: EmberTensor, _rhs: EmberTensor) -> EmberTensor {
+    panic!("matmul requires the 'gemm' feature to be enabled")
+}
+
+#[cfg(feature = "gemm")]
+fn matmul_2d_strided_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+
+    let m = lhs_shape.dims[0];
+    let k = lhs_shape.dims[1];
+    let n = rhs_shape.dims[1];
+
+    let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
+    let (rhs_row_stride, rhs_col_stride) = get_2d_strides(rhs.layout());
+
+    let lhs_data: &[f16] = lhs.storage();
+    let rhs_data: &[f16] = rhs.storage();
+    let lhs_ptr = unsafe { lhs_data.as_ptr().add(lhs.layout().start_offset()) };
+    let rhs_ptr = unsafe { rhs_data.as_ptr().add(rhs.layout().start_offset()) };
+
+    let out_shape = Shape::from(vec![m, n]);
+    let mut output = EmberTensor::empty(out_shape, DType::F16);
+    let out_data: &mut [f16] = output.storage_mut();
+
+    let parallelism = get_parallelism(m, n, k);
+
+    unsafe {
+        gemm::gemm(
+            m,
+            n,
+            k,
+            out_data.as_mut_ptr() as *mut half::f16,
+            1,
+            n as isize,
+            false,
+            lhs_ptr as *const half::f16,
+            lhs_col_stride,
+            lhs_row_stride,
+            rhs_ptr as *const half::f16,
+            rhs_col_stride,
+            rhs_row_stride,
+            half::f16::from_f32(0.0),
+            half::f16::from_f32(1.0),
+            false,
+            false,
+            false,
+            parallelism,
+        );
+    }
+
+    output
+}
+
+#[cfg(feature = "gemm")]
+fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs = lhs.to_contiguous();
+    let rhs = rhs.to_contiguous();
+
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+    let lhs_rank = lhs_shape.num_dims();
+    let rhs_rank = rhs_shape.num_dims();
+
+    let m = lhs_shape.dims[lhs_rank - 2];
+    let k = lhs_shape.dims[lhs_rank - 1];
+    let n = rhs_shape.dims[rhs_rank - 1];
+
+    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    debug_assert_eq!(lhs_batch, rhs_batch, "matmul: batch dimensions must match");
+
+    let batch_size: usize = lhs_batch.iter().product();
+    let lhs_matrix_size = m * k;
+    let rhs_matrix_size = k * n;
+    let out_matrix_size = m * n;
+
+    let mut out_dims = lhs_batch.clone();
+    out_dims.push(m);
+    out_dims.push(n);
+    let out_shape = Shape::from(out_dims);
+
+    let mut output = EmberTensor::empty(out_shape, DType::F16);
+
+    let lhs_data: &[f16] = lhs.storage();
+    let rhs_data: &[f16] = rhs.storage();
+    let out_data: &mut [f16] = output.storage_mut();
+
+    let parallelism = get_parallelism(m, n, k);
+
+    for b in 0..batch_size {
+        let lhs_offset = b * lhs_matrix_size;
+        let rhs_offset = b * rhs_matrix_size;
+        let out_offset = b * out_matrix_size;
+
+        unsafe {
+            gemm::gemm(
+                m,
+                n,
+                k,
+                out_data[out_offset..].as_mut_ptr() as *mut half::f16,
+                1,
+                n as isize,
+                false,
+                lhs_data[lhs_offset..].as_ptr() as *const half::f16,
+                1,
+                k as isize,
+                rhs_data[rhs_offset..].as_ptr() as *const half::f16,
+                1,
+                n as isize,
+                half::f16::from_f32(0.0),
+                half::f16::from_f32(1.0),
+                false,
+                false,
+                false,
+                parallelism,
+            );
+        }
+    }
+
+    output
+}
+
+// ============================================================================
+// bf16 matmul (via f32 conversion)
+// ============================================================================
+
+fn matmul_bf16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
+    let lhs = lhs.to_contiguous();
+    let rhs = rhs.to_contiguous();
+
+    let lhs_shape = lhs.layout().shape();
+    let rhs_shape = rhs.layout().shape();
+
+    // Convert bf16 -> f32
+    let lhs_f32: Vec<f32> = lhs
+        .storage::<bf16>()
+        .iter()
+        .map(|x| x.to_f32())
+        .collect();
+    let rhs_f32: Vec<f32> = rhs
+        .storage::<bf16>()
+        .iter()
+        .map(|x| x.to_f32())
+        .collect();
+
+    // Create f32 tensors
+    let lhs_f32_tensor = EmberTensor::new(
+        Bytes::from_elems(lhs_f32),
+        Layout::contiguous(lhs_shape.clone()),
+        DType::F32,
+    );
+    let rhs_f32_tensor = EmberTensor::new(
+        Bytes::from_elems(rhs_f32),
+        Layout::contiguous(rhs_shape.clone()),
+        DType::F32,
+    );
+
+    // Compute matmul in f32
+    let result_f32 = matmul_f32(lhs_f32_tensor, rhs_f32_tensor);
+
+    // Convert f32 -> bf16
+    let result_bf16: Vec<bf16> = result_f32
+        .storage::<f32>()
+        .iter()
+        .map(|x| bf16::from_f32(*x))
+        .collect();
+
+    EmberTensor::new(
+        Bytes::from_elems(result_bf16),
+        result_f32.layout().clone(),
+        DType::BF16,
+    )
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn_backend::TensorData;
+
+    #[test]
+    fn test_matmul_2d_simple() {
+        // [2, 3] x [3, 2] -> [2, 2]
+        let lhs_data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let rhs_data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = matmul(lhs, rhs);
+
+        assert_eq!(result.layout().shape().dims, vec![2, 2]);
+
+        let result_data = result.into_data();
+        let values: Vec<f32> = result_data.to_vec().unwrap();
+
+        // [1 2 3] * [1 2]   = [1*1+2*3+3*5  1*2+2*4+3*6] = [22 28]
+        // [4 5 6]   [3 4]     [4*1+5*3+6*5  4*2+5*4+6*6]   [49 64]
+        //           [5 6]
+        assert_eq!(values, vec![22.0, 28.0, 49.0, 64.0]);
+    }
+
+    #[test]
+    fn test_matmul_square() {
+        let lhs_data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![2, 2]);
+        let rhs_data = TensorData::new(vec![5.0f32, 6.0, 7.0, 8.0], vec![2, 2]);
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = matmul(lhs, rhs);
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(values, vec![19.0, 22.0, 43.0, 50.0]);
+    }
+
+    #[test]
+    fn test_matmul_identity() {
+        let lhs_data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![2, 2]);
+        let identity = TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0], vec![2, 2]);
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(identity);
+
+        let result = matmul(lhs, rhs);
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_matmul_transposed_lhs() {
+        // Original: [2, 3] with data [[1,2,3], [4,5,6]]
+        // Transposed: [3, 2] with logical [[1,4], [2,5], [3,6]]
+        let data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let tensor = EmberTensor::from_data(data);
+        let transposed = tensor.transpose(0, 1); // [3, 2]
+        assert!(!transposed.is_contiguous());
+
+        // rhs: [2, 2] identity
+        let rhs_data = TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0], vec![2, 2]);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        // [3, 2] x [2, 2] -> [3, 2]
+        let result = matmul(transposed, rhs);
+        assert_eq!(result.layout().shape().dims, vec![3, 2]);
+
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Result should be [[1,4], [2,5], [3,6]] * I = [[1,4], [2,5], [3,6]]
+        assert_eq!(values, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    }
+
+    #[test]
+    fn test_matmul_transposed_rhs() {
+        // lhs: [2, 2] identity
+        let lhs_data = TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0], vec![2, 2]);
+        let lhs = EmberTensor::from_data(lhs_data);
+
+        // Original: [3, 2] -> Transposed: [2, 3]
+        let data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
+        let tensor = EmberTensor::from_data(data);
+        let transposed = tensor.transpose(0, 1); // [2, 3]
+        assert!(!transposed.is_contiguous());
+
+        // [2, 2] x [2, 3] -> [2, 3]
+        let result = matmul(lhs, transposed);
+        assert_eq!(result.layout().shape().dims, vec![2, 3]);
+
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+        // I * [[1,3,5], [2,4,6]] = [[1,3,5], [2,4,6]]
+        assert_eq!(values, vec![1.0, 3.0, 5.0, 2.0, 4.0, 6.0]);
+    }
+
+    #[test]
+    fn test_matmul_both_transposed() {
+        // lhs: [2, 3] transposed to [3, 2]
+        let lhs_data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let lhs = EmberTensor::from_data(lhs_data).transpose(0, 1);
+
+        // rhs: [2, 3] transposed to [3, 2] then we need [2, 3] for matmul
+        // Actually let's do: [3, 2] transposed to [2, 3]
+        let rhs_data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
+        let rhs = EmberTensor::from_data(rhs_data).transpose(0, 1);
+
+        // [3, 2] x [2, 3] -> [3, 3]
+        let result = matmul(lhs, rhs);
+        assert_eq!(result.layout().shape().dims, vec![3, 3]);
+    }
+
+    #[test]
+    fn test_matmul_batched_simple() {
+        let lhs_data = TensorData::new(
+            vec![
+                1.0f32, 2.0, 3.0, 4.0, // batch 0
+                5.0, 6.0, 7.0, 8.0, // batch 1
+            ],
+            vec![2, 2, 2],
+        );
+        let rhs_data = TensorData::new(
+            vec![
+                1.0f32, 0.0, 0.0, 1.0, // identity batch 0
+                2.0, 0.0, 0.0, 2.0, // scaled identity batch 1
+            ],
+            vec![2, 2, 2],
+        );
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = matmul(lhs, rhs);
+        assert_eq!(result.layout().shape().dims, vec![2, 2, 2]);
+
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(
+            values,
+            vec![
+                1.0, 2.0, 3.0, 4.0, // batch 0: identity
+                10.0, 12.0, 14.0, 16.0, // batch 1: scaled by 2
+            ]
+        );
+    }
+
+    #[test]
+    fn test_matmul_f64() {
+        let lhs_data = TensorData::new(vec![1.0f64, 2.0, 3.0, 4.0], vec![2, 2]);
+        let rhs_data = TensorData::new(vec![5.0f64, 6.0, 7.0, 8.0], vec![2, 2]);
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = matmul(lhs, rhs);
+        let values: Vec<f64> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(values, vec![19.0, 22.0, 43.0, 50.0]);
+    }
+
+    #[test]
+    fn test_matmul_f16() {
+        let lhs_data = TensorData::new(
+            vec![
+                f16::from_f32(1.0),
+                f16::from_f32(2.0),
+                f16::from_f32(3.0),
+                f16::from_f32(4.0),
+            ],
+            vec![2, 2],
+        );
+        let rhs_data = TensorData::new(
+            vec![
+                f16::from_f32(5.0),
+                f16::from_f32(6.0),
+                f16::from_f32(7.0),
+                f16::from_f32(8.0),
+            ],
+            vec![2, 2],
+        );
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = matmul(lhs, rhs);
+        let values: Vec<f16> = result.into_data().to_vec().unwrap();
+
+        let expected = vec![
+            f16::from_f32(19.0),
+            f16::from_f32(22.0),
+            f16::from_f32(43.0),
+            f16::from_f32(50.0),
+        ];
+
+        for (a, b) in values.iter().zip(expected.iter()) {
+            assert!(
+                (a.to_f32() - b.to_f32()).abs() < 0.1,
+                "f16 matmul mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn test_matmul_bf16() {
+        let lhs_data = TensorData::new(
+            vec![
+                bf16::from_f32(1.0),
+                bf16::from_f32(2.0),
+                bf16::from_f32(3.0),
+                bf16::from_f32(4.0),
+            ],
+            vec![2, 2],
+        );
+        let rhs_data = TensorData::new(
+            vec![
+                bf16::from_f32(5.0),
+                bf16::from_f32(6.0),
+                bf16::from_f32(7.0),
+                bf16::from_f32(8.0),
+            ],
+            vec![2, 2],
+        );
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = matmul(lhs, rhs);
+        let values: Vec<bf16> = result.into_data().to_vec().unwrap();
+
+        let expected = vec![
+            bf16::from_f32(19.0),
+            bf16::from_f32(22.0),
+            bf16::from_f32(43.0),
+            bf16::from_f32(50.0),
+        ];
+
+        for (a, b) in values.iter().zip(expected.iter()) {
+            assert!(
+                (a.to_f32() - b.to_f32()).abs() < 0.5,
+                "bf16 matmul mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn test_matmul_rectangular() {
+        // [1, 4] x [4, 1] -> [1, 1] (dot product)
+        let lhs_data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 4]);
+        let rhs_data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![4, 1]);
+
+        let lhs = EmberTensor::from_data(lhs_data);
+        let rhs = EmberTensor::from_data(rhs_data);
+
+        let result = matmul(lhs, rhs);
+        assert_eq!(result.layout().shape().dims, vec![1, 1]);
+
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(values, vec![30.0]);
+    }
+}

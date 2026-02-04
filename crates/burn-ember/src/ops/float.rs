@@ -9,6 +9,7 @@ use burn_std::{Shape, Slice};
 use num_traits::ToPrimitive;
 
 use crate::ops::binary::{binary_op, scalar_op};
+use crate::ops::matmul;
 use crate::{Ember, EmberTensor};
 
 impl FloatTensorOps<Ember> for Ember {
@@ -90,8 +91,8 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_remainder_scalar")
     }
 
-    fn float_matmul(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_matmul")
+    fn float_matmul(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        matmul::matmul(lhs, rhs)
     }
 
     fn float_cross(
