@@ -51,8 +51,8 @@ mutation for unique tensors.
 | add_scalar | large (1M) | 74 us      | 194 us       | **2.6x** | 4.2 MB    | 8.4 MB      |
 | mul_scalar | large (1M) | 76 us      | 197 us       | **2.6x** | 4.2 MB    | 8.4 MB      |
 
-**Key improvement**: Arc-based COW now enables true in-place mutation when tensor is uniquely
-owned. This nearly doubles performance vs previous implementation (was 1.4-1.8x, now 2.6-4.2x).
+**Key improvement**: Arc-based COW now enables true in-place mutation when tensor is uniquely owned.
+This nearly doubles performance vs previous implementation (was 1.4-1.8x, now 2.6-4.2x).
 
 ---
 
@@ -97,12 +97,12 @@ Using gemm crate with rayon parallelism for large matrices.
 
 ### Integer Matmul (i32)
 
-| Size    | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
-| ------- | ---------- | ------------ | ------- | --------- | ----------- |
-| 64x64   | 110 us     | 109 us       | 1.0x    | 33 KB     | 98.5 KB     |
-| 128x128 | 925 us     | 963 us       | **1.0x**| 131 KB    | 393 KB      |
-| 256x256 | 10.5 ms    | 9.8 ms       | 0.9x    | 525 KB    | 1.6 MB      |
-| 512x512 | 119 ms     | 112 ms       | 0.9x    | 2.1 MB    | 6.3 MB      |
+| Size    | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| ------- | ---------- | ------------ | -------- | --------- | ----------- |
+| 64x64   | 110 us     | 109 us       | 1.0x     | 33 KB     | 98.5 KB     |
+| 128x128 | 925 us     | 963 us       | **1.0x** | 131 KB    | 393 KB      |
+| 256x256 | 10.5 ms    | 9.8 ms       | 0.9x     | 525 KB    | 1.6 MB      |
+| 512x512 | 119 ms     | 112 ms       | 0.9x     | 2.1 MB    | 6.3 MB      |
 
 Note: Integer matmul uses naive O(n^3) implementation without SIMD; both backends are similar.
 
@@ -114,21 +114,21 @@ Tensor slicing, narrowing, and assignment. **Ember uses zero-copy views** for sl
 
 ### Basic Slicing
 
-| Operation | Size      | Ember Time | NdArray Time | Speedup      | Ember Mem | NdArray Mem |
-| --------- | --------- | ---------- | ------------ | ------------ | --------- | ----------- |
-| slice 1D  | 1K        | 149 ns     | 269 ns       | **1.8x**     | 80 B      | 6.3 KB      |
-| slice 1D  | 1M        | 136 ns     | 77 us        | **~560x**    | 80 B      | 6.3 MB      |
-| slice 2D  | 256x256   | 122 ns     | 7.6 us       | **~62x**     | 160 B     | 328 KB      |
-| slice 2D  | 1024x1024 | 123 ns     | 81 us        | **~660x**    | 160 B     | 5.2 MB      |
-| slice 3D  | 64x64x64  | 151 ns     | 30 us        | **~200x**    | 240 B     | 1.2 MB      |
+| Operation | Size      | Ember Time | NdArray Time | Speedup   | Ember Mem | NdArray Mem |
+| --------- | --------- | ---------- | ------------ | --------- | --------- | ----------- |
+| slice 1D  | 1K        | 149 ns     | 269 ns       | **1.8x**  | 80 B      | 6.3 KB      |
+| slice 1D  | 1M        | 136 ns     | 77 us        | **~560x** | 80 B      | 6.3 MB      |
+| slice 2D  | 256x256   | 122 ns     | 7.6 us       | **~62x**  | 160 B     | 328 KB      |
+| slice 2D  | 1024x1024 | 123 ns     | 81 us        | **~660x** | 160 B     | 5.2 MB      |
+| slice 3D  | 64x64x64  | 151 ns     | 30 us        | **~200x** | 240 B     | 1.2 MB      |
 
 ### Narrow Operations
 
-| Operation   | Size      | Ember Time | NdArray Time | Speedup    | Ember Mem | NdArray Mem |
-| ----------- | --------- | ---------- | ------------ | ---------- | --------- | ----------- |
-| narrow dim0 | 256x256   | 172 ns     | 6.0 us       | **~35x**   | 240 B     | 393 KB      |
-| narrow dim0 | 1024x1024 | 194 ns     | 79 us        | **~400x**  | 240 B     | 6.3 MB      |
-| narrow dim1 | 256x256   | 180 ns     | 11 us        | **~61x**   | 240 B     | 393 KB      |
+| Operation   | Size      | Ember Time | NdArray Time | Speedup   | Ember Mem | NdArray Mem |
+| ----------- | --------- | ---------- | ------------ | --------- | --------- | ----------- |
+| narrow dim0 | 256x256   | 172 ns     | 6.0 us       | **~35x**  | 240 B     | 393 KB      |
+| narrow dim0 | 1024x1024 | 194 ns     | 79 us        | **~400x** | 240 B     | 6.3 MB      |
+| narrow dim1 | 256x256   | 180 ns     | 11 us        | **~61x**  | 240 B     | 393 KB      |
 
 ### Slice Assignment
 
@@ -140,19 +140,19 @@ Tensor slicing, narrowing, and assignment. **Ember uses zero-copy views** for sl
 
 ### Transposed Slicing
 
-| Operation  | Size      | Ember Time | NdArray Time | Speedup      | Ember Mem | NdArray Mem |
-| ---------- | --------- | ---------- | ------------ | ------------ | --------- | ----------- |
-| transposed | 256x256   | 97 ns      | 8.2 us       | **~85x**     | 160 B     | 65.7 KB     |
-| transposed | 1024x1024 | 97 ns      | 225 us       | **~2300x**   | 160 B     | 1.05 MB     |
+| Operation  | Size      | Ember Time | NdArray Time | Speedup    | Ember Mem | NdArray Mem |
+| ---------- | --------- | ---------- | ------------ | ---------- | --------- | ----------- |
+| transposed | 256x256   | 97 ns      | 8.2 us       | **~85x**   | 160 B     | 65.7 KB     |
+| transposed | 1024x1024 | 97 ns      | 225 us       | **~2300x** | 160 B     | 1.05 MB     |
 
 ### Slice with Step
 
-| Operation | Size      | Ember Time | NdArray Time | Speedup      | Ember Mem | NdArray Mem |
-| --------- | --------- | ---------- | ------------ | ------------ | --------- | ----------- |
-| step2 1D  | 1K        | 90 ns      | 457 ns       | **5.1x**     | 80 B      | 6.3 KB      |
-| step2 1D  | 1M        | 86 ns      | 196 us       | **~2300x**   | 80 B      | 6.3 MB      |
-| step2 2D  | 1024x1024 | 95 ns      | 143 us       | **~1500x**   | 160 B     | 5.2 MB      |
-| step4 2D  | 256x256   | 97 ns      | 6.7 us       | **~69x**     | 160 B     | 279 KB      |
+| Operation | Size      | Ember Time | NdArray Time | Speedup    | Ember Mem | NdArray Mem |
+| --------- | --------- | ---------- | ------------ | ---------- | --------- | ----------- |
+| step2 1D  | 1K        | 90 ns      | 457 ns       | **5.1x**   | 80 B      | 6.3 KB      |
+| step2 1D  | 1M        | 86 ns      | 196 us       | **~2300x** | 80 B      | 6.3 MB      |
+| step2 2D  | 1024x1024 | 95 ns      | 143 us       | **~1500x** | 160 B     | 5.2 MB      |
+| step4 2D  | 256x256   | 97 ns      | 6.7 us       | **~69x**   | 160 B     | 279 KB      |
 
 **Key insight**: Ember implements slicing as zero-copy views (just stride/offset manipulation),
 while NdArray copies data. This gives orders of magnitude speedup for large tensors.
@@ -196,10 +196,10 @@ Sum, mean, argmax reductions with portable SIMD via pulp.
 
 ### Sum Dim on Transposed Tensor
 
-| Size      | Dim | Ember Time | NdArray Time | Speedup  |
-| --------- | --- | ---------- | ------------ | -------- |
-| 256x256   | 0   | 5.8 us     | 4.5 us       | 0.8x     |
-| 1024x1024 | 0   | 140 us     | 84 us        | 0.6x     |
+| Size      | Dim | Ember Time | NdArray Time | Speedup |
+| --------- | --- | ---------- | ------------ | ------- |
+| 256x256   | 0   | 5.8 us     | 4.5 us       | 0.8x    |
+| 1024x1024 | 0   | 140 us     | 84 us        | 0.6x    |
 
 ### Mean Along Dimension
 
@@ -283,10 +283,10 @@ Element-wise comparisons with NEON SIMD optimization for f32.
 
 ### Transposed (Non-contiguous) Comparisons
 
-| Operation | Size      | Ember Time | NdArray Time | Speedup |
-| --------- | --------- | ---------- | ------------ | ------- |
-| greater   | 256x256   | 53 us      | 51 us        | 1.0x    |
-| greater   | 1024x1024 | 969 us     | 1.09 ms      | **1.1x**|
+| Operation | Size      | Ember Time | NdArray Time | Speedup  |
+| --------- | --------- | ---------- | ------------ | -------- |
+| greater   | 256x256   | 53 us      | 51 us        | 1.0x     |
+| greater   | 1024x1024 | 969 us     | 1.09 ms      | **1.1x** |
 
 ### Broadcast Comparisons (Outer-Product Pattern)
 
@@ -305,10 +305,10 @@ Element-wise comparisons with NEON SIMD optimization for f32.
 
 ### Boolean Operations
 
-| Operation | Size       | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
-| --------- | ---------- | ---------- | ------------ | ------- | --------- | ----------- |
-| bool_not  | large (1M) | 25 us      | 20 us        | 0.78x   | 1.0 MB    | 1.0 MB      |
-| bool_and  | large (1M) | 28 us      | 30 us        | **1.1x**| 1.0 MB    | 1.0 MB      |
+| Operation | Size       | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | ---------- | ---------- | ------------ | -------- | --------- | ----------- |
+| bool_not  | large (1M) | 25 us      | 20 us        | 0.78x    | 1.0 MB    | 1.0 MB      |
+| bool_and  | large (1M) | 28 us      | 30 us        | **1.1x** | 1.0 MB    | 1.0 MB      |
 
 ---
 
@@ -344,6 +344,7 @@ Element-wise comparisons with NEON SIMD optimization for f32.
 The Arc-based Copy-on-Write implementation provides significant benefits:
 
 **Current Ember approach (Arc<Bytes>):**
+
 - `EmberTensor.data` wrapped in `Arc<Bytes>` for O(1) clone
 - `is_unique()` check via `Arc::strong_count() == 1`
 - True in-place mutation when tensor is uniquely owned
@@ -351,19 +352,21 @@ The Arc-based Copy-on-Write implementation provides significant benefits:
 - SIMD via NEON intrinsics (16-byte vectorized ops)
 
 **NdArray approach (via burn-ndarray + ndarray):**
+
 - Uses `Arc<Vec<T>>` for storage with `is_unique()` check
 - SIMD via `macerator` crate with 8-wide loop unrolling
 - Copy-on-write only triggers when tensor is shared
 
 **Improvement achieved with Arc-based COW:**
+
 - Binary ops: 1.4-1.8x -> 2.6-4.2x (2x improvement)
 - Scalar ops: 1.8x -> 2.6x
 - Memory: Reduced allocations from 12.6MB to 4.2MB for binary ops
 
 ### Matmul Investigation Summary
 
-Root cause of earlier regression: the `rayon` feature was not in default features, causing
-gemm to run single-threaded even on large matrices. With rayon enabled:
+Root cause of earlier regression: the `rayon` feature was not in default features, causing gemm to
+run single-threaded even on large matrices. With rayon enabled:
 
 - 1024x1024: 2.48ms (Ember) vs 5.90ms (NdArray) = 2.4x faster
 - Previously without rayon: 19.5ms (Ember) vs 5.9ms (NdArray) = 0.3x (regression)
