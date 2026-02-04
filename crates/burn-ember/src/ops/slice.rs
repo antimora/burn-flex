@@ -243,13 +243,13 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
             dst[start..start + len].copy_from_slice(&val_src[..len]);
         } else {
             // Strided: element-by-element
-            for i in 0..len {
+            for (i, &val) in val_src.iter().enumerate().take(len) {
                 let dst_i = if step > 0 {
                     start + i * step as usize
                 } else {
                     (start as isize - (i as isize) * (-step)) as usize
                 };
-                dst[dst_i] = val_src[i];
+                dst[dst_i] = val;
             }
         }
     } else if ndims == 2 && inner_contiguous {
@@ -278,8 +278,8 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
 
         // Compute total iterations for outer dimensions
         let mut outer_count = 1usize;
-        for i in 0..outer_dims {
-            outer_count *= slice_info[i].1;
+        for info in slice_info.iter().take(outer_dims) {
+            outer_count *= info.1;
         }
 
         // Iterate using flat index for outer dimensions
@@ -321,7 +321,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
         let dst_strides = dst_layout.strides();
         let mut indices = vec![0usize; ndims];
 
-        for val_idx in 0..total_elements {
+        for &val in val_src.iter().take(total_elements) {
             // Compute destination index
             let mut dst_offset = dst_layout.start_offset();
             for (dim, &idx) in indices.iter().enumerate() {
@@ -334,7 +334,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
                 dst_offset += src_i * dst_strides[dim];
             }
 
-            dst[dst_offset] = val_src[val_idx];
+            dst[dst_offset] = val;
 
             // Increment indices (odometer style)
             for dim in (0..ndims).rev() {

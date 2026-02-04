@@ -238,7 +238,7 @@ impl WithSimd for SumRowsF32<'_> {
             row_len,
         } = self;
 
-        for row in 0..num_rows {
+        for (row, dst_val) in dst.iter_mut().enumerate().take(num_rows) {
             let row_start = row * row_len;
             let row_data = &src[row_start..row_start + row_len];
 
@@ -254,7 +254,7 @@ impl WithSimd for SumRowsF32<'_> {
                 sum += x;
             }
 
-            dst[row] = sum;
+            *dst_val = sum;
         }
     }
 }
