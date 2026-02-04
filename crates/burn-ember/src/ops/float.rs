@@ -10,6 +10,7 @@ use num_traits::ToPrimitive;
 
 use crate::ops::binary::{binary_op, scalar_op};
 use crate::ops::matmul;
+use crate::ops::unary;
 use crate::{Ember, EmberTensor};
 
 impl FloatTensorOps<Ember> for Ember {
@@ -103,8 +104,8 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_cross")
     }
 
-    fn float_recip(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_recip")
+    fn float_recip(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::recip(tensor)
     }
 
     fn float_swap_dims(tensor: FloatTensor<Ember>, dim1: usize, dim2: usize) -> FloatTensor<Ember> {
@@ -260,16 +261,16 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_cast")
     }
 
-    fn float_exp(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_exp")
+    fn float_exp(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::exp(tensor)
     }
 
-    fn float_log(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_log")
+    fn float_log(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::log(tensor)
     }
 
-    fn float_log1p(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_log1p")
+    fn float_log1p(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::log1p(tensor)
     }
 
     fn float_powf(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
@@ -280,84 +281,84 @@ impl FloatTensorOps<Ember> for Ember {
         todo!("float_powf_scalar_impl")
     }
 
-    fn float_sqrt(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_sqrt")
+    fn float_sqrt(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::sqrt(tensor)
     }
 
-    fn float_abs(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_abs")
+    fn float_abs(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::abs(tensor)
     }
 
-    fn float_cos(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_cos")
+    fn float_cos(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::cos(tensor)
     }
 
-    fn float_sin(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_sin")
+    fn float_sin(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::sin(tensor)
     }
 
-    fn float_tan(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_tan")
+    fn float_tan(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::tan(tensor)
     }
 
-    fn float_cosh(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_cosh")
+    fn float_cosh(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::cosh(tensor)
     }
 
-    fn float_sinh(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_sinh")
+    fn float_sinh(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::sinh(tensor)
     }
 
-    fn float_tanh(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_tanh")
+    fn float_tanh(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::tanh(tensor)
     }
 
-    fn float_acos(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_acos")
+    fn float_acos(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::acos(tensor)
     }
 
-    fn float_acosh(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_acosh")
+    fn float_acosh(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::acosh(tensor)
     }
 
-    fn float_asin(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_asin")
+    fn float_asin(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::asin(tensor)
     }
 
-    fn float_asinh(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_asinh")
+    fn float_asinh(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::asinh(tensor)
     }
 
-    fn float_atan(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_atan")
+    fn float_atan(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::atan(tensor)
     }
 
-    fn float_atanh(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_atanh")
+    fn float_atanh(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::atanh(tensor)
     }
 
     fn float_atan2(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
         todo!("float_atan2")
     }
 
-    fn float_round(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_round")
+    fn float_round(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::round(tensor)
     }
 
-    fn float_floor(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_floor")
+    fn float_floor(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::floor(tensor)
     }
 
-    fn float_ceil(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_ceil")
+    fn float_ceil(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::ceil(tensor)
     }
 
-    fn float_trunc(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_trunc")
+    fn float_trunc(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::trunc(tensor)
     }
 
-    fn float_erf(_tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_erf")
+    fn float_erf(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::erf(tensor)
     }
 
     fn float_argmax(tensor: FloatTensor<Ember>, dim: usize) -> IntTensor<Ember> {
@@ -450,5 +451,81 @@ mod tests {
         let data = result.into_data();
 
         assert_eq!(data, TensorData::from([3.0f32, 6.0, 9.0]));
+    }
+
+    fn assert_approx(result: TensorData, expected: &[f32], tol: f32) {
+        let actual: Vec<f32> = result.to_vec().unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for (a, e) in actual.iter().zip(expected) {
+            assert!((a - e).abs() < tol, "got {}, expected {}", a, e);
+        }
+    }
+
+    #[test]
+    fn test_exp_tensor_api() {
+        let t: Tensor<Ember, 1> = Tensor::from_data([0.0f32, 1.0, 2.0], &Default::default());
+        let result = t.exp().into_data();
+        assert_approx(
+            result,
+            &[1.0, std::f32::consts::E, std::f32::consts::E.powi(2)],
+            1e-5,
+        );
+    }
+
+    #[test]
+    fn test_log_tensor_api() {
+        let t: Tensor<Ember, 1> =
+            Tensor::from_data([1.0f32, std::f32::consts::E], &Default::default());
+        let result = t.log().into_data();
+        assert_approx(result, &[0.0, 1.0], 1e-5);
+    }
+
+    #[test]
+    fn test_sqrt_tensor_api() {
+        let t: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 4.0, 9.0], &Default::default());
+        let result = t.sqrt().into_data();
+        assert_approx(result, &[1.0, 2.0, 3.0], 1e-5);
+    }
+
+    #[test]
+    fn test_abs_tensor_api() {
+        let t: Tensor<Ember, 1> = Tensor::from_data([-3.0f32, -1.0, 0.0, 1.0], &Default::default());
+        let result = t.abs().into_data();
+        assert_approx(result, &[3.0, 1.0, 0.0, 1.0], 1e-5);
+    }
+
+    #[test]
+    fn test_sin_cos_tensor_api() {
+        let t: Tensor<Ember, 1> =
+            Tensor::from_data([0.0f32, std::f32::consts::FRAC_PI_2], &Default::default());
+        let sin_result = t.clone().sin().into_data();
+        let cos_result = t.cos().into_data();
+        assert_approx(sin_result, &[0.0, 1.0], 1e-5);
+        assert_approx(cos_result, &[1.0, 0.0], 1e-5);
+    }
+
+    #[test]
+    fn test_tanh_tensor_api() {
+        let t: Tensor<Ember, 1> = Tensor::from_data([0.0f32, 1.0], &Default::default());
+        let result = t.tanh().into_data();
+        assert_approx(result, &[0.0, 1.0f32.tanh()], 1e-5);
+    }
+
+    #[test]
+    fn test_recip_tensor_api() {
+        let t: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 2.0, 4.0], &Default::default());
+        let result = t.recip().into_data();
+        assert_approx(result, &[1.0, 0.5, 0.25], 1e-5);
+    }
+
+    #[test]
+    fn test_floor_ceil_round_tensor_api() {
+        let t: Tensor<Ember, 1> = Tensor::from_data([1.3f32, 1.7, -1.3, -1.7], &Default::default());
+        let floor_result = t.clone().floor().into_data();
+        let ceil_result = t.clone().ceil().into_data();
+        let round_result = t.round().into_data();
+        assert_approx(floor_result, &[1.0, 1.0, -2.0, -2.0], 1e-5);
+        assert_approx(ceil_result, &[2.0, 2.0, -1.0, -1.0], 1e-5);
+        assert_approx(round_result, &[1.0, 2.0, -1.0, -2.0], 1e-5);
     }
 }

@@ -8,12 +8,15 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::DType;
-use burn_std::{Bytes, Shape, bf16, f16};
+#[cfg(feature = "gemm")]
+use burn_std::f16;
+use burn_std::{Bytes, Shape, bf16};
 
 use crate::{EmberTensor, Layout};
 
 /// Threshold for enabling parallelism (M*N*K operations).
 /// 192^3 = ~7M ops - balance between 128x128 (no parallel) and 256x256 (parallel)
+#[cfg(feature = "gemm")]
 const PARALLEL_THRESHOLD: usize = 192 * 192 * 192;
 
 /// Threshold for batch-level parallelism (total ops across all batches).
@@ -67,6 +70,7 @@ pub fn matmul(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
 /// Extract 2D matrix strides from a tensor layout.
 /// Returns (row_stride, col_stride) for the last two dimensions.
+#[cfg(feature = "gemm")]
 fn get_2d_strides(layout: &Layout) -> (isize, isize) {
     let strides = layout.strides();
     let ndim = strides.len();

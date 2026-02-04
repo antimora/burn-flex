@@ -11,3 +11,4 @@ mod qtensor;
 pub mod reduce;
 pub mod slice;
 mod transaction;
+pub mod unary;
