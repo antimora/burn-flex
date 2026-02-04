@@ -8,6 +8,7 @@ pub mod conv;
 pub mod expand;
 mod float;
 mod int;
+pub mod interpolate;
 pub mod matmul;
 mod module;
 pub mod pool;
