@@ -196,8 +196,13 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     {
         let total_ops = batch_size * per_matrix_ops;
 
-        if per_matrix_ops >= PARALLEL_THRESHOLD {
-            // Large matrices: use per-matrix parallelism
+        // Heuristic: batch parallelism is better when we have enough batches
+        // to saturate cores (>=4), even for large matrices. This avoids
+        // repeated thread spawn/sync overhead.
+        let prefer_batch_parallel = batch_size >= 4 && total_ops >= BATCH_PARALLEL_THRESHOLD;
+
+        if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
+            // Large matrices, small batch: use per-matrix parallelism
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
                 let lhs_offset = b * lhs_matrix_size;
@@ -414,8 +419,9 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     #[cfg(feature = "rayon")]
     {
         let total_ops = batch_size * per_matrix_ops;
+        let prefer_batch_parallel = batch_size >= 4 && total_ops >= BATCH_PARALLEL_THRESHOLD;
 
-        if per_matrix_ops >= PARALLEL_THRESHOLD {
+        if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
                 let lhs_offset = b * lhs_matrix_size;
@@ -629,8 +635,9 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     #[cfg(feature = "rayon")]
     {
         let total_ops = batch_size * per_matrix_ops;
+        let prefer_batch_parallel = batch_size >= 4 && total_ops >= BATCH_PARALLEL_THRESHOLD;
 
-        if per_matrix_ops >= PARALLEL_THRESHOLD {
+        if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
                 let lhs_offset = b * lhs_matrix_size;

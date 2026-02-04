@@ -86,10 +86,10 @@ SIMD provides modest gains for element-wise ops since they are memory-bound, not
 
 | Benchmark | Ember | NdArray | Result |
 |-----------|-------|---------|--------|
-| batch8_64x64 | 70µs | 110µs | **Ember 1.6x faster** |
-| batch16_128x128 | 338µs | 630µs | **Ember 1.9x faster** |
-| batch32_64x64 | 122µs | 167µs | **Ember 1.4x faster** |
-| heads12_seq512_dim64 | 2.17ms | 1.88ms | NdArray 1.15x faster |
+| batch8_64x64 | 62µs | 110µs | **Ember 1.8x faster** |
+| batch16_128x128 | 337µs | 630µs | **Ember 1.9x faster** |
+| batch32_64x64 | 108µs | 189µs | **Ember 1.7x faster** |
+| heads12_seq512_dim64 | 885µs | 1.88ms | **Ember 2.1x faster** |
 
 #### Transposed Inputs (256x256)
 
@@ -121,7 +121,7 @@ With optimizations, Ember wins for:
 - Large matrices (>=256x256): Parallel gemm beats NdArray BLAS
 - Batched small matrices: Batch-level parallelism beats sequential execution
 
-256x256 is essentially equal to NdArray (only 7% slower). Ember wins at 4/5 square sizes, 2/3 transposed, and 3/4 batched cases.
+256x256 is essentially equal to NdArray (only 7% slower). Ember wins at 4/5 square sizes, 2/3 transposed, and **all 4 batched cases**.
 
 ### Analysis
 
