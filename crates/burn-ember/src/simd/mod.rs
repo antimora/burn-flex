@@ -39,15 +39,17 @@ pub const PARALLEL_THRESHOLD: usize = 8192;
 // Re-export platform-specific implementations
 #[cfg(target_arch = "aarch64")]
 pub use neon::{
-    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, cmp_f32, cmp_scalar_f32, div_f32,
-    div_inplace_f32, mul_f32, mul_inplace_f32, mul_scalar_f32, sub_f32, sub_inplace_f32,
+    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, bool_and_u8, bool_not_u8, bool_or_u8,
+    bool_xor_u8, cmp_f32, cmp_scalar_f32, div_f32, div_inplace_f32, mul_f32, mul_inplace_f32,
+    mul_scalar_f32, sub_f32, sub_inplace_f32,
 };
 
 // Scalar fallback for other platforms
 #[cfg(not(target_arch = "aarch64"))]
 pub use scalar::{
-    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, cmp_f32, cmp_scalar_f32, div_f32,
-    div_inplace_f32, mul_f32, mul_inplace_f32, mul_scalar_f32, sub_f32, sub_inplace_f32,
+    CmpOp, add_f32, add_inplace_f32, add_scalar_f32, bool_and_u8, bool_not_u8, bool_or_u8,
+    bool_xor_u8, cmp_f32, cmp_scalar_f32, div_f32, div_inplace_f32, mul_f32, mul_inplace_f32,
+    mul_scalar_f32, sub_f32, sub_inplace_f32,
 };
 
 #[cfg(not(target_arch = "aarch64"))]
@@ -170,6 +172,38 @@ mod scalar {
     pub fn div_inplace_f32(a: &mut [f32], b: &[f32]) {
         for i in 0..a.len() {
             a[i] /= b[i];
+        }
+    }
+
+    /// Scalar boolean NOT: out[i] = !a[i] (0 becomes 1, non-zero becomes 0)
+    #[inline]
+    pub fn bool_not_u8(a: &[u8], out: &mut [u8]) {
+        for i in 0..a.len() {
+            out[i] = (a[i] == 0) as u8;
+        }
+    }
+
+    /// Scalar boolean AND: out[i] = a[i] & b[i]
+    #[inline]
+    pub fn bool_and_u8(a: &[u8], b: &[u8], out: &mut [u8]) {
+        for i in 0..a.len() {
+            out[i] = a[i] & b[i];
+        }
+    }
+
+    /// Scalar boolean OR: out[i] = a[i] | b[i]
+    #[inline]
+    pub fn bool_or_u8(a: &[u8], b: &[u8], out: &mut [u8]) {
+        for i in 0..a.len() {
+            out[i] = a[i] | b[i];
+        }
+    }
+
+    /// Scalar boolean XOR: out[i] = a[i] ^ b[i]
+    #[inline]
+    pub fn bool_xor_u8(a: &[u8], b: &[u8], out: &mut [u8]) {
+        for i in 0..a.len() {
+            out[i] = a[i] ^ b[i];
         }
     }
 }

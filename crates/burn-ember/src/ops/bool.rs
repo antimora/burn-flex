@@ -119,10 +119,12 @@ impl BoolTensorOps<Ember> for Ember {
         let storage: &[u8] = tensor.bytes();
 
         let result: Vec<u8> = match tensor.layout().contiguous_offsets() {
-            Some((start, end)) => storage[start..end]
-                .iter()
-                .map(|&v| (v == 0) as u8)
-                .collect(),
+            Some((start, end)) => {
+                let slice = &storage[start..end];
+                let mut out = vec![0u8; slice.len()];
+                crate::simd::bool_not_u8(slice, &mut out);
+                out
+            }
             None => StridedIter::new(tensor.layout())
                 .map(|idx| (storage[idx] == 0) as u8)
                 .collect(),
@@ -133,15 +135,15 @@ impl BoolTensorOps<Ember> for Ember {
     }
 
     fn bool_and(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
-        bool_binary_op(lhs, rhs, |a, b| a & b)
+        bool_binary_op_simd(lhs, rhs, BoolBinaryOp::And)
     }
 
     fn bool_or(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
-        bool_binary_op(lhs, rhs, |a, b| a | b)
+        bool_binary_op_simd(lhs, rhs, BoolBinaryOp::Or)
     }
 
     fn bool_xor(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
-        bool_binary_op(lhs, rhs, |a, b| a ^ b)
+        bool_binary_op_simd(lhs, rhs, BoolBinaryOp::Xor)
     }
 
     fn bool_expand(tensor: BoolTensor<Ember>, shape: Shape) -> BoolTensor<Ember> {
@@ -223,10 +225,15 @@ impl BoolTensorOps<Ember> for Ember {
     }
 }
 
-fn bool_binary_op<F>(lhs: EmberTensor, rhs: EmberTensor, op: F) -> EmberTensor
-where
-    F: Fn(u8, u8) -> u8,
-{
+/// Boolean binary operation type.
+#[derive(Clone, Copy)]
+enum BoolBinaryOp {
+    And,
+    Or,
+    Xor,
+}
+
+fn bool_binary_op_simd(lhs: EmberTensor, rhs: EmberTensor, op: BoolBinaryOp) -> EmberTensor {
     use crate::Layout;
     use crate::strided_index::StridedIter;
     use burn_std::Bytes;
@@ -248,19 +255,31 @@ where
         (Some((l_start, l_end)), Some((r_start, r_end))) => {
             let l_slice = &lhs_storage[l_start..l_end];
             let r_slice = &rhs_storage[r_start..r_end];
-            l_slice
-                .iter()
-                .zip(r_slice)
-                .map(|(&a, &b)| op(a, b))
-                .collect()
+            let mut out = vec![0u8; l_slice.len()];
+            match op {
+                BoolBinaryOp::And => crate::simd::bool_and_u8(l_slice, r_slice, &mut out),
+                BoolBinaryOp::Or => crate::simd::bool_or_u8(l_slice, r_slice, &mut out),
+                BoolBinaryOp::Xor => crate::simd::bool_xor_u8(l_slice, r_slice, &mut out),
+            }
+            out
         }
         _ => {
             let lhs_iter = StridedIter::new(lhs.layout());
             let rhs_iter = StridedIter::new(rhs.layout());
-            lhs_iter
-                .zip(rhs_iter)
-                .map(|(li, ri)| op(lhs_storage[li], rhs_storage[ri]))
-                .collect()
+            match op {
+                BoolBinaryOp::And => lhs_iter
+                    .zip(rhs_iter)
+                    .map(|(li, ri)| lhs_storage[li] & rhs_storage[ri])
+                    .collect(),
+                BoolBinaryOp::Or => lhs_iter
+                    .zip(rhs_iter)
+                    .map(|(li, ri)| lhs_storage[li] | rhs_storage[ri])
+                    .collect(),
+                BoolBinaryOp::Xor => lhs_iter
+                    .zip(rhs_iter)
+                    .map(|(li, ri)| lhs_storage[li] ^ rhs_storage[ri])
+                    .collect(),
+            }
         }
     };
 

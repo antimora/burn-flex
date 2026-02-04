@@ -603,6 +603,234 @@ fn cmp_scalar_f32_parallel(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
         });
 }
 
+// ===================
+// Boolean operations (u8)
+// ===================
+
+const U8_LANES: usize = 16; // NEON: 128-bit / 8-bit = 16
+
+/// SIMD boolean NOT: out[i] = !a[i] (0 becomes 1, non-zero becomes 0)
+#[inline]
+pub fn bool_not_u8(a: &[u8], out: &mut [u8]) {
+    debug_assert_eq!(a.len(), out.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        bool_not_u8_parallel(a, out);
+        return;
+    }
+
+    bool_not_u8_sequential(a, out);
+}
+
+#[inline]
+fn bool_not_u8_sequential(a: &[u8], out: &mut [u8]) {
+    let len = a.len();
+    let chunks = len / U8_LANES;
+    let remainder = len % U8_LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_ptr();
+            let out_ptr = out.as_mut_ptr();
+            let ones = vdupq_n_u8(1);
+            let zeros = vdupq_n_u8(0);
+
+            for i in 0..chunks {
+                let offset = i * U8_LANES;
+                let va = vld1q_u8(a_ptr.add(offset));
+                // Compare with zero: if a[i] == 0, result is 0xFF, else 0x00
+                let is_zero = vceqq_u8(va, zeros);
+                // Select 1 where a was 0, else 0
+                let result = vandq_u8(is_zero, ones);
+                vst1q_u8(out_ptr.add(offset), result);
+            }
+        }
+    }
+
+    let tail_start = chunks * U8_LANES;
+    for i in 0..remainder {
+        out[tail_start + i] = (a[tail_start + i] == 0) as u8;
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn bool_not_u8_parallel(a: &[u8], out: &mut [u8]) {
+    const CHUNK_SIZE: usize = 4096;
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(a.len());
+            bool_not_u8_sequential(&a[start..end], out_chunk);
+        });
+}
+
+/// SIMD boolean AND: out[i] = a[i] & b[i]
+#[inline]
+pub fn bool_and_u8(a: &[u8], b: &[u8], out: &mut [u8]) {
+    debug_assert_eq!(a.len(), b.len());
+    debug_assert_eq!(a.len(), out.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        bool_and_u8_parallel(a, b, out);
+        return;
+    }
+
+    bool_and_u8_sequential(a, b, out);
+}
+
+#[inline]
+fn bool_and_u8_sequential(a: &[u8], b: &[u8], out: &mut [u8]) {
+    let len = a.len();
+    let chunks = len / U8_LANES;
+    let remainder = len % U8_LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_ptr();
+            let b_ptr = b.as_ptr();
+            let out_ptr = out.as_mut_ptr();
+
+            for i in 0..chunks {
+                let offset = i * U8_LANES;
+                let va = vld1q_u8(a_ptr.add(offset));
+                let vb = vld1q_u8(b_ptr.add(offset));
+                let result = vandq_u8(va, vb);
+                vst1q_u8(out_ptr.add(offset), result);
+            }
+        }
+    }
+
+    let tail_start = chunks * U8_LANES;
+    for i in 0..remainder {
+        out[tail_start + i] = a[tail_start + i] & b[tail_start + i];
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn bool_and_u8_parallel(a: &[u8], b: &[u8], out: &mut [u8]) {
+    const CHUNK_SIZE: usize = 4096;
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(a.len());
+            bool_and_u8_sequential(&a[start..end], &b[start..end], out_chunk);
+        });
+}
+
+/// SIMD boolean OR: out[i] = a[i] | b[i]
+#[inline]
+pub fn bool_or_u8(a: &[u8], b: &[u8], out: &mut [u8]) {
+    debug_assert_eq!(a.len(), b.len());
+    debug_assert_eq!(a.len(), out.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        bool_or_u8_parallel(a, b, out);
+        return;
+    }
+
+    bool_or_u8_sequential(a, b, out);
+}
+
+#[inline]
+fn bool_or_u8_sequential(a: &[u8], b: &[u8], out: &mut [u8]) {
+    let len = a.len();
+    let chunks = len / U8_LANES;
+    let remainder = len % U8_LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_ptr();
+            let b_ptr = b.as_ptr();
+            let out_ptr = out.as_mut_ptr();
+
+            for i in 0..chunks {
+                let offset = i * U8_LANES;
+                let va = vld1q_u8(a_ptr.add(offset));
+                let vb = vld1q_u8(b_ptr.add(offset));
+                let result = vorrq_u8(va, vb);
+                vst1q_u8(out_ptr.add(offset), result);
+            }
+        }
+    }
+
+    let tail_start = chunks * U8_LANES;
+    for i in 0..remainder {
+        out[tail_start + i] = a[tail_start + i] | b[tail_start + i];
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn bool_or_u8_parallel(a: &[u8], b: &[u8], out: &mut [u8]) {
+    const CHUNK_SIZE: usize = 4096;
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(a.len());
+            bool_or_u8_sequential(&a[start..end], &b[start..end], out_chunk);
+        });
+}
+
+/// SIMD boolean XOR: out[i] = a[i] ^ b[i]
+#[inline]
+pub fn bool_xor_u8(a: &[u8], b: &[u8], out: &mut [u8]) {
+    debug_assert_eq!(a.len(), b.len());
+    debug_assert_eq!(a.len(), out.len());
+
+    #[cfg(feature = "rayon")]
+    if a.len() >= PARALLEL_THRESHOLD {
+        bool_xor_u8_parallel(a, b, out);
+        return;
+    }
+
+    bool_xor_u8_sequential(a, b, out);
+}
+
+#[inline]
+fn bool_xor_u8_sequential(a: &[u8], b: &[u8], out: &mut [u8]) {
+    let len = a.len();
+    let chunks = len / U8_LANES;
+    let remainder = len % U8_LANES;
+
+    if chunks > 0 {
+        unsafe {
+            let a_ptr = a.as_ptr();
+            let b_ptr = b.as_ptr();
+            let out_ptr = out.as_mut_ptr();
+
+            for i in 0..chunks {
+                let offset = i * U8_LANES;
+                let va = vld1q_u8(a_ptr.add(offset));
+                let vb = vld1q_u8(b_ptr.add(offset));
+                let result = veorq_u8(va, vb);
+                vst1q_u8(out_ptr.add(offset), result);
+            }
+        }
+    }
+
+    let tail_start = chunks * U8_LANES;
+    for i in 0..remainder {
+        out[tail_start + i] = a[tail_start + i] ^ b[tail_start + i];
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn bool_xor_u8_parallel(a: &[u8], b: &[u8], out: &mut [u8]) {
+    const CHUNK_SIZE: usize = 4096;
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(a.len());
+            bool_xor_u8_sequential(&a[start..end], &b[start..end], out_chunk);
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,5 +924,53 @@ mod tests {
 
         // 1>3=F, 2>3=F, 3>3=F, 4>3=T, 5>3=T
         assert_eq!(out, [0, 0, 0, 1, 1]);
+    }
+
+    // Boolean operation tests
+    #[test]
+    fn test_bool_not_u8() {
+        let a = [1u8, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0];
+        let mut out = [0u8; 18];
+
+        bool_not_u8(&a, &mut out);
+
+        let expected = [0u8, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1];
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn test_bool_and_u8() {
+        let a = [1u8, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0];
+        let b = [1u8, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1];
+        let mut out = [0u8; 18];
+
+        bool_and_u8(&a, &b, &mut out);
+
+        let expected = [1u8, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0];
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn test_bool_or_u8() {
+        let a = [1u8, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0];
+        let b = [1u8, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1];
+        let mut out = [0u8; 18];
+
+        bool_or_u8(&a, &b, &mut out);
+
+        let expected = [1u8, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1];
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn test_bool_xor_u8() {
+        let a = [1u8, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0];
+        let b = [1u8, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1];
+        let mut out = [0u8; 18];
+
+        bool_xor_u8(&a, &b, &mut out);
+
+        let expected = [0u8, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1];
+        assert_eq!(out, expected);
     }
 }
