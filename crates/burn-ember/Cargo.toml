@@ -67,3 +67,7 @@ harness = false
 [[bench]]
 name = "pool_ops"
 harness = false
+
+[[bench]]
+name = "conv_transpose_ops"
+harness = false
