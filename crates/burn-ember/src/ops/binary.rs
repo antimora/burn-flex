@@ -63,28 +63,28 @@ where
     Op: Fn(f32, f32) -> f32,
 {
     // In-place SIMD fast path: lhs unique, contiguous at offset 0, rhs contiguous
-    if lhs.is_unique() {
-        if let (Some((0, l_end)), Some((r_start, r_end))) = (
+    if lhs.is_unique()
+        && let (Some((0, l_end)), Some((r_start, r_end))) = (
             lhs.layout().contiguous_offsets(),
             rhs.layout().contiguous_offsets(),
-        ) {
-            // Detect operation type
-            if let Some(simd_op) = detect_binary_op(&op) {
-                let r_slice: &[f32] = &rhs.storage()[r_start..r_end];
+        )
+    {
+        // Detect operation type
+        if let Some(simd_op) = detect_binary_op(&op) {
+            let r_slice: &[f32] = &rhs.storage()[r_start..r_end];
 
-                // Get mutable access to lhs storage
-                let lhs_storage: &mut [f32] = lhs.storage_mut();
-                let l_slice = &mut lhs_storage[..l_end];
+            // Get mutable access to lhs storage
+            let lhs_storage: &mut [f32] = lhs.storage_mut();
+            let l_slice = &mut lhs_storage[..l_end];
 
-                // Use true in-place SIMD operations
-                match simd_op {
-                    BinaryOp::Add => simd::add_inplace_f32(l_slice, r_slice),
-                    BinaryOp::Sub => simd::sub_inplace_f32(l_slice, r_slice),
-                    BinaryOp::Mul => simd::mul_inplace_f32(l_slice, r_slice),
-                    BinaryOp::Div => simd::div_inplace_f32(l_slice, r_slice),
-                }
-                return lhs;
+            // Use true in-place SIMD operations
+            match simd_op {
+                BinaryOp::Add => simd::add_inplace_f32(l_slice, r_slice),
+                BinaryOp::Sub => simd::sub_inplace_f32(l_slice, r_slice),
+                BinaryOp::Mul => simd::mul_inplace_f32(l_slice, r_slice),
+                BinaryOp::Div => simd::div_inplace_f32(l_slice, r_slice),
             }
+            return lhs;
         }
     }
 
@@ -135,18 +135,18 @@ where
     let rhs_storage: &[E] = rhs.storage();
 
     // In-place fast path: lhs unique, contiguous at offset 0, rhs contiguous
-    if lhs.is_unique() {
-        if let (Some((0, l_end)), Some((r_start, r_end))) = (
+    if lhs.is_unique()
+        && let (Some((0, l_end)), Some((r_start, r_end))) = (
             lhs.layout().contiguous_offsets(),
             rhs.layout().contiguous_offsets(),
-        ) {
-            let lhs_storage: &mut [E] = lhs.storage_mut();
-            let r_slice = &rhs_storage[r_start..r_end];
-            for (l, &r) in lhs_storage[..l_end].iter_mut().zip(r_slice) {
-                *l = op(*l, r);
-            }
-            return lhs;
+        )
+    {
+        let lhs_storage: &mut [E] = lhs.storage_mut();
+        let r_slice = &rhs_storage[r_start..r_end];
+        for (l, &r) in lhs_storage[..l_end].iter_mut().zip(r_slice) {
+            *l = op(*l, r);
         }
+        return lhs;
     }
 
     // Allocating path
@@ -227,18 +227,18 @@ where
     let rhs_storage: &[f16] = rhs.storage();
 
     // In-place fast path: lhs unique, contiguous at offset 0, rhs contiguous
-    if lhs.is_unique() {
-        if let (Some((0, l_end)), Some((r_start, r_end))) = (
+    if lhs.is_unique()
+        && let (Some((0, l_end)), Some((r_start, r_end))) = (
             lhs.layout().contiguous_offsets(),
             rhs.layout().contiguous_offsets(),
-        ) {
-            let lhs_storage: &mut [f16] = lhs.storage_mut();
-            let r_slice = &rhs_storage[r_start..r_end];
-            for (l, &r) in lhs_storage[..l_end].iter_mut().zip(r_slice) {
-                *l = op(*l, r);
-            }
-            return lhs;
+        )
+    {
+        let lhs_storage: &mut [f16] = lhs.storage_mut();
+        let r_slice = &rhs_storage[r_start..r_end];
+        for (l, &r) in lhs_storage[..l_end].iter_mut().zip(r_slice) {
+            *l = op(*l, r);
         }
+        return lhs;
     }
 
     // Allocating path
@@ -283,18 +283,18 @@ where
     let rhs_storage: &[bf16] = rhs.storage();
 
     // In-place fast path: lhs unique, contiguous at offset 0, rhs contiguous
-    if lhs.is_unique() {
-        if let (Some((0, l_end)), Some((r_start, r_end))) = (
+    if lhs.is_unique()
+        && let (Some((0, l_end)), Some((r_start, r_end))) = (
             lhs.layout().contiguous_offsets(),
             rhs.layout().contiguous_offsets(),
-        ) {
-            let lhs_storage: &mut [bf16] = lhs.storage_mut();
-            let r_slice = &rhs_storage[r_start..r_end];
-            for (l, &r) in lhs_storage[..l_end].iter_mut().zip(r_slice) {
-                *l = op(*l, r);
-            }
-            return lhs;
+        )
+    {
+        let lhs_storage: &mut [bf16] = lhs.storage_mut();
+        let r_slice = &rhs_storage[r_start..r_end];
+        for (l, &r) in lhs_storage[..l_end].iter_mut().zip(r_slice) {
+            *l = op(*l, r);
         }
+        return lhs;
     }
 
     // Allocating path
@@ -365,14 +365,14 @@ where
     Op: Fn(E, E) -> E,
 {
     // In-place fast path: unique, contiguous at offset 0
-    if tensor.is_unique() {
-        if let Some((0, end)) = tensor.layout().contiguous_offsets() {
-            let storage: &mut [E] = tensor.storage_mut();
-            for x in storage[..end].iter_mut() {
-                *x = op(*x, scalar);
-            }
-            return tensor;
+    if tensor.is_unique()
+        && let Some((0, end)) = tensor.layout().contiguous_offsets()
+    {
+        let storage: &mut [E] = tensor.storage_mut();
+        for x in storage[..end].iter_mut() {
+            *x = op(*x, scalar);
         }
+        return tensor;
     }
 
     // Allocating path
@@ -395,14 +395,14 @@ where
     Op: Fn(f16, f16) -> f16,
 {
     // In-place fast path: unique, contiguous at offset 0
-    if tensor.is_unique() {
-        if let Some((0, end)) = tensor.layout().contiguous_offsets() {
-            let storage: &mut [f16] = tensor.storage_mut();
-            for x in storage[..end].iter_mut() {
-                *x = op(*x, scalar);
-            }
-            return tensor;
+    if tensor.is_unique()
+        && let Some((0, end)) = tensor.layout().contiguous_offsets()
+    {
+        let storage: &mut [f16] = tensor.storage_mut();
+        for x in storage[..end].iter_mut() {
+            *x = op(*x, scalar);
         }
+        return tensor;
     }
 
     // Allocating path
@@ -424,14 +424,14 @@ where
     Op: Fn(bf16, bf16) -> bf16,
 {
     // In-place fast path: unique, contiguous at offset 0
-    if tensor.is_unique() {
-        if let Some((0, end)) = tensor.layout().contiguous_offsets() {
-            let storage: &mut [bf16] = tensor.storage_mut();
-            for x in storage[..end].iter_mut() {
-                *x = op(*x, scalar);
-            }
-            return tensor;
+    if tensor.is_unique()
+        && let Some((0, end)) = tensor.layout().contiguous_offsets()
+    {
+        let storage: &mut [bf16] = tensor.storage_mut();
+        for x in storage[..end].iter_mut() {
+            *x = op(*x, scalar);
         }
+        return tensor;
     }
 
     // Allocating path

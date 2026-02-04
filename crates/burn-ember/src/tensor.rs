@@ -121,7 +121,11 @@ impl EmberTensor {
     ///
     /// Use this for zero-copy view operations.
     pub fn from_arc(data: Arc<Bytes>, layout: Layout, dtype: DType) -> Self {
-        Self { data, layout, dtype }
+        Self {
+            data,
+            layout,
+            dtype,
+        }
     }
 
     /// Zero-copy typed view of the full storage buffer.
@@ -437,7 +441,10 @@ mod tests {
         assert!(!cloned.is_unique());
 
         // Both point to same data
-        assert!(core::ptr::eq(tensor.bytes().as_ptr(), cloned.bytes().as_ptr()));
+        assert!(core::ptr::eq(
+            tensor.bytes().as_ptr(),
+            cloned.bytes().as_ptr()
+        ));
     }
 
     #[test]

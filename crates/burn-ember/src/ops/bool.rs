@@ -244,7 +244,11 @@ enum BoolBinaryOp {
     Xor,
 }
 
-fn bool_binary_op_simd(mut lhs: EmberTensor, mut rhs: EmberTensor, op: BoolBinaryOp) -> EmberTensor {
+fn bool_binary_op_simd(
+    mut lhs: EmberTensor,
+    mut rhs: EmberTensor,
+    op: BoolBinaryOp,
+) -> EmberTensor {
     use crate::Layout;
     use crate::strided_index::StridedIter;
     use burn_std::Bytes;
@@ -260,38 +264,38 @@ fn bool_binary_op_simd(mut lhs: EmberTensor, mut rhs: EmberTensor, op: BoolBinar
     let r_offsets = rhs.layout().contiguous_offsets();
 
     // Fast path 1: lhs is unique and contiguous at offset 0 -> in-place on lhs
-    if lhs.is_unique() {
-        if let (Some((0, l_end)), Some((r_start, r_end))) = (l_offsets, r_offsets) {
-            let rhs_storage: &[u8] = rhs.bytes();
-            let r_slice = &rhs_storage[r_start..r_end];
-            let lhs_storage: &mut [u8] = lhs.storage_mut();
-            let l_slice = &mut lhs_storage[..l_end];
+    if lhs.is_unique()
+        && let (Some((0, l_end)), Some((r_start, r_end))) = (l_offsets, r_offsets)
+    {
+        let rhs_storage: &[u8] = rhs.bytes();
+        let r_slice = &rhs_storage[r_start..r_end];
+        let lhs_storage: &mut [u8] = lhs.storage_mut();
+        let l_slice = &mut lhs_storage[..l_end];
 
-            match op {
-                BoolBinaryOp::And => crate::simd::bool_and_inplace_u8(l_slice, r_slice),
-                BoolBinaryOp::Or => crate::simd::bool_or_inplace_u8(l_slice, r_slice),
-                BoolBinaryOp::Xor => crate::simd::bool_xor_inplace_u8(l_slice, r_slice),
-            }
-            return lhs;
+        match op {
+            BoolBinaryOp::And => crate::simd::bool_and_inplace_u8(l_slice, r_slice),
+            BoolBinaryOp::Or => crate::simd::bool_or_inplace_u8(l_slice, r_slice),
+            BoolBinaryOp::Xor => crate::simd::bool_xor_inplace_u8(l_slice, r_slice),
         }
+        return lhs;
     }
 
     // Fast path 2: rhs is unique and contiguous at offset 0 -> in-place on rhs
     // (And/Or/Xor are commutative, so we can swap operands)
-    if rhs.is_unique() {
-        if let (Some((l_start, l_end)), Some((0, r_end))) = (l_offsets, r_offsets) {
-            let lhs_storage: &[u8] = lhs.bytes();
-            let l_slice = &lhs_storage[l_start..l_end];
-            let rhs_storage: &mut [u8] = rhs.storage_mut();
-            let r_slice = &mut rhs_storage[..r_end];
+    if rhs.is_unique()
+        && let (Some((l_start, l_end)), Some((0, r_end))) = (l_offsets, r_offsets)
+    {
+        let lhs_storage: &[u8] = lhs.bytes();
+        let l_slice = &lhs_storage[l_start..l_end];
+        let rhs_storage: &mut [u8] = rhs.storage_mut();
+        let r_slice = &mut rhs_storage[..r_end];
 
-            match op {
-                BoolBinaryOp::And => crate::simd::bool_and_inplace_u8(r_slice, l_slice),
-                BoolBinaryOp::Or => crate::simd::bool_or_inplace_u8(r_slice, l_slice),
-                BoolBinaryOp::Xor => crate::simd::bool_xor_inplace_u8(r_slice, l_slice),
-            }
-            return rhs;
+        match op {
+            BoolBinaryOp::And => crate::simd::bool_and_inplace_u8(r_slice, l_slice),
+            BoolBinaryOp::Or => crate::simd::bool_or_inplace_u8(r_slice, l_slice),
+            BoolBinaryOp::Xor => crate::simd::bool_xor_inplace_u8(r_slice, l_slice),
         }
+        return rhs;
     }
 
     // Allocating path: neither tensor is suitable for in-place

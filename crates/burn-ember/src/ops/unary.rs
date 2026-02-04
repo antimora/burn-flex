@@ -33,9 +33,7 @@ where
     let n = tensor.layout().num_elements();
 
     // In-place fast path: unique, contiguous tensor at offset 0
-    if tensor.is_unique()
-        && tensor.layout().is_contiguous()
-        && tensor.layout().start_offset() == 0
+    if tensor.is_unique() && tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0
     {
         let storage: &mut [E] = tensor.storage_mut();
         for x in storage[..n].iter_mut() {
@@ -103,9 +101,7 @@ where
     let n = tensor.layout().num_elements();
 
     // In-place fast path: unique, contiguous tensor at offset 0
-    if tensor.is_unique()
-        && tensor.layout().is_contiguous()
-        && tensor.layout().start_offset() == 0
+    if tensor.is_unique() && tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0
     {
         let storage: &mut [f16] = tensor.storage_mut();
         for x in storage[..n].iter_mut() {
@@ -164,9 +160,7 @@ where
     let n = tensor.layout().num_elements();
 
     // In-place fast path: unique, contiguous tensor at offset 0
-    if tensor.is_unique()
-        && tensor.layout().is_contiguous()
-        && tensor.layout().start_offset() == 0
+    if tensor.is_unique() && tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0
     {
         let storage: &mut [bf16] = tensor.storage_mut();
         for x in storage[..n].iter_mut() {
