@@ -7,11 +7,11 @@ A pure-Rust CPU backend for [Burn](https://github.com/tracel-ai/burn).
 From README:
 
 - Fast, memory-efficient CPU backend
-- Multi-threading, SIMD, faer-rs acceleration
+- Multi-threading, SIMD, gemm acceleration
 - Runs on std, no_std, and WebAssembly
 - Supports f16/bf16
 - Zero-copy data loading
-- Thread-safe by design
+- Thread-safe by design (Arc-based COW)
 
 ## Target Platform
 
@@ -29,7 +29,7 @@ From README:
 
 1. **Leverage Burn** - Use `burn-backend` types and `burn-std` utilities wherever possible
 2. **Portability first** - No platform-specific dependencies; std, no_std, WASM
-3. **Zero C dependencies** - Pure Rust only (faer-rs for linalg)
+3. **Zero C dependencies** - Pure Rust only (gemm for matmul)
 4. **Simple and direct** - Eager execution, no lazy graphs, no fusion (use `burn-fusion` if needed)
 5. **Memory reuse** - Minimize allocations through in-place ops and buffer reuse
 
@@ -86,24 +86,25 @@ Only allocate when necessary:
 - Non-contiguous input that must become contiguous
 - Views/slices with non-zero offset
 
-### Thread-Safe Reference Counting (Future)
+### Arc-based Copy-on-Write
 
-Current implementation uses `Bytes` directly. For proper COW with cheap clones (like burn-ndarray's
-`ArcArray`), wrap storage with `Arc`:
+Tensor storage is wrapped in `Arc<Bytes>` for O(1) cloning and thread-safe COW:
 
 ```rust
-pub struct EmberStorage {
-    data: Arc<Bytes>,
+pub struct EmberTensor {
+    data: Arc<Bytes>,  // O(1) clone via refcount increment
+    layout: Layout,
+    dtype: DType,
 }
 
-impl EmberStorage {
-    /// Thread-safe uniqueness check for in-place optimization
+impl EmberTensor {
+    /// Check if this tensor uniquely owns its data
     pub fn is_unique(&self) -> bool {
         Arc::strong_count(&self.data) == 1
     }
 
-    /// COW: clone data if shared, return mutable access
-    pub fn make_mut(&mut self) -> &mut Bytes {
+    /// Get mutable access, cloning data if shared (COW)
+    pub fn make_data_mut(&mut self) -> &mut Bytes {
         Arc::make_mut(&mut self.data)
     }
 }
@@ -111,20 +112,31 @@ impl EmberStorage {
 
 Benefits:
 
-- Cheap clones (`Arc::clone` is just refcount increment)
-- Thread-safe sharing (`Arc` is `Send + Sync`)
-- COW via `Arc::make_mut` (clones only when shared)
-- `is_unique()` enables smarter in-place decisions
+- **O(1) cloning**: `Arc::clone` is just a refcount increment
+- **Thread-safe sharing**: `Arc` is `Send + Sync`
+- **COW semantics**: `Arc::make_mut` clones only when shared
+- **Smart in-place ops**: `is_unique()` enables mutation without allocation
 
-This would enable the pattern:
+This enables the optimization pattern used throughout:
 
 ```rust
-if storage.is_unique() && tensor.is_contiguous() {
-    // mutate in place
-} else {
-    // allocate new
+fn add_inplace(mut lhs: EmberTensor, rhs: &EmberTensor) -> EmberTensor {
+    if lhs.is_unique() && lhs.is_contiguous_at_offset_zero() {
+        // Mutate in place - no allocation needed
+        let storage = lhs.make_data_mut();
+        // ... perform addition ...
+        lhs
+    } else {
+        // Allocate new buffer
+        add_alloc(&lhs, rhs)
+    }
 }
 ```
+
+Performance impact (vs previous non-Arc implementation):
+- Binary ops: **2.6-4.2x faster** than NdArray (was 1.4-1.8x)
+- Scalar ops: **2.6x faster** (was 1.8x)
+- Memory: 3x less allocation for binary ops (4.2 MB vs 12.6 MB for 1M elements)
 
 ---
 
@@ -172,14 +184,15 @@ Many operations are zero-copy (metadata changes only):
 
 ### Tensor
 
-Uses `Bytes` from burn-std directly (aligned, zero-copy capable):
+Uses `Arc<Bytes>` for O(1) cloning with COW semantics:
 
 ```rust
+use std::sync::Arc;
 use burn_std::Bytes;
 use burn_backend::DType;
 
 pub struct EmberTensor {
-    data: Bytes,
+    data: Arc<Bytes>,  // O(1) clone, COW via Arc::make_mut
     layout: Layout,
     dtype: DType,
 }
@@ -413,22 +426,33 @@ where
 
 ### Linear Algebra
 
-faer-rs for matrix operations (pure Rust, WASM-compatible):
+gemm crate for matrix multiplication with rayon parallelism:
 
 ```rust
-use faer::{MatRef, MatMut};
+use gemm::{gemm, Parallelism};
 
-pub fn matmul<T: faer::RealField>(
-    a: MatRef<'_, T>,
-    b: MatRef<'_, T>,
-    out: MatMut<'_, T>,
-) {
-    faer::linalg::matmul::matmul(
-        out, a, b, None, T::one(),
-        faer::Parallelism::Rayon(0)
-    );
+pub fn matmul_f32(lhs: &[f32], rhs: &[f32], out: &mut [f32], m: usize, n: usize, k: usize) {
+    let parallelism = if m * n * k >= 192 * 192 * 192 {
+        Parallelism::Rayon(0)  // Use all available threads
+    } else {
+        Parallelism::None
+    };
+
+    unsafe {
+        gemm(
+            m, n, k,
+            out.as_mut_ptr(), n as isize, 1,
+            1.0,  // alpha
+            lhs.as_ptr(), k as isize, 1,
+            rhs.as_ptr(), n as isize, 1,
+            0.0,  // beta
+            parallelism,
+        );
+    }
 }
 ```
+
+Performance: 1.3-3.4x faster than NdArray (which uses matrixmultiply crate).
 
 ---
 
@@ -438,10 +462,11 @@ pub fn matmul<T: faer::RealField>(
 
 | Optimization               | Benefit                             | Notes                                        |
 | -------------------------- | ----------------------------------- | -------------------------------------------- |
+| **Arc-based COW**          | O(1) clone, 2.6-4.2x faster ops     | `is_unique()` enables true in-place mutation |
 | **SIMD (NEON)**            | ~1.5-1.7x for contiguous ops        | In-place mutation avoids allocation overhead |
 | **Rayon parallelism**      | Scales with cores for large tensors | Threshold: 4M elements (memory-bound ops)    |
 | **Row-based 2D iteration** | 5.9x faster for transposed tensors  | Replaces per-element StridedIter             |
-| **In-place mutation**      | Eliminates allocation               | When lhs is contiguous at offset 0           |
+| **In-place mutation**      | Eliminates allocation               | When tensor is unique and contiguous         |
 
 ### Considered but Skipped
 
@@ -466,12 +491,15 @@ execute 100+ FLOPs in the time it takes to load one cache line from RAM. This me
 
 ## Zero-Copy Loading
 
-`Bytes` from burn-std supports zero-copy scenarios (mmap, external buffers). `EmberTensor` inherits
-this directly.
+`Bytes` from burn-std supports zero-copy scenarios (mmap, external buffers). `EmberTensor` wraps
+this in `Arc` for cheap cloning while preserving zero-copy capabilities.
 
 ## Thread Safety
 
-`Bytes` handles ownership semantics (clone-on-write). No additional machinery needed.
+`Arc<Bytes>` provides thread-safe sharing with automatic COW:
+- `Arc` is `Send + Sync` for safe cross-thread sharing
+- `Arc::make_mut` triggers copy only when data is shared
+- `Arc::strong_count` enables `is_unique()` checks for in-place optimization
 
 ---
 
@@ -489,7 +517,7 @@ this directly.
 - Comparisons: equal, greater, less
 - Shape: reshape, transpose, slice, concat
 - Reductions: sum, mean, max, min
-- Matmul via faer-rs
+- Matmul via gemm crate
 
 ### Phase 3: Module Operations
 
@@ -538,10 +566,11 @@ src/
 
 ## Dependencies
 
-| Crate        | Purpose                    |
-| ------------ | -------------------------- |
-| burn-backend | Core types, Backend trait  |
-| burn-std     | Bytes, utilities           |
-| faer         | Linear algebra (pure Rust) |
-| half         | f16/bf16 types             |
-| rayon        | Parallelism (optional)     |
+| Crate        | Purpose                              |
+| ------------ | ------------------------------------ |
+| burn-backend | Core types, Backend trait            |
+| burn-std     | Bytes, utilities                     |
+| gemm         | Matrix multiplication (pure Rust)    |
+| pulp         | Portable SIMD (used for reductions)  |
+| half         | f16/bf16 types                       |
+| rayon        | Parallelism (default feature)        |
