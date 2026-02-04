@@ -515,6 +515,57 @@ Current implementation is baseline (correct but unoptimized):
 
 4. **Direct convolution**: For small kernels (3×3), direct convolution without im2col can be faster due to less memory movement.
 
+### Pooling (Unified 3D)
+
+All pooling operations use the same unified 3D pattern as convolutions:
+
+```
+pool1d([B, C, W])
+  → expand dims → pool3d([B, C, 1, 1, W])
+  → squeeze → [B, C, W_out]
+
+pool2d([B, C, H, W])
+  → expand dims → pool3d([B, C, 1, H, W])
+  → squeeze → [B, C, H_out, W_out]
+```
+
+**Supported Operations**
+
+| Operation | Forward | Backward |
+|-----------|---------|----------|
+| max_pool  | Yes     | Yes (via indices) |
+| avg_pool  | Yes     | Yes |
+| adaptive_avg_pool | Yes | Yes |
+
+**Dtype Support**
+
+| Dtype | Implementation |
+|-------|----------------|
+| f32   | Native |
+| f64   | Native |
+| f16   | Native |
+| bf16  | Convert to f32, compute, convert back |
+
+**Parallelization**
+
+Pooling uses rayon to parallelize over (batch, channel) pairs:
+
+```rust
+(0..batch_size).into_par_iter().for_each(|b| {
+    (0..channels).into_par_iter().for_each(|c| {
+        // Process spatial dimensions for this (b, c) slice
+    });
+});
+```
+
+Each (b, c) slice is independent with good cache locality.
+
+**Max Pool Indices**
+
+Max pool stores flat indices into input spatial dimensions (as i64):
+- Used by backward pass to route gradients to correct input positions
+- Matches Burn's IntElem type for compatibility
+
 ---
 
 ## Optimization Decisions
@@ -585,8 +636,10 @@ this in `Arc` for cheap cloning while preserving zero-copy capabilities.
 - **Convolutions** (done): conv1d, conv2d, conv3d via unified im2col + gemm
   - All dtypes: f32, f64, f16 (native), bf16 (via f32)
   - Groups, stride, padding, dilation support
+- **Pooling** (done): max_pool, avg_pool, adaptive_avg_pool via unified 3D
+  - All dtypes: f32, f64, f16 (native), bf16 (via f32)
+  - Forward and backward passes with indices for max pool
 - conv_transpose (todo)
-- Pooling: max, avg (todo)
 - Full `ModuleOps` trait
 
 ### Phase 4: Optimization

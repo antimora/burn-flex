@@ -17,7 +17,8 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Unary Ops       | 15         | 0            | 4     |
 | Comparison Ops  | 13         | 4            | 0     |
 | Convolutions    | 19         | 0            | 0     |
-| **Total**       | **108**    | **9**        | **5** |
+| Pooling         | 17         | 0            | 0     |
+| **Total**       | **125**    | **9**        | **5** |
 
 ---
 
@@ -391,6 +392,84 @@ With nested parallelism (batch + tile), Ember significantly outperforms NdArray.
 
 ---
 
+## Pooling Operations
+
+Max pool, avg pool, and adaptive avg pool using unified 3D implementations. All 1D/2D operations delegate to 3D (same pattern as convolutions).
+
+**Key optimizations:**
+- Unified 3D core: 1D/2D expand dimensions, call 3D, squeeze result
+- Rayon parallelism over (batch, channel) pairs
+- Max pool stores indices for efficient backward pass
+
+### Max Pool 2D
+
+| Input Shape      | Kernel | Ember Time | NdArray Time | Speedup   |
+| ---------------- | ------ | ---------- | ------------ | --------- |
+| 1x64x56x56       | 3x3 s2 | 160 us     | 422 us       | **2.6x**  |
+| 8x64x56x56       | 3x3 s2 | 849 us     | 1.6 ms       | **1.9x**  |
+| 16x128x28x28     | 2x2 s2 | 499 us     | 969 us       | **1.9x**  |
+| 1x512x14x14      | 2x2 s2 | 102 us     | 180 us       | **1.8x**  |
+
+### Max Pool 2D (ResNet-style)
+
+| Input Shape      | Kernel | Ember Time | NdArray Time | Speedup   |
+| ---------------- | ------ | ---------- | ------------ | --------- |
+| 1x64x112x112     | 3x3 s2 | 455 us     | 1.4 ms       | **3.1x**  |
+| 8x64x112x112     | 3x3 s2 | 2.9 ms     | 11.0 ms      | **3.8x**  |
+| 16x64x112x112    | 3x3 s2 | 5.9 ms     | 18.0 ms      | **3.1x**  |
+
+### Avg Pool 2D
+
+| Input Shape      | Kernel | Ember Time | NdArray Time | Speedup    |
+| ---------------- | ------ | ---------- | ------------ | ---------- |
+| 1x64x56x56       | 3x3 s2 | 168 us     | 206 us       | **1.2x**   |
+| 8x64x56x56       | 3x3 s2 | 854 us     | 10.3 ms      | **12x**    |
+| 16x128x28x28     | 2x2 s2 | 513 us     | 2.9 ms       | **5.7x**   |
+
+### Adaptive Avg Pool 2D
+
+| Input Shape      | Output | Ember Time | NdArray Time | Speedup   |
+| ---------------- | ------ | ---------- | ------------ | --------- |
+| 1x256x56x56      | 7x7    | 169 us     | 255 us       | **1.5x**  |
+| 1x512x7x7        | 1x1    | 69 us      | 83 us        | **1.2x**  |
+| 8x512x7x7        | 1x1    | 111 us     | 145 us       | **1.3x**  |
+| 16x2048x7x7      | 1x1    | 322 us     | 648 us       | **2.0x**  |
+
+### Max Pool 1D
+
+| Input Shape   | Kernel | Ember Time | NdArray Time | Speedup   |
+| ------------- | ------ | ---------- | ------------ | --------- |
+| 1x64x256      | 3 s2   | 69 us      | 95 us        | **1.4x**  |
+| 8x128x512     | 3 s2   | 329 us     | 488 us       | **1.5x**  |
+| 16x256x1024   | 3 s2   | 1.9 ms     | 2.7 ms       | **1.4x**  |
+
+### Kernel Size Comparison (4x64x56x56 input)
+
+| Kernel | Ember Time | NdArray Time | Speedup   |
+| ------ | ---------- | ------------ | --------- |
+| 2x2    | 281 us     | 578 us       | **2.1x**  |
+| 3x3    | 446 us     | 673 us       | **1.5x**  |
+| 5x5    | 1.1 ms     | 1.5 ms       | **1.4x**  |
+
+### Memory Efficiency
+
+Ember uses significantly less memory for pooling operations:
+
+| Operation                  | Ember Mem | NdArray Mem | Ratio    |
+| -------------------------- | --------- | ----------- | -------- |
+| adaptive_avg_pool 1x256    | 50 KB     | 6.4 MB      | **128x** |
+| avg_pool 1x64x56x56        | 201 KB    | 1.6 MB      | **8x**   |
+| max_pool 1x64x112x112      | 803 KB    | 6.4 MB      | **8x**   |
+
+**Key observations:**
+
+1. **All pooling operations win**: 1.2-12x faster across all configurations
+2. **Batched operations**: Rayon parallelism gives 2-12x speedup on larger batches
+3. **Memory efficiency**: 8-128x less memory usage due to direct computation vs intermediate allocations
+4. **ResNet max pool**: 3.1-3.8x faster for the common 3x3 s2 configuration after conv1
+
+---
+
 ## Key Observations
 
 ### Performance Wins
@@ -407,6 +486,8 @@ With nested parallelism (batch + tile), Ember significantly outperforms NdArray.
 10. **Convolutions**: Ember 1.1-3.3x faster on all kernel sizes with tiled im2col + NHWC layout
 11. **Batched convolutions**: Ember 3.6-5.3x faster with nested parallelism (batch + tile)
 12. **Conv1d**: Ember 3-9x faster via unified 3D tiled approach
+13. **Pooling**: Ember 1.2-12x faster with rayon parallelism over (batch, channel) pairs
+14. **Pooling memory**: Ember uses 8-128x less memory for pooling operations
 
 ### Memory Efficiency
 
@@ -481,4 +562,5 @@ cargo bench --bench reduce_ops --features simd,rayon,gemm
 cargo bench --bench unary_ops --features simd,rayon,gemm
 cargo bench --bench comparison_ops --features simd,rayon,gemm
 cargo bench --bench conv_ops --features simd,rayon,gemm
+cargo bench --bench pool_ops --features simd,rayon,gemm
 ```

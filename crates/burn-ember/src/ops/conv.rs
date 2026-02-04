@@ -309,6 +309,7 @@ pub fn conv3d_bf16(
 /// - Reduces memory usage (smaller im2col buffer per tile)
 /// - Enables tile-level parallelism
 /// - Improves cache utilization
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + Sync>(
     x: EmberTensor,
     weight: EmberTensor,
@@ -1118,6 +1119,7 @@ fn conv3d_1x1_f16(
 // Bias addition
 // ============================================================================
 
+#[allow(clippy::needless_range_loop)]
 fn add_bias<T: Copy>(
     output: &mut [T],
     bias: &[T],
