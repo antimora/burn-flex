@@ -45,3 +45,7 @@ harness = false
 [[bench]]
 name = "slice_ops"
 harness = false
+
+[[bench]]
+name = "reduce_ops"
+harness = false
