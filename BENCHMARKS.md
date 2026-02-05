@@ -2,7 +2,7 @@
 
 Benchmarks comparing burn-ember against burn-ndarray on Apple M3 Max.
 
-**Date**: 2026-02-04 **Platform**: darwin (aarch64) **Features**: simd, rayon, gemm
+**Date**: 2026-02-05 **Platform**: darwin (aarch64) **Features**: simd, rayon, gemm
 
 ---
 
@@ -12,7 +12,9 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M3 Max.
 | --------------- | ---------- | ------------ | ----- |
 | Binary Ops      | 14         | 0            | 0     |
 | Int Binary Ops  | 12         | 0            | 1     |
-| Matrix Multiply | 16         | 5            | 1     |
+| Int Cast        | 4          | 0            | 0     |
+| Int Random      | 0          | 0            | 4     |
+| Matrix Multiply | 20         | 5            | 1     |
 | Slice Ops       | 18         | 0            | 0     |
 | Reduce Ops      | 16         | 0            | 0     |
 | Cumulative Ops  | 14         | 1            | 0     |
@@ -24,7 +26,7 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M3 Max.
 | Conv Transpose  | 14         | 0            | 0     |
 | Interpolate     | 15         | 0            | 0     |
 | Cross/Unfold    | 12         | 0            | 0     |
-| **Total**       | **205**    | **10**       | **6** |
+| **Total**       | **213**    | **10**       | **10**|
 
 ---
 
@@ -109,6 +111,39 @@ Integer element-wise operations using i64 dtype. Uses same in-place optimization
 
 ---
 
+## Int Cast Operations
+
+Integer type casting between i64, i32, i16, i8. Ember uses direct memory mapping; NdArray performs
+bounds checking which adds overhead.
+
+| Operation | Size      | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | --------- | ---------- | ------------ | -------- | --------- | ----------- |
+| i64→i8    | 256x256   | 6 us       | 37 us        | **6.2x** | 66 KB     | 1.1 MB      |
+| i64→i32   | 64x64     | 0.36 us    | 2.6 us       | **7.2x** | 16 KB     | 82 KB       |
+| i64→i32   | 256x256   | 7.8 us     | 37 us        | **4.7x** | 262 KB    | 1.3 MB      |
+| i64→i32   | 1024x1024 | 124 us     | 631 us       | **5.1x** | 4.2 MB    | 21 MB       |
+
+**Key observation**: Ember is 4.7-7.2x faster on int cast operations due to direct memory iteration
+without bounds checking overhead. Memory usage is also significantly lower.
+
+---
+
+## Int Random Operations
+
+Random integer tensor generation using uniform distribution.
+
+| Operation | Size           | Ember Time | NdArray Time | Speedup  |
+| --------- | -------------- | ---------- | ------------ | -------- |
+| uniform   | 64x64          | 44 us      | 43 us        | 1.0x     |
+| uniform   | 256x256        | 714 us     | 693 us       | 1.0x     |
+| uniform   | 1024x1024      | 10.9 ms    | 11.2 ms      | 1.0x     |
+| uniform   | 16x128x128     | 2.73 ms    | 2.83 ms      | 1.0x     |
+
+**Key observation**: Both backends use similar RNG implementations (ChaCha8), so performance is
+nearly identical. The small differences are within noise margin.
+
+---
+
 ## Matrix Multiplication
 
 Using gemm crate with rayon parallelism for large matrices.
@@ -158,6 +193,19 @@ Using gemm crate with rayon parallelism for large matrices.
 | 512x512 | 119 ms     | 112 ms       | 0.9x     | 2.1 MB    | 6.3 MB      |
 
 Note: Integer matmul uses naive O(n^3) implementation without SIMD; both backends are similar.
+
+### Broadcast Matmul (f32)
+
+Broadcasting batch dimensions: [1, M, K] x [B, K, N] -> [B, M, N]
+
+| Shape                          | Ember Time | NdArray Time | Speedup  |
+| ------------------------------ | ---------- | ------------ | -------- |
+| [1, 64, 64] x [8, 64, 64]      | 50 us      | 83 us        | **1.7x** |
+| [8, 64, 64] x [1, 64, 64]      | 45 us      | 74 us        | **1.6x** |
+| [2, 1, 32, 32] x [1, 4, 32, 32] | 7 us      | 42 us        | **6.0x** |
+| [4, 1, 64, 64] x [1, 4, 64, 64] | 55 us     | 88 us        | **1.6x** |
+
+Note: 4D broadcast with [2,1] x [1,4] -> [2,4] is particularly efficient due to batch index mapping optimization.
 
 ---
 
@@ -849,6 +897,8 @@ avoiding unnecessary copies.
 25. **Select/select_add**: Ember 2-8x faster with bulk row copies and parallelization threshold
 26. **Cross product**: Ember 1.7-2.1x faster with slice-based component extraction
 27. **Unfold**: Ember 1,000-155,000x faster with zero-copy strided views (O(1) vs O(n) data copying)
+28. **Int cast**: Ember 4.7-7.2x faster with direct memory iteration (no bounds checking)
+29. **Broadcast matmul**: Ember 1.6-6.0x faster with efficient batch index mapping
 
 ### Memory Efficiency
 
@@ -923,6 +973,7 @@ The fix replaced pulp-based sum with 8-fold unrolled loops:
 # All benchmarks
 cargo bench --bench binary_ops --features simd,rayon,gemm
 cargo bench --bench matmul --features simd,rayon,gemm
+cargo bench --bench int_ops --features simd,rayon,gemm
 cargo bench --bench slice_ops --features simd,rayon,gemm
 cargo bench --bench reduce_ops --features simd,rayon,gemm
 cargo bench --bench cumulative_ops --features simd,rayon,gemm

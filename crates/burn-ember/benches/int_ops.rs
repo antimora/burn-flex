@@ -22,7 +22,8 @@ fn main() {
 
 fn make_int_tensor<B: Backend>(shape: &[usize]) -> Tensor<B, 2, Int> {
     let size: usize = shape.iter().product();
-    let data: Vec<i64> = (0..size).map(|i| (i % 10000) as i64 - 5000).collect();
+    // Use values that fit in i8 (-128 to 127) so all casts work
+    let data: Vec<i64> = (0..size).map(|i| (i % 200) as i64 - 100).collect();
     Tensor::from_data(TensorData::new(data, shape.to_vec()), &Default::default())
 }
 
@@ -70,12 +71,6 @@ macro_rules! bench_cast_backend {
                     bencher.bench(|| t.clone().cast(DType::I8));
                 }
 
-                // Cast to unsigned
-                #[divan::bench]
-                fn cast_i64_to_u32_256x256(bencher: Bencher) {
-                    let t = make_int_tensor::<B>(&[256, 256]);
-                    bencher.bench(|| t.clone().cast(DType::U32));
-                }
             }
         }
     };
