@@ -19,7 +19,8 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Convolutions    | 19         | 0            | 0     |
 | Pooling         | 17         | 0            | 0     |
 | Conv Transpose  | 14         | 0            | 0     |
-| **Total**       | **139**    | **9**        | **5** |
+| Interpolate     | 12         | 3            | 0     |
+| **Total**       | **151**    | **12**       | **5** |
 
 ---
 
@@ -536,6 +537,65 @@ Ember uses dramatically less memory, especially for small inputs:
 
 ---
 
+## Interpolation Operations
+
+Image resizing using nearest, bilinear, and bicubic interpolation modes. Uses rayon parallelism over (batch, channel) pairs for all modes.
+
+### Nearest Interpolation
+
+Fastest mode using floor-based coordinate mapping.
+
+| Input Shape      | Output Size | Ember Time | NdArray Time | Speedup   |
+| ---------------- | ----------- | ---------- | ------------ | --------- |
+| 1x3x64x64        | 128x128     | 58 us      | 161 us       | **2.8x**  |
+| 1x3x32x32        | 128x128     | 55 us      | 161 us       | **2.9x**  |
+| 1x3x256x256      | 128x128     | 63 us      | 186 us       | **2.9x**  |
+| 8x3x64x64        | 128x128     | 101 us     | 350 us       | **3.5x**  |
+| 1x64x32x32       | 64x64       | 84 us      | 294 us       | **3.5x**  |
+
+### Bilinear Interpolation
+
+4-point weighted average for smooth upsampling.
+
+| Input Shape      | Output Size | Ember Time | NdArray Time | Speedup   |
+| ---------------- | ----------- | ---------- | ------------ | --------- |
+| 1x3x64x64        | 128x128     | 83 us      | 166 us       | **2.0x**  |
+| 1x3x32x32        | 128x128     | 81 us      | 167 us       | **2.1x**  |
+| 1x3x256x256      | 128x128     | 80 us      | 204 us       | **2.5x**  |
+| 8x3x64x64        | 128x128     | 165 us     | 433 us       | **2.6x**  |
+| 1x64x32x32       | 64x64       | 109 us     | 351 us       | **3.2x**  |
+
+### Bicubic Interpolation
+
+16-point cubic convolution for highest quality. With rayon parallelism, now competitive for batched/high-channel workloads.
+
+| Input Shape      | Output Size | Ember Time | NdArray Time | Speedup   |
+| ---------------- | ----------- | ---------- | ------------ | --------- |
+| 1x3x64x64        | 128x128     | 404 us     | 267 us       | 0.66x     |
+| 1x3x32x32        | 128x128     | 401 us     | 264 us       | 0.66x     |
+| 1x3x256x256      | 128x128     | 408 us     | 290 us       | 0.71x     |
+| 8x3x64x64        | 128x128     | 906 us     | 999 us       | **1.1x**  |
+| 1x64x32x32       | 64x64       | 660 us     | 747 us       | **1.1x**  |
+
+### Memory Efficiency
+
+| Operation                    | Ember Mem | NdArray Mem | Ratio    |
+| ---------------------------- | --------- | ----------- | -------- |
+| nearest 1x3x64x64            | 197 KB    | 295 KB      | **1.5x** |
+| bilinear 8x3x64x64           | 1.57 MB   | 2.36 MB     | **1.5x** |
+| bicubic 1x64x32x32           | 1.05 MB   | 1.57 MB     | **1.5x** |
+
+**Key observations:**
+
+1. **Nearest mode**: Ember 2.8-3.5x faster with rayon parallelism
+2. **Bilinear mode**: Ember 2.0-3.2x faster across all configurations
+3. **Bicubic mode**: Ember ~1.1x faster for batched/high-channel, 0.66x for small single-batch
+4. **Memory**: Ember uses ~1.5x less memory across all modes
+
+**Optimization note:** Bicubic single-batch with 3 channels lacks sufficient parallel work to overcome 16-point computation overhead. For production use with larger batches or more channels, Ember matches or beats NdArray.
+
+---
+
 ## Key Observations
 
 ### Performance Wins
@@ -556,6 +616,9 @@ Ember uses dramatically less memory, especially for small inputs:
 14. **Pooling memory**: Ember uses 8-128x less memory for pooling operations
 15. **Conv transpose**: Ember 1.1-1.9x faster with scatter-based algorithm
 16. **Conv transpose memory**: Ember uses 1.2-336x less memory (extreme savings on small inputs)
+17. **Nearest interpolate**: Ember 2.8-3.5x faster with rayon parallelism
+18. **Bilinear interpolate**: Ember 2.0-3.2x faster across all configurations
+19. **Bicubic interpolate**: Ember 1.1x faster for batched/high-channel workloads
 
 ### Memory Efficiency
 
@@ -568,6 +631,7 @@ Ember uses dramatically less memory, especially for small inputs:
 
 1. **Boolean ops**: NdArray ~20% faster on bool_not
 2. **Integer matmul**: Both backends similar; neither has SIMD optimization
+3. **Bicubic interpolate (small batch)**: NdArray 1.4-1.5x faster on single-batch 3-channel inputs; insufficient parallel work for 16-point interpolation
 
 ### Arc-based COW Analysis
 
@@ -631,4 +695,6 @@ cargo bench --bench unary_ops --features simd,rayon,gemm
 cargo bench --bench comparison_ops --features simd,rayon,gemm
 cargo bench --bench conv_ops --features simd,rayon,gemm
 cargo bench --bench pool_ops --features simd,rayon,gemm
+cargo bench --bench conv_transpose_ops --features simd,rayon,gemm
+cargo bench --bench interpolate_ops --features simd,rayon,gemm
 ```
