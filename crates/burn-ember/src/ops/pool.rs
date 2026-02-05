@@ -661,7 +661,7 @@ where
 
     let spatial_out = out_d * out_h * out_w;
     let x_data: &[T] = x.storage();
-    let kernel_volume = kernel_d * kernel_h * kernel_w;
+    let _kernel_volume = kernel_d * kernel_h * kernel_w;
 
     let output = {
         #[cfg(feature = "rayon")]
@@ -682,27 +682,47 @@ where
                                 let mut sum = zero;
                                 let mut count = 0usize;
 
+                                // Track count for count_include_pad (positions within padded bounds)
+                                let mut pad_count = 0usize;
+
                                 for kd in 0..kernel_d {
                                     let id = (od * stride_d + kd) as isize - pad_d as isize;
-                                    if id < 0 || id >= in_d as isize {
-                                        continue;
+                                    // Check if within padded bounds (not ceil_mode extension)
+                                    let id_in_bounds =
+                                        id >= -(pad_d as isize) && id < (in_d + pad_d) as isize;
+                                    if !id_in_bounds {
+                                        continue; // ceil_mode extension - skip entirely
                                     }
-                                    let id = id as usize;
+                                    let id_valid = id >= 0 && id < in_d as isize;
 
                                     for kh in 0..kernel_h {
                                         let ih = (oh * stride_h + kh) as isize - pad_h as isize;
-                                        if ih < 0 || ih >= in_h as isize {
+                                        let ih_in_bounds =
+                                            ih >= -(pad_h as isize) && ih < (in_h + pad_h) as isize;
+                                        if !ih_in_bounds {
                                             continue;
                                         }
-                                        let ih = ih as usize;
+                                        let ih_valid = ih >= 0 && ih < in_h as isize;
 
                                         for kw in 0..kernel_w {
                                             let iw = (ow * stride_w + kw) as isize - pad_w as isize;
-                                            if iw < 0 || iw >= in_w as isize {
+                                            let iw_in_bounds = iw >= -(pad_w as isize)
+                                                && iw < (in_w + pad_w) as isize;
+                                            if !iw_in_bounds {
                                                 continue;
                                             }
-                                            let iw = iw as usize;
 
+                                            // Position is within padded bounds
+                                            pad_count += 1;
+
+                                            let iw_valid = iw >= 0 && iw < in_w as isize;
+                                            if !id_valid || !ih_valid || !iw_valid {
+                                                continue; // In padding zone - count but don't add
+                                            }
+
+                                            let id = id as usize;
+                                            let ih = ih as usize;
+                                            let iw = iw as usize;
                                             let x_idx =
                                                 x_offset + id * in_h * in_w + ih * in_w + iw;
                                             sum = add_fn(sum, x_data[x_idx]);
@@ -712,9 +732,9 @@ where
                                 }
 
                                 let divisor = if count_include_pad {
-                                    kernel_volume
+                                    pad_count.max(1) // Positions within padded bounds
                                 } else {
-                                    count.max(1)
+                                    count.max(1) // Only actual valid positions
                                 };
 
                                 unsafe {
@@ -744,27 +764,47 @@ where
                                 let mut sum = zero;
                                 let mut count = 0usize;
 
+                                // Track count for count_include_pad (positions within padded bounds)
+                                let mut pad_count = 0usize;
+
                                 for kd in 0..kernel_d {
                                     let id = (od * stride_d + kd) as isize - pad_d as isize;
-                                    if id < 0 || id >= in_d as isize {
-                                        continue;
+                                    // Check if within padded bounds (not ceil_mode extension)
+                                    let id_in_bounds =
+                                        id >= -(pad_d as isize) && id < (in_d + pad_d) as isize;
+                                    if !id_in_bounds {
+                                        continue; // ceil_mode extension - skip entirely
                                     }
-                                    let id = id as usize;
+                                    let id_valid = id >= 0 && id < in_d as isize;
 
                                     for kh in 0..kernel_h {
                                         let ih = (oh * stride_h + kh) as isize - pad_h as isize;
-                                        if ih < 0 || ih >= in_h as isize {
+                                        let ih_in_bounds =
+                                            ih >= -(pad_h as isize) && ih < (in_h + pad_h) as isize;
+                                        if !ih_in_bounds {
                                             continue;
                                         }
-                                        let ih = ih as usize;
+                                        let ih_valid = ih >= 0 && ih < in_h as isize;
 
                                         for kw in 0..kernel_w {
                                             let iw = (ow * stride_w + kw) as isize - pad_w as isize;
-                                            if iw < 0 || iw >= in_w as isize {
+                                            let iw_in_bounds = iw >= -(pad_w as isize)
+                                                && iw < (in_w + pad_w) as isize;
+                                            if !iw_in_bounds {
                                                 continue;
                                             }
-                                            let iw = iw as usize;
 
+                                            // Position is within padded bounds
+                                            pad_count += 1;
+
+                                            let iw_valid = iw >= 0 && iw < in_w as isize;
+                                            if !id_valid || !ih_valid || !iw_valid {
+                                                continue; // In padding zone - count but don't add
+                                            }
+
+                                            let id = id as usize;
+                                            let ih = ih as usize;
+                                            let iw = iw as usize;
                                             let x_idx =
                                                 x_offset + id * in_h * in_w + ih * in_w + iw;
                                             sum = add_fn(sum, x_data[x_idx]);
@@ -774,9 +814,9 @@ where
                                 }
 
                                 let divisor = if count_include_pad {
-                                    kernel_volume
+                                    pad_count.max(1) // Positions within padded bounds
                                 } else {
-                                    count.max(1)
+                                    count.max(1) // Only actual valid positions
                                 };
 
                                 output[out_idx] = div_fn(sum, divisor);

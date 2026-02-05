@@ -133,21 +133,41 @@ impl ModuleOps<Ember> for Ember {
         stride: [usize; 2],
         padding: [usize; 2],
         count_include_pad: bool,
-        _divisor_override: bool,
+        ceil_mode: bool,
     ) -> FloatTensor<Ember> {
         match x.dtype() {
-            DType::F32 => {
-                pool::avg_pool2d_f32(x, kernel_size, stride, padding, count_include_pad, false)
-            }
-            DType::F64 => {
-                pool::avg_pool2d_f64(x, kernel_size, stride, padding, count_include_pad, false)
-            }
-            DType::F16 => {
-                pool::avg_pool2d_f16(x, kernel_size, stride, padding, count_include_pad, false)
-            }
-            DType::BF16 => {
-                pool::avg_pool2d_bf16(x, kernel_size, stride, padding, count_include_pad, false)
-            }
+            DType::F32 => pool::avg_pool2d_f32(
+                x,
+                kernel_size,
+                stride,
+                padding,
+                count_include_pad,
+                ceil_mode,
+            ),
+            DType::F64 => pool::avg_pool2d_f64(
+                x,
+                kernel_size,
+                stride,
+                padding,
+                count_include_pad,
+                ceil_mode,
+            ),
+            DType::F16 => pool::avg_pool2d_f16(
+                x,
+                kernel_size,
+                stride,
+                padding,
+                count_include_pad,
+                ceil_mode,
+            ),
+            DType::BF16 => pool::avg_pool2d_bf16(
+                x,
+                kernel_size,
+                stride,
+                padding,
+                count_include_pad,
+                ceil_mode,
+            ),
             dtype => panic!("avg_pool2d: unsupported dtype {:?}", dtype),
         }
     }
