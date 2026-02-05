@@ -8,20 +8,22 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 
 ## Summary
 
-| Category        | Ember Wins | NdArray Wins | Ties  |
-| --------------- | ---------- | ------------ | ----- |
-| Binary Ops      | 11         | 0            | 0     |
-| Int Binary Ops  | 12         | 0            | 1     |
-| Matrix Multiply | 16         | 5            | 1     |
-| Slice Ops       | 18         | 0            | 0     |
-| Reduce Ops      | 16         | 0            | 0     |
-| Unary Ops       | 15         | 0            | 4     |
-| Comparison Ops  | 13         | 4            | 0     |
-| Convolutions    | 19         | 0            | 0     |
-| Pooling         | 17         | 0            | 0     |
-| Conv Transpose  | 14         | 0            | 0     |
-| Interpolate     | 15         | 0            | 0     |
-| **Total**       | **166**    | **9**        | **6** |
+| Category         | Ember Wins | NdArray Wins | Ties  |
+| ---------------- | ---------- | ------------ | ----- |
+| Binary Ops       | 14         | 0            | 0     |
+| Int Binary Ops   | 12         | 0            | 1     |
+| Matrix Multiply  | 16         | 5            | 1     |
+| Slice Ops        | 18         | 0            | 0     |
+| Reduce Ops       | 16         | 0            | 0     |
+| Cumulative Ops   | 14         | 1            | 0     |
+| Gather/Scatter   | 10         | 0            | 0     |
+| Unary Ops        | 15         | 0            | 4     |
+| Comparison Ops   | 13         | 4            | 0     |
+| Convolutions     | 19         | 0            | 0     |
+| Pooling          | 17         | 0            | 0     |
+| Conv Transpose   | 14         | 0            | 0     |
+| Interpolate      | 15         | 0            | 0     |
+| **Total**        | **193**    | **10**       | **6** |
 
 ---
 
@@ -55,6 +57,16 @@ mutation for unique tensors.
 | ---------- | ---------- | ---------- | ------------ | -------- | --------- | ----------- |
 | add_scalar | large (1M) | 74 us      | 194 us       | **2.6x** | 4.2 MB    | 8.4 MB      |
 | mul_scalar | large (1M) | 76 us      | 197 us       | **2.6x** | 4.2 MB    | 8.4 MB      |
+
+### Power and Atan2 Operations
+
+| Operation    | Size         | Ember Time | NdArray Time | Speedup  |
+| ------------ | ------------ | ---------- | ------------ | -------- |
+| powf         | medium (64K) | 201 us     | 222 us       | **1.1x** |
+| powf         | large (1M)   | 3.1 ms     | 3.5 ms       | **1.1x** |
+| powf_scalar  | large (1M)   | 3.0 ms     | 3.4 ms       | **1.1x** |
+| atan2        | medium (64K) | 146 us     | 162 us       | **1.1x** |
+| atan2        | large (1M)   | 2.3 ms     | 2.7 ms       | **1.2x** |
 
 **Key improvement**: Arc-based COW now enables true in-place mutation when tensor is uniquely owned.
 This nearly doubles performance vs previous implementation (was 1.4-1.8x, now 2.6-4.2x).
@@ -254,6 +266,105 @@ Sum, mean, argmax reductions with 8-fold unrolled loops (LLVM auto-vectorizes).
 | 1K (flat) | -   | 3.4 us     | 4.2 us       | **1.2x** | 104 B     | 8.3 KB      |
 | 256x256   | 1   | 221 us     | 250 us       | **1.1x** | 2.2 KB    | 524 KB      |
 | 1024x1024 | 1   | 3.34 ms    | 4.0 ms       | **1.2x** | 8.3 KB    | 8.4 MB      |
+
+---
+
+## Cumulative Operations
+
+Cumulative sum, product, min, and max along a dimension. Ember's straightforward slice-based iteration with direct storage access significantly outperforms NdArray.
+
+### Cumsum
+
+| Shape        | Dim | Ember Time | NdArray Time | Speedup   |
+| ------------ | --- | ---------- | ------------ | --------- |
+| 1K           | 0   | 0.9 us     | 67 us        | **~75x**  |
+| 64K          | 0   | 49 us      | 4.4 ms       | **~90x**  |
+| 1M           | 0   | 725 us     | 71 ms        | **~98x**  |
+| 256x256      | 0   | 200 us     | 40 us        | 0.2x      |
+| 256x256      | 1   | 44 us      | 211 us       | **4.8x**  |
+| 1024x1024    | 1   | 764 us     | 6.8 ms       | **8.9x**  |
+
+### Cumprod
+
+| Shape     | Dim | Ember Time | NdArray Time | Speedup   |
+| --------- | --- | ---------- | ------------ | --------- |
+| 1K        | 0   | 1.3 us     | 74 us        | **~57x**  |
+| 256x256   | 1   | 68 us      | 223 us       | **3.3x**  |
+
+### Cummin
+
+| Shape     | Dim | Ember Time | NdArray Time | Speedup   |
+| --------- | --- | ---------- | ------------ | --------- |
+| 1K        | 0   | 0.9 us     | 76 us        | **~85x**  |
+| 256x256   | 1   | 39 us      | 219 us       | **5.6x**  |
+| 1024x1024 | 1   | 590 us     | 6.6 ms       | **11x**   |
+
+### Cummax
+
+| Shape     | Dim | Ember Time | NdArray Time | Speedup   |
+| --------- | --- | ---------- | ------------ | --------- |
+| 1K        | 0   | 1.0 us     | 75 us        | **~75x**  |
+| 256x256   | 1   | 40 us      | 129 us       | **3.2x**  |
+| 1024x1024 | 1   | 621 us     | 4.4 ms       | **7.1x**  |
+
+### 3D Cumsum (Batched)
+
+| Shape        | Dim | Ember Time | NdArray Time | Speedup  |
+| ------------ | --- | ---------- | ------------ | -------- |
+| 32x64x64     | 1   | 86 us      | 97 us        | **1.1x** |
+| 32x64x64     | 2   | 80 us      | 265 us       | **3.3x** |
+
+**Key observation**: Ember achieves 50-100x speedup on 1D cumulative ops due to direct storage iteration vs NdArray's overhead. On 2D operations, Ember is 3-11x faster for dim=1 (inner dimension). The one regression (256x256 dim=0) is due to cache access patterns favoring NdArray's layout for outer dimension accumulation.
+
+---
+
+## Gather/Scatter Operations
+
+Indexed tensor operations for selecting and scattering values along dimensions.
+
+**Key optimizations:**
+- Specialized 2D implementations with direct indexing (no coordinate calculation overhead)
+- Pre-computed row-major strides for N-D fallback
+- Bulk `copy_from_slice` for select dim=0 (row selection)
+- Adaptive parallelization: rayon only for tensors >= 256K elements (avoids overhead on small tensors)
+
+### Gather
+
+| Shape     | Dim | Ember Time | NdArray Time | Speedup   | Ember Mem | NdArray Mem |
+| --------- | --- | ---------- | ------------ | --------- | --------- | ----------- |
+| 256x256   | 0   | 20 us      | 155 us       | **7.8x**  | 131 KB    | 1.8 MB      |
+| 256x256   | 1   | 21 us      | 104 us       | **5.0x**  | 131 KB    | 1.8 MB      |
+| 1024x1024 | 1   | 143 us     | 1.54 ms      | **10.8x** | 2.1 MB    | 29.4 MB     |
+
+### Scatter Add
+
+| Shape     | Dim | Ember Time | NdArray Time | Speedup   | Ember Mem | NdArray Mem |
+| --------- | --- | ---------- | ------------ | --------- | --------- | ----------- |
+| 256x256   | 1   | 24 us      | 207 us       | **8.6x**  | 262 KB    | 2.2 MB      |
+| 1024x1024 | 1   | 375 us     | 3.17 ms      | **8.5x**  | 4.2 MB    | 35.7 MB     |
+
+### Select
+
+| Shape     | Dim | Ember Time | NdArray Time | Speedup   | Ember Mem | NdArray Mem |
+| --------- | --- | ---------- | ------------ | --------- | --------- | ----------- |
+| 256x256   | 0   | 3.1 us     | 24 us        | **7.7x**  | 131 KB    | 670 KB      |
+| 256x256   | 1   | 18 us      | 41 us        | **2.3x**  | 131 KB    | 670 KB      |
+| 1024x1024 | 0   | 113 us     | 214 us       | **1.9x**  | 2.1 MB    | 10.5 MB     |
+
+### Select Add
+
+| Shape     | Dim | Ember Time | NdArray Time | Speedup   | Ember Mem | NdArray Mem |
+| --------- | --- | ---------- | ------------ | --------- | --------- | ----------- |
+| 256x256   | 0   | 7.8 us     | 23 us        | **2.9x**  | 262 KB    | 789 KB      |
+| 1024x1024 | 0   | 106 us     | 283 us       | **2.7x**  | 4.2 MB    | 12.6 MB     |
+
+**Key observations:**
+
+1. **All operations now win**: Previous implementation was 10-20x slower; now 2-11x faster
+2. **Gather/scatter_add**: Largest gains (5-11x) from eliminating per-element Vec allocations
+3. **Select dim=0**: Bulk row copies with `copy_from_slice` give 7.7x speedup
+4. **Adaptive parallelization**: Threshold of 256K elements prevents rayon overhead on small tensors
+5. **Memory efficiency**: Ember uses 5-14x less memory (e.g., 131KB vs 1.8MB for gather 256x256)
 
 ---
 
@@ -655,6 +766,11 @@ Fastest mode using floor-based coordinate mapping.
 18. **Nearest interpolate**: Ember 2.7-3.8x faster with rayon parallelism
 19. **Bilinear interpolate**: Ember 1.7-2.6x faster across all configurations
 20. **Bicubic interpolate**: Ember 1.18-1.52x faster with adaptive parallelization
+21. **Cumulative ops (1D)**: Ember 50-100x faster due to direct storage iteration
+22. **Cumulative ops (2D dim=1)**: Ember 3-11x faster for inner dimension accumulation
+23. **powf/atan2**: Ember 1.1-1.2x faster with standard library implementations
+24. **Gather/scatter**: Ember 5-11x faster with specialized 2D paths and adaptive parallelization
+25. **Select/select_add**: Ember 2-8x faster with bulk row copies and parallelization threshold
 
 ### Memory Efficiency
 
@@ -668,6 +784,7 @@ Fastest mode using floor-based coordinate mapping.
 
 1. **Boolean ops**: NdArray ~20% faster on bool_not
 2. **Integer matmul**: Both backends similar; neither has SIMD optimization
+3. **Cumsum dim=0 on 2D**: NdArray 5x faster due to better cache access patterns for outer dimension
 
 ### Arc-based COW Analysis
 
@@ -727,6 +844,8 @@ cargo bench --bench binary_ops --features simd,rayon,gemm
 cargo bench --bench matmul --features simd,rayon,gemm
 cargo bench --bench slice_ops --features simd,rayon,gemm
 cargo bench --bench reduce_ops --features simd,rayon,gemm
+cargo bench --bench cumulative_ops --features simd,rayon,gemm
+cargo bench --bench gather_scatter_ops --features simd,rayon,gemm
 cargo bench --bench unary_ops --features simd,rayon,gemm
 cargo bench --bench comparison_ops --features simd,rayon,gemm
 cargo bench --bench conv_ops --features simd,rayon,gemm

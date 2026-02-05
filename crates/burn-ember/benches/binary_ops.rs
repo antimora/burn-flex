@@ -158,6 +158,52 @@ macro_rules! bench_backend {
                     bencher.bench(|| a.clone() * 2.0);
                 }
             }
+
+            // Powf operations
+            #[divan::bench_group(name = "powf")]
+            mod powf {
+                use super::*;
+
+                #[divan::bench]
+                fn medium(bencher: Bencher) {
+                    let a = make_tensor::<B>(MEDIUM);
+                    let b = make_tensor::<B>(MEDIUM);
+                    bencher.bench(|| a.clone().powf(b.clone()));
+                }
+
+                #[divan::bench]
+                fn large(bencher: Bencher) {
+                    let a = make_tensor::<B>(LARGE);
+                    let b = make_tensor::<B>(LARGE);
+                    bencher.bench(|| a.clone().powf(b.clone()));
+                }
+
+                #[divan::bench]
+                fn scalar_large(bencher: Bencher) {
+                    let a = make_tensor::<B>(LARGE);
+                    bencher.bench(|| a.clone().powf_scalar(2.5));
+                }
+            }
+
+            // Atan2 operations
+            #[divan::bench_group(name = "atan2")]
+            mod atan2 {
+                use super::*;
+
+                #[divan::bench]
+                fn medium(bencher: Bencher) {
+                    let a = make_tensor::<B>(MEDIUM);
+                    let b = make_tensor::<B>(MEDIUM);
+                    bencher.bench(|| a.clone().atan2(b.clone()));
+                }
+
+                #[divan::bench]
+                fn large(bencher: Bencher) {
+                    let a = make_tensor::<B>(LARGE);
+                    let b = make_tensor::<B>(LARGE);
+                    bencher.bench(|| a.clone().atan2(b.clone()));
+                }
+            }
         }
     };
 }

@@ -66,37 +66,37 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_gather(
-        _dim: usize,
-        _tensor: IntTensor<Ember>,
-        _indices: IntTensor<Ember>,
+        dim: usize,
+        tensor: IntTensor<Ember>,
+        indices: IntTensor<Ember>,
     ) -> IntTensor<Ember> {
-        todo!("int_gather")
+        crate::ops::gather_scatter::gather_i64(tensor, dim, indices)
     }
 
     fn int_scatter_add(
-        _dim: usize,
-        _tensor: IntTensor<Ember>,
-        _indices: IntTensor<Ember>,
-        _value: IntTensor<Ember>,
+        dim: usize,
+        tensor: IntTensor<Ember>,
+        indices: IntTensor<Ember>,
+        value: IntTensor<Ember>,
     ) -> IntTensor<Ember> {
-        todo!("int_scatter_add")
+        crate::ops::gather_scatter::scatter_add_i64(tensor, dim, indices, value)
     }
 
     fn int_select(
-        _tensor: IntTensor<Ember>,
-        _dim: usize,
-        _indices: IntTensor<Ember>,
+        tensor: IntTensor<Ember>,
+        dim: usize,
+        indices: IntTensor<Ember>,
     ) -> IntTensor<Ember> {
-        todo!("int_select")
+        crate::ops::gather_scatter::select_i64(tensor, dim, indices)
     }
 
     fn int_select_add(
-        _tensor: IntTensor<Ember>,
-        _dim: usize,
-        _indices: IntTensor<Ember>,
-        _value: IntTensor<Ember>,
+        tensor: IntTensor<Ember>,
+        dim: usize,
+        indices: IntTensor<Ember>,
+        value: IntTensor<Ember>,
     ) -> IntTensor<Ember> {
-        todo!("int_select_add")
+        crate::ops::gather_scatter::select_add_i64(tensor, dim, indices, value)
     }
 
     fn int_equal(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
@@ -251,20 +251,20 @@ impl IntTensorOps<Ember> for Ember {
         crate::ops::reduce::mean_dim(tensor, dim)
     }
 
-    fn int_cumsum(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_cumsum")
+    fn int_cumsum(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::cumulative::cumsum_i64(tensor, dim)
     }
 
-    fn int_cumprod(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_cumprod")
+    fn int_cumprod(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::cumulative::cumprod_i64(tensor, dim)
     }
 
-    fn int_cummin(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_cummin")
+    fn int_cummin(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::cumulative::cummin_i64(tensor, dim)
     }
 
-    fn int_cummax(_tensor: IntTensor<Ember>, _dim: usize) -> IntTensor<Ember> {
-        todo!("int_cummax")
+    fn int_cummax(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::cumulative::cummax_i64(tensor, dim)
     }
 
     fn int_argmax(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {

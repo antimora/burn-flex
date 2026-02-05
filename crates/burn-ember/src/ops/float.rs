@@ -160,37 +160,53 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_gather(
-        _dim: usize,
-        _tensor: FloatTensor<Ember>,
-        _indices: IntTensor<Ember>,
+        dim: usize,
+        tensor: FloatTensor<Ember>,
+        indices: IntTensor<Ember>,
     ) -> FloatTensor<Ember> {
-        todo!("float_gather")
+        match tensor.dtype() {
+            DType::F32 => crate::ops::gather_scatter::gather_f32(tensor, dim, indices),
+            DType::F64 => crate::ops::gather_scatter::gather_f64(tensor, dim, indices),
+            _ => panic!("float_gather: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 
     fn float_scatter_add(
-        _dim: usize,
-        _tensor: FloatTensor<Ember>,
-        _indices: IntTensor<Ember>,
-        _value: FloatTensor<Ember>,
+        dim: usize,
+        tensor: FloatTensor<Ember>,
+        indices: IntTensor<Ember>,
+        value: FloatTensor<Ember>,
     ) -> FloatTensor<Ember> {
-        todo!("float_scatter_add")
+        match tensor.dtype() {
+            DType::F32 => crate::ops::gather_scatter::scatter_add_f32(tensor, dim, indices, value),
+            DType::F64 => crate::ops::gather_scatter::scatter_add_f64(tensor, dim, indices, value),
+            _ => panic!("float_scatter_add: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 
     fn float_select(
-        _tensor: FloatTensor<Ember>,
-        _dim: usize,
-        _indices: IntTensor<Ember>,
+        tensor: FloatTensor<Ember>,
+        dim: usize,
+        indices: IntTensor<Ember>,
     ) -> FloatTensor<Ember> {
-        todo!("float_select")
+        match tensor.dtype() {
+            DType::F32 => crate::ops::gather_scatter::select_f32(tensor, dim, indices),
+            DType::F64 => crate::ops::gather_scatter::select_f64(tensor, dim, indices),
+            _ => panic!("float_select: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 
     fn float_select_add(
-        _tensor: FloatTensor<Ember>,
-        _dim: usize,
-        _indices: IntTensor<Ember>,
-        _value: FloatTensor<Ember>,
+        tensor: FloatTensor<Ember>,
+        dim: usize,
+        indices: IntTensor<Ember>,
+        value: FloatTensor<Ember>,
     ) -> FloatTensor<Ember> {
-        todo!("float_select_add")
+        match tensor.dtype() {
+            DType::F32 => crate::ops::gather_scatter::select_add_f32(tensor, dim, indices, value),
+            DType::F64 => crate::ops::gather_scatter::select_add_f64(tensor, dim, indices, value),
+            _ => panic!("float_select_add: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 
     fn float_slice(tensor: FloatTensor<Ember>, slices: &[Slice]) -> FloatTensor<Ember> {
@@ -301,24 +317,97 @@ impl FloatTensorOps<Ember> for Ember {
         crate::ops::reduce::mean_dim(tensor, dim)
     }
 
-    fn float_cumsum(_tensor: FloatTensor<Ember>, _dim: usize) -> FloatTensor<Ember> {
-        todo!("float_cumsum")
+    fn float_cumsum(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        match tensor.dtype() {
+            DType::F32 => crate::ops::cumulative::cumsum_f32(tensor, dim),
+            DType::F64 => crate::ops::cumulative::cumsum_f64(tensor, dim),
+            _ => panic!("float_cumsum: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 
-    fn float_cumprod(_tensor: FloatTensor<Ember>, _dim: usize) -> FloatTensor<Ember> {
-        todo!("float_cumprod")
+    fn float_cumprod(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        match tensor.dtype() {
+            DType::F32 => crate::ops::cumulative::cumprod_f32(tensor, dim),
+            DType::F64 => crate::ops::cumulative::cumprod_f64(tensor, dim),
+            _ => panic!("float_cumprod: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 
-    fn float_cummin(_tensor: FloatTensor<Ember>, _dim: usize) -> FloatTensor<Ember> {
-        todo!("float_cummin")
+    fn float_cummin(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        match tensor.dtype() {
+            DType::F32 => crate::ops::cumulative::cummin_f32(tensor, dim),
+            DType::F64 => crate::ops::cumulative::cummin_f64(tensor, dim),
+            _ => panic!("float_cummin: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 
-    fn float_cummax(_tensor: FloatTensor<Ember>, _dim: usize) -> FloatTensor<Ember> {
-        todo!("float_cummax")
+    fn float_cummax(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        match tensor.dtype() {
+            DType::F32 => crate::ops::cumulative::cummax_f32(tensor, dim),
+            DType::F64 => crate::ops::cumulative::cummax_f64(tensor, dim),
+            _ => panic!("float_cummax: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 
-    fn float_cast(_tensor: FloatTensor<Ember>, _dtype: FloatDType) -> FloatTensor<Ember> {
-        todo!("float_cast")
+    fn float_cast(tensor: FloatTensor<Ember>, dtype: FloatDType) -> FloatTensor<Ember> {
+        use crate::Layout;
+        use burn_std::{Bytes, bf16, f16};
+
+        let src_dtype = tensor.dtype();
+        let target_dtype = DType::from(dtype);
+
+        // No-op if already the same dtype
+        if src_dtype == target_dtype {
+            return tensor;
+        }
+
+        let tensor = tensor.to_contiguous();
+        let shape = tensor.layout().shape().clone();
+
+        // Convert to f64 intermediate, then to target
+        let f64_values: Vec<f64> = match src_dtype {
+            DType::F32 => {
+                let src: &[f32] = tensor.storage();
+                src.iter().map(|&v| v as f64).collect()
+            }
+            DType::F64 => {
+                let src: &[f64] = tensor.storage();
+                src.to_vec()
+            }
+            DType::F16 => {
+                let src: &[f16] = tensor.storage();
+                src.iter().map(|&v| v.to_f32() as f64).collect()
+            }
+            DType::BF16 => {
+                let src: &[bf16] = tensor.storage();
+                src.iter().map(|&v| v.to_f32() as f64).collect()
+            }
+            _ => panic!("float_cast: unsupported source dtype {:?}", src_dtype),
+        };
+
+        // Convert from f64 to target dtype
+        match target_dtype {
+            DType::F32 => {
+                let result: Vec<f32> = f64_values.iter().map(|&v| v as f32).collect();
+                let bytes = Bytes::from_elems(result);
+                EmberTensor::new(bytes, Layout::contiguous(shape), DType::F32)
+            }
+            DType::F64 => {
+                let bytes = Bytes::from_elems(f64_values);
+                EmberTensor::new(bytes, Layout::contiguous(shape), DType::F64)
+            }
+            DType::F16 => {
+                let result: Vec<f16> = f64_values.iter().map(|&v| f16::from_f64(v)).collect();
+                let bytes = Bytes::from_elems(result);
+                EmberTensor::new(bytes, Layout::contiguous(shape), DType::F16)
+            }
+            DType::BF16 => {
+                let result: Vec<bf16> = f64_values.iter().map(|&v| bf16::from_f64(v)).collect();
+                let bytes = Bytes::from_elems(result);
+                EmberTensor::new(bytes, Layout::contiguous(shape), DType::BF16)
+            }
+            _ => panic!("float_cast: unsupported target dtype {:?}", target_dtype),
+        }
     }
 
     fn float_exp(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
@@ -333,12 +422,13 @@ impl FloatTensorOps<Ember> for Ember {
         unary::log1p(tensor)
     }
 
-    fn float_powf(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_powf")
+    fn float_powf(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        binary_op(lhs, rhs, |a: f32, b| a.powf(b), |a: f64, b| a.powf(b))
     }
 
-    fn float_powf_scalar_impl(_tensor: FloatTensor<Ember>, _value: Scalar) -> FloatTensor<Ember> {
-        todo!("float_powf_scalar_impl")
+    fn float_powf_scalar_impl(tensor: FloatTensor<Ember>, value: Scalar) -> FloatTensor<Ember> {
+        let exp = value.to_f64().unwrap();
+        scalar_op(tensor, exp, |a: f32, b| a.powf(b), |a: f64, b| a.powf(b))
     }
 
     fn float_sqrt(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
@@ -397,8 +487,8 @@ impl FloatTensorOps<Ember> for Ember {
         unary::atanh(tensor)
     }
 
-    fn float_atan2(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_atan2")
+    fn float_atan2(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        binary_op(lhs, rhs, |a: f32, b| a.atan2(b), |a: f64, b| a.atan2(b))
     }
 
     fn float_round(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {

@@ -64,7 +64,11 @@ where
             .map(|idx| op(src[idx]))
             .collect();
         let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(bytes, Layout::contiguous(layout.shape().clone()), E::dtype());
+        return EmberTensor::new(
+            bytes,
+            Layout::contiguous(layout.shape().clone()),
+            E::dtype(),
+        );
     }
 
     // General path for views/slices with offset or extra storage
@@ -143,7 +147,11 @@ where
             .map(|idx| op(src[idx]))
             .collect();
         let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(bytes, Layout::contiguous(layout.shape().clone()), DType::F16);
+        return EmberTensor::new(
+            bytes,
+            Layout::contiguous(layout.shape().clone()),
+            DType::F16,
+        );
     }
 
     let result = match layout.strided_blocks() {
@@ -214,7 +222,11 @@ where
             .map(|idx| op(src[idx]))
             .collect();
         let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(bytes, Layout::contiguous(layout.shape().clone()), DType::BF16);
+        return EmberTensor::new(
+            bytes,
+            Layout::contiguous(layout.shape().clone()),
+            DType::BF16,
+        );
     }
 
     let result = match layout.strided_blocks() {

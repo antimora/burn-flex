@@ -221,20 +221,20 @@ impl BoolTensorOps<Ember> for Ember {
     }
 
     fn bool_gather(
-        _dim: usize,
-        _tensor: BoolTensor<Ember>,
-        _indices: IntTensor<Ember>,
+        dim: usize,
+        tensor: BoolTensor<Ember>,
+        indices: IntTensor<Ember>,
     ) -> BoolTensor<Ember> {
-        todo!("bool_gather")
+        crate::ops::gather_scatter::gather_bool(tensor, dim, indices)
     }
 
     fn bool_scatter_or(
-        _dim: usize,
-        _tensor: BoolTensor<Ember>,
-        _indices: IntTensor<Ember>,
-        _value: BoolTensor<Ember>,
+        dim: usize,
+        tensor: BoolTensor<Ember>,
+        indices: IntTensor<Ember>,
+        value: BoolTensor<Ember>,
     ) -> BoolTensor<Ember> {
-        todo!("bool_scatter_or")
+        crate::ops::gather_scatter::scatter_or(tensor, dim, indices, value)
     }
 
     fn bool_equal_elem(lhs: BoolTensor<Ember>, rhs: bool) -> BoolTensor<Ember> {

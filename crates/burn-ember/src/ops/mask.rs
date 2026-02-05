@@ -312,7 +312,8 @@ mod tests {
         assert!(tensor.layout().strides()[0] < 0);
 
         let mask = EmberTensor::from_data(TensorData::new(vec![true, false, false, true], [2, 2]));
-        let value = EmberTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], [2, 2]));
+        let value =
+            EmberTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], [2, 2]));
 
         let result = mask_where_f32(tensor, mask, value);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
@@ -343,7 +344,8 @@ mod tests {
         // Tensor [1, 2, 3, 4, 5, 6] narrowed to [2, 3, 4, 5]
         // Mask [T, F, F, T]
         // Result: [0, 3, 4, 0]
-        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [6]));
+        let tensor =
+            EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [6]));
         let tensor = tensor.narrow(0, 1, 4);
 
         let mask = EmberTensor::from_data(TensorData::new(vec![true, false, false, true], [4]));

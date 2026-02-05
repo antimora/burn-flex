@@ -177,7 +177,10 @@ mod tests {
         // Verify content: should see same transposed values repeated 3 times
         let data: Vec<f32> = expanded.into_data().to_vec().unwrap();
         // [[1, 3], [2, 4]] repeated 3 times
-        assert_eq!(data, vec![1.0, 3.0, 2.0, 4.0, 1.0, 3.0, 2.0, 4.0, 1.0, 3.0, 2.0, 4.0]);
+        assert_eq!(
+            data,
+            vec![1.0, 3.0, 2.0, 4.0, 1.0, 3.0, 2.0, 4.0, 1.0, 3.0, 2.0, 4.0]
+        );
     }
 
     #[test]
@@ -219,7 +222,10 @@ mod tests {
         // Verify content
         let data: Vec<f32> = expanded.into_data().to_vec().unwrap();
         // [[3, 4], [1, 2]] repeated 3 times
-        assert_eq!(data, vec![3.0, 4.0, 1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0, 1.0, 2.0]);
+        assert_eq!(
+            data,
+            vec![3.0, 4.0, 1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0, 1.0, 2.0]
+        );
     }
 
     #[test]
