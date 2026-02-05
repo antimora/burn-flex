@@ -31,11 +31,7 @@ where
         .map(|(&elem, &m)| if m != 0 { value } else { elem })
         .collect();
 
-    EmberTensor::new(
-        Bytes::from_elems(result),
-        Layout::contiguous(shape),
-        dtype,
-    )
+    EmberTensor::new(Bytes::from_elems(result), Layout::contiguous(shape), dtype)
 }
 
 /// Mask fill for f32.
@@ -98,10 +94,8 @@ where
     let dtype = tensor.dtype();
 
     // Broadcast all to the same shape
-    let target_shape = crate::ops::expand::broadcast_shape(
-        tensor.layout().shape(),
-        mask.layout().shape(),
-    );
+    let target_shape =
+        crate::ops::expand::broadcast_shape(tensor.layout().shape(), mask.layout().shape());
     let target_shape = crate::ops::expand::broadcast_shape(&target_shape, value.layout().shape());
 
     let tensor = if tensor.layout().shape() == &target_shape {
@@ -136,11 +130,7 @@ where
         .map(|((&t, &m), &v)| if m != 0 { v } else { t })
         .collect();
 
-    EmberTensor::new(
-        Bytes::from_elems(result),
-        Layout::contiguous(shape),
-        dtype,
-    )
+    EmberTensor::new(Bytes::from_elems(result), Layout::contiguous(shape), dtype)
 }
 
 /// Mask where for f32.
@@ -170,10 +160,8 @@ pub fn mask_where_i64(tensor: EmberTensor, mask: EmberTensor, value: EmberTensor
 
 /// Mask where for bool tensors.
 pub fn mask_where_bool(tensor: EmberTensor, mask: EmberTensor, value: EmberTensor) -> EmberTensor {
-    let target_shape = crate::ops::expand::broadcast_shape(
-        tensor.layout().shape(),
-        mask.layout().shape(),
-    );
+    let target_shape =
+        crate::ops::expand::broadcast_shape(tensor.layout().shape(), mask.layout().shape());
     let target_shape = crate::ops::expand::broadcast_shape(&target_shape, value.layout().shape());
 
     let tensor = if tensor.layout().shape() == &target_shape {
@@ -232,14 +220,8 @@ mod tests {
 
     #[test]
     fn test_mask_fill_2d() {
-        let tensor = EmberTensor::from_data(TensorData::new(
-            vec![1.0f32, 2.0, 3.0, 4.0],
-            [2, 2],
-        ));
-        let mask = EmberTensor::from_data(TensorData::new(
-            vec![true, false, false, true],
-            [2, 2],
-        ));
+        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2, 2]));
+        let mask = EmberTensor::from_data(TensorData::new(vec![true, false, false, true], [2, 2]));
 
         let result = mask_fill_f32(tensor, mask, -1.0);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();

@@ -227,8 +227,16 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::mask::mask_fill_f32(tensor, mask, value.to_f32().unwrap()),
             DType::F64 => crate::ops::mask::mask_fill_f64(tensor, mask, value.to_f64().unwrap()),
-            DType::F16 => crate::ops::mask::mask_fill_f16(tensor, mask, f16::from_f64(value.to_f64().unwrap())),
-            DType::BF16 => crate::ops::mask::mask_fill_bf16(tensor, mask, bf16::from_f64(value.to_f64().unwrap())),
+            DType::F16 => crate::ops::mask::mask_fill_f16(
+                tensor,
+                mask,
+                f16::from_f64(value.to_f64().unwrap()),
+            ),
+            DType::BF16 => crate::ops::mask::mask_fill_bf16(
+                tensor,
+                mask,
+                bf16::from_f64(value.to_f64().unwrap()),
+            ),
             dtype => panic!("float_mask_fill: unsupported dtype {:?}", dtype),
         }
     }

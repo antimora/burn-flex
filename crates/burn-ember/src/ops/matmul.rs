@@ -74,8 +74,8 @@ pub fn matmul(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 fn get_2d_strides(layout: &Layout) -> (isize, isize) {
     let strides = layout.strides();
     let ndim = strides.len();
-    let row_stride = strides[ndim - 2] as isize;
-    let col_stride = strides[ndim - 1] as isize;
+    let row_stride = strides[ndim - 2];
+    let col_stride = strides[ndim - 1];
     (row_stride, col_stride)
 }
 
