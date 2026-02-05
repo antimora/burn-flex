@@ -441,50 +441,102 @@ where
             use rayon::prelude::*;
 
             let output = vec![T::zero(); out_numel];
+            let num_bc_pairs = batch * channels;
 
-            (0..batch).into_par_iter().for_each(|b| {
-                (0..channels).into_par_iter().for_each(|c| {
+            // Adaptive parallelization: if few (batch, channel) pairs, parallelize rows too
+            if num_bc_pairs < 8 {
+                // Fine-grained: parallelize over (batch, channel, row) for better CPU utilization
+                let total_rows = batch * channels * out_height;
+                (0..total_rows).into_par_iter().for_each(|id| {
+                    let b = id / (channels * out_height);
+                    let remainder = id % (channels * out_height);
+                    let c = remainder / out_height;
+                    let oh = remainder % out_height;
+
                     let in_base = b * channels * in_hw + c * in_hw;
                     let out_base = b * channels * out_hw + c * out_hw;
 
-                    for oh in 0..out_height {
-                        let y_in = oh as f64 * y_ratio;
-                        let y0 = y_in.floor() as isize;
+                    let y_in = oh as f64 * y_ratio;
+                    let y0 = y_in.floor() as isize;
 
-                        for ow in 0..out_width {
-                            let x_in = ow as f64 * x_ratio;
-                            let x0 = x_in.floor() as isize;
+                    for ow in 0..out_width {
+                        let x_in = ow as f64 * x_ratio;
+                        let x0 = x_in.floor() as isize;
 
-                            let mut sum = 0.0_f64;
+                        let mut sum = 0.0_f64;
 
-                            for dy in -1..=2_isize {
-                                let y = y0 + dy;
-                                let y_clamped = y.clamp(0, in_height as isize - 1) as usize;
-                                let ty = (y_in - y0 as f64) - dy as f64;
-                                let wy = cubic_weight(ty, a);
+                        for dy in -1..=2_isize {
+                            let y = y0 + dy;
+                            let y_clamped = y.clamp(0, in_height as isize - 1) as usize;
+                            let ty = (y_in - y0 as f64) - dy as f64;
+                            let wy = cubic_weight(ty, a);
 
-                                for dx in -1..=2_isize {
-                                    let x = x0 + dx;
-                                    let x_clamped = x.clamp(0, in_width as isize - 1) as usize;
-                                    let tx = (x_in - x0 as f64) - dx as f64;
-                                    let wx = cubic_weight(tx, a);
+                            for dx in -1..=2_isize {
+                                let x = x0 + dx;
+                                let x_clamped = x.clamp(0, in_width as isize - 1) as usize;
+                                let tx = (x_in - x0 as f64) - dx as f64;
+                                let wx = cubic_weight(tx, a);
 
-                                    let val = input[in_base + y_clamped * in_width + x_clamped];
-                                    let val_f64 =
-                                        <T as num_traits::ToPrimitive>::to_f64(&val).unwrap_or(0.0);
-                                    sum += val_f64 * wx * wy;
-                                }
+                                let val = input[in_base + y_clamped * in_width + x_clamped];
+                                let val_f64 =
+                                    <T as num_traits::ToPrimitive>::to_f64(&val).unwrap_or(0.0);
+                                sum += val_f64 * wx * wy;
                             }
+                        }
 
-                            let out_idx = out_base + oh * out_width + ow;
-                            unsafe {
-                                let out_ptr = output.as_ptr().add(out_idx) as *mut T;
-                                *out_ptr = T::from(sum).unwrap();
-                            }
+                        let out_idx = out_base + oh * out_width + ow;
+                        unsafe {
+                            let out_ptr = output.as_ptr().add(out_idx) as *mut T;
+                            *out_ptr = T::from(sum).unwrap();
                         }
                     }
                 });
-            });
+            } else {
+                // Coarse-grained: parallelize over (batch, channel) for cache efficiency
+                (0..batch).into_par_iter().for_each(|b| {
+                    (0..channels).into_par_iter().for_each(|c| {
+                        let in_base = b * channels * in_hw + c * in_hw;
+                        let out_base = b * channels * out_hw + c * out_hw;
+
+                        for oh in 0..out_height {
+                            let y_in = oh as f64 * y_ratio;
+                            let y0 = y_in.floor() as isize;
+
+                            for ow in 0..out_width {
+                                let x_in = ow as f64 * x_ratio;
+                                let x0 = x_in.floor() as isize;
+
+                                let mut sum = 0.0_f64;
+
+                                for dy in -1..=2_isize {
+                                    let y = y0 + dy;
+                                    let y_clamped = y.clamp(0, in_height as isize - 1) as usize;
+                                    let ty = (y_in - y0 as f64) - dy as f64;
+                                    let wy = cubic_weight(ty, a);
+
+                                    for dx in -1..=2_isize {
+                                        let x = x0 + dx;
+                                        let x_clamped = x.clamp(0, in_width as isize - 1) as usize;
+                                        let tx = (x_in - x0 as f64) - dx as f64;
+                                        let wx = cubic_weight(tx, a);
+
+                                        let val = input[in_base + y_clamped * in_width + x_clamped];
+                                        let val_f64 = <T as num_traits::ToPrimitive>::to_f64(&val)
+                                            .unwrap_or(0.0);
+                                        sum += val_f64 * wx * wy;
+                                    }
+                                }
+
+                                let out_idx = out_base + oh * out_width + ow;
+                                unsafe {
+                                    let out_ptr = output.as_ptr().add(out_idx) as *mut T;
+                                    *out_ptr = T::from(sum).unwrap();
+                                }
+                            }
+                        }
+                    });
+                });
+            }
             output
         }
         #[cfg(not(feature = "rayon"))]
