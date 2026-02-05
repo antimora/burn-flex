@@ -361,10 +361,9 @@ fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor
     // most one dimension or when the tensor is contiguous (so strides are products
     // of trailing dimensions). For non-contiguous tensors where these assumptions
     // break, copy to contiguous first.
-    let outer_dims = dim;           // number of dimensions before `dim`
+    let outer_dims = dim; // number of dimensions before `dim`
     let inner_dims = ndims - dim - 1; // number of dimensions after `dim`
-    let needs_copy =
-        !tensor.is_contiguous() && (outer_dims > 1 || inner_dims > 1);
+    let needs_copy = !tensor.is_contiguous() && (outer_dims > 1 || inner_dims > 1);
     let tensor = if needs_copy {
         tensor.to_contiguous()
     } else {
@@ -636,8 +635,7 @@ where
     // non-contiguous tensor with 2+ outer dims or 2+ inner dims.
     let outer_dims = dim;
     let inner_dims = ndims - dim - 1;
-    let needs_copy =
-        !tensor.is_contiguous() && (outer_dims > 1 || inner_dims > 1);
+    let needs_copy = !tensor.is_contiguous() && (outer_dims > 1 || inner_dims > 1);
     let tensor = if needs_copy {
         tensor.to_contiguous()
     } else {

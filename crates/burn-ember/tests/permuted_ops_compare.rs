@@ -504,11 +504,7 @@ fn test_reshape_after_permute() {
     let r_e: Tensor<E, 3> = t_e.reshape([2, 4, 128]);
     let r_n: Tensor<N, 3> = t_n.reshape([2, 4, 128]);
 
-    compare(
-        "reshape_after_permute",
-        &r_e.into_data(),
-        &r_n.into_data(),
-    );
+    compare("reshape_after_permute", &r_e.into_data(), &r_n.into_data());
 }
 
 // ============================================================================
@@ -587,11 +583,7 @@ fn test_layernorm_pattern_permuted() {
         let norm_e = centered_e / (var_e + eps).sqrt();
         let norm_n = centered_n / (var_n + eps).sqrt();
 
-        compare(
-            name,
-            &norm_e.into_data(),
-            &norm_n.into_data(),
-        );
+        compare(name, &norm_e.into_data(), &norm_n.into_data());
     };
 
     run("layernorm_contiguous", false);
