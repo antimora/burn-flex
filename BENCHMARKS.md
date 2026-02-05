@@ -768,25 +768,25 @@ Unfold extracts sliding windows from a tensor along a dimension. Output shape: `
 
 | Input Size | Window | Step | Ember Time | NdArray Time | Speedup       | Ember Mem | NdArray Mem |
 | ---------- | ------ | ---- | ---------- | ------------ | ------------- | --------- | ----------- |
-| 1K         | 8      | 1    | 78 ns      | 113 us       | **~1,400x**   | 0 B       | 196 KB      |
-| 64K        | 8      | 1    | 67 ns      | 7.0 ms       | **~100,000x** | 0 B       | 12.6 MB     |
-| 64K        | 64     | 1    | 49 ns      | 7.6 ms       | **~155,000x** | 0 B       | 41.9 MB     |
-| 64K        | 64     | 32   | 49 ns      | 261 us       | **~5,300x**   | 0 B       | 1.8 MB      |
+| 1K         | 8      | 1    | 73 ns      | 110 us       | **~1,500x**   | 56 B      | 196 KB      |
+| 64K        | 8      | 1    | 48 ns      | 7.0 ms       | **~145,000x** | 56 B      | 12.6 MB     |
+| 64K        | 64     | 1    | 48 ns      | 7.5 ms       | **~156,000x** | 56 B      | 41.9 MB     |
+| 64K        | 64     | 32   | 50 ns      | 243 us       | **~4,900x**   | 56 B      | 1.82 MB     |
 
 **2D/3D Unfold**
 
 | Shape       | Dim | Window | Step | Ember Time | NdArray Time | Speedup      | Ember Mem | NdArray Mem |
 | ----------- | --- | ------ | ---- | ---------- | ------------ | ------------ | --------- | ----------- |
-| 256x256     | 1   | 8      | 1    | 61 ns      | 910 us       | **~15,000x** | 0 B       | 4.6 MB      |
-| 256x256     | 1   | 32     | 16   | 53 ns      | 68 us        | **~1,300x**  | 0 B       | 1.5 MB      |
-| 1024x256    | 1   | 8      | 1    | 53 ns      | 3.6 ms       | **~68,000x** | 0 B       | 18.5 MB     |
-| 32x64x64    | 2   | 8      | 4    | 86 ns      | 445 us       | **~5,200x**  | 0 B       | 3.0 MB      |
+| 256x256     | 1   | 8      | 1    | 69 ns      | 910 us       | **~13,000x** | 96 B      | 4.6 MB      |
+| 256x256     | 1   | 32     | 16   | 51 ns      | 68 us        | **~1,300x**  | 96 B      | 1.5 MB      |
+| 1024x256    | 1   | 8      | 1    | 57 ns      | 3.5 ms       | **~61,000x** | 96 B      | 18.5 MB     |
+| 32x64x64    | 2   | 8      | 4    | 84 ns      | 445 us       | **~5,300x**  | 136 B     | 3.0 MB      |
 
 **Key observations:**
 
 1. **Cross product**: Ember 1.7-2.1x faster with slice-based component extraction
-2. **Unfold**: Ember is **1,000-155,000x faster** due to zero-copy strided view vs data copying
-3. **Zero memory allocation**: Ember's unfold allocates nothing - it's pure metadata manipulation
+2. **Unfold**: Ember is **1,300-156,000x faster** due to zero-copy strided view vs data copying
+3. **Near-zero memory**: Ember allocates only 56-136 bytes (metadata) vs NdArray's megabytes
 4. **Constant time**: Ember's unfold is O(1) regardless of tensor size or window parameters
 
 **Implementation note:** Ember's unfold returns a non-contiguous strided view. Operations that require contiguous data will call `to_contiguous()` internally, which copies data at that point. This is optimal because many operations (reduce, matmul, conv) work directly on strided tensors, avoiding unnecessary copies.
@@ -832,6 +832,7 @@ Unfold extracts sliding windows from a tensor along a dimension. Output shape: `
 - Binary ops (int): 8.4 MB vs 25.2 MB for 1M elements (3x less)
 - Slice ops: 80-240 bytes vs kilobytes-megabytes (zero-copy views)
 - Reduce ops: kilobytes vs megabytes (output-only allocation)
+- Unfold ops: 56-136 bytes vs 1.5-42 MB (zero-copy strided view vs data copy)
 
 ### Areas for Improvement
 
