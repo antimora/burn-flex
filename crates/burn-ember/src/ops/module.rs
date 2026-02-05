@@ -3,7 +3,7 @@
 //! These operations power neural network modules like convolutions and pooling.
 
 use crate::Ember;
-use crate::ops::{conv, interpolate, pool};
+use crate::ops::{conv, deform_conv, interpolate, pool};
 use burn_backend::{
     DType,
     ops::{
@@ -45,26 +45,68 @@ impl ModuleOps<Ember> for Ember {
     }
 
     fn deform_conv2d(
-        _x: FloatTensor<Ember>,
-        _offset: FloatTensor<Ember>,
-        _weight: FloatTensor<Ember>,
-        _mask: Option<FloatTensor<Ember>>,
-        _bias: Option<FloatTensor<Ember>>,
-        _options: DeformConvOptions<2>,
+        x: FloatTensor<Ember>,
+        offset: FloatTensor<Ember>,
+        weight: FloatTensor<Ember>,
+        mask: Option<FloatTensor<Ember>>,
+        bias: Option<FloatTensor<Ember>>,
+        options: DeformConvOptions<2>,
     ) -> FloatTensor<Ember> {
-        todo!("deform_conv2d")
+        match x.dtype() {
+            DType::F32 => deform_conv::deform_conv2d_f32(
+                x,
+                offset,
+                weight,
+                mask,
+                bias,
+                options.stride,
+                options.padding,
+                options.dilation,
+                options.weight_groups,
+                options.offset_groups,
+            ),
+            DType::F64 => deform_conv::deform_conv2d_f64(
+                x,
+                offset,
+                weight,
+                mask,
+                bias,
+                options.stride,
+                options.padding,
+                options.dilation,
+                options.weight_groups,
+                options.offset_groups,
+            ),
+            dtype => panic!("deform_conv2d: unsupported dtype {:?}", dtype),
+        }
     }
 
     fn deform_conv2d_backward(
-        _x: FloatTensor<Ember>,
-        _offset: FloatTensor<Ember>,
-        _weight: FloatTensor<Ember>,
-        _mask: Option<FloatTensor<Ember>>,
-        _bias: Option<FloatTensor<Ember>>,
-        _output_grad: FloatTensor<Ember>,
-        _options: DeformConvOptions<2>,
+        x: FloatTensor<Ember>,
+        offset: FloatTensor<Ember>,
+        weight: FloatTensor<Ember>,
+        mask: Option<FloatTensor<Ember>>,
+        bias: Option<FloatTensor<Ember>>,
+        output_grad: FloatTensor<Ember>,
+        options: DeformConvOptions<2>,
     ) -> DeformConv2dBackward<Ember> {
-        todo!("deform_conv2d_backward")
+        let (x_grad, offset_grad, weight_grad, mask_grad, bias_grad) = match x.dtype() {
+            DType::F32 => deform_conv::deform_conv2d_backward_f32(
+                x,
+                offset,
+                weight,
+                mask,
+                bias,
+                output_grad,
+                options.stride,
+                options.padding,
+                options.dilation,
+                options.weight_groups,
+                options.offset_groups,
+            ),
+            dtype => panic!("deform_conv2d_backward: unsupported dtype {:?}", dtype),
+        };
+        DeformConv2dBackward::new(x_grad, offset_grad, weight_grad, mask_grad, bias_grad)
     }
 
     fn conv3d(

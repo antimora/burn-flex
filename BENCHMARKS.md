@@ -8,25 +8,26 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M3 Max.
 
 ## Summary
 
-| Category        | Ember Wins | NdArray Wins | Ties  |
-| --------------- | ---------- | ------------ | ----- |
-| Binary Ops      | 14         | 0            | 0     |
-| Int Binary Ops  | 12         | 0            | 1     |
-| Int Cast        | 4          | 0            | 0     |
-| Int Random      | 0          | 0            | 4     |
-| Matrix Multiply | 20         | 5            | 1     |
-| Slice Ops       | 18         | 0            | 0     |
-| Reduce Ops      | 16         | 0            | 0     |
-| Cumulative Ops  | 14         | 1            | 0     |
-| Gather/Scatter  | 10         | 0            | 0     |
-| Unary Ops       | 15         | 0            | 4     |
-| Comparison Ops  | 13         | 4            | 0     |
-| Convolutions    | 19         | 0            | 0     |
-| Pooling         | 17         | 0            | 0     |
-| Conv Transpose  | 14         | 0            | 0     |
-| Interpolate     | 15         | 0            | 0     |
-| Cross/Unfold    | 12         | 0            | 0     |
-| **Total**       | **213**    | **10**       | **10**|
+| Category        | Ember Wins | NdArray Wins | Ties   |
+| --------------- | ---------- | ------------ | ------ |
+| Binary Ops      | 14         | 0            | 0      |
+| Int Binary Ops  | 12         | 0            | 1      |
+| Int Cast        | 4          | 0            | 0      |
+| Int Random      | 0          | 0            | 4      |
+| Matrix Multiply | 20         | 5            | 1      |
+| Slice Ops       | 18         | 0            | 0      |
+| Reduce Ops      | 16         | 0            | 0      |
+| Cumulative Ops  | 14         | 1            | 0      |
+| Gather/Scatter  | 10         | 0            | 0      |
+| Unary Ops       | 15         | 0            | 4      |
+| Comparison Ops  | 13         | 4            | 0      |
+| Convolutions    | 19         | 0            | 0      |
+| Pooling         | 17         | 0            | 0      |
+| Conv Transpose  | 14         | 0            | 0      |
+| Interpolate     | 15         | 0            | 0      |
+| Cross/Unfold    | 12         | 0            | 0      |
+| Deform Conv     | 5          | 3            | 0      |
+| **Total**       | **218**    | **13**       | **10** |
 
 ---
 
@@ -132,12 +133,12 @@ without bounds checking overhead. Memory usage is also significantly lower.
 
 Random integer tensor generation using uniform distribution.
 
-| Operation | Size           | Ember Time | NdArray Time | Speedup  |
-| --------- | -------------- | ---------- | ------------ | -------- |
-| uniform   | 64x64          | 44 us      | 43 us        | 1.0x     |
-| uniform   | 256x256        | 714 us     | 693 us       | 1.0x     |
-| uniform   | 1024x1024      | 10.9 ms    | 11.2 ms      | 1.0x     |
-| uniform   | 16x128x128     | 2.73 ms    | 2.83 ms      | 1.0x     |
+| Operation | Size       | Ember Time | NdArray Time | Speedup |
+| --------- | ---------- | ---------- | ------------ | ------- |
+| uniform   | 64x64      | 44 us      | 43 us        | 1.0x    |
+| uniform   | 256x256    | 714 us     | 693 us       | 1.0x    |
+| uniform   | 1024x1024  | 10.9 ms    | 11.2 ms      | 1.0x    |
+| uniform   | 16x128x128 | 2.73 ms    | 2.83 ms      | 1.0x    |
 
 **Key observation**: Both backends use similar RNG implementations (ChaCha8), so performance is
 nearly identical. The small differences are within noise margin.
@@ -198,14 +199,15 @@ Note: Integer matmul uses naive O(n^3) implementation without SIMD; both backend
 
 Broadcasting batch dimensions: [1, M, K] x [B, K, N] -> [B, M, N]
 
-| Shape                          | Ember Time | NdArray Time | Speedup  |
-| ------------------------------ | ---------- | ------------ | -------- |
-| [1, 64, 64] x [8, 64, 64]      | 50 us      | 83 us        | **1.7x** |
-| [8, 64, 64] x [1, 64, 64]      | 45 us      | 74 us        | **1.6x** |
-| [2, 1, 32, 32] x [1, 4, 32, 32] | 7 us      | 42 us        | **6.0x** |
-| [4, 1, 64, 64] x [1, 4, 64, 64] | 55 us     | 88 us        | **1.6x** |
+| Shape                           | Ember Time | NdArray Time | Speedup  |
+| ------------------------------- | ---------- | ------------ | -------- |
+| [1, 64, 64] x [8, 64, 64]       | 50 us      | 83 us        | **1.7x** |
+| [8, 64, 64] x [1, 64, 64]       | 45 us      | 74 us        | **1.6x** |
+| [2, 1, 32, 32] x [1, 4, 32, 32] | 7 us       | 42 us        | **6.0x** |
+| [4, 1, 64, 64] x [1, 4, 64, 64] | 55 us      | 88 us        | **1.6x** |
 
-Note: 4D broadcast with [2,1] x [1,4] -> [2,4] is particularly efficient due to batch index mapping optimization.
+Note: 4D broadcast with [2,1] x [1,4] -> [2,4] is particularly efficient due to batch index mapping
+optimization.
 
 ---
 
@@ -865,6 +867,64 @@ avoiding unnecessary copies.
 
 ---
 
+## Deformable Convolution Operations
+
+Deformable convolution (deform_conv2d) applies learned spatial offsets to the sampling grid,
+enabling adaptive receptive fields. Used in object detection (Deformable DETR) and dense prediction
+tasks.
+
+**Implementation approach:**
+
+Both backends use deformable im2col + GEMM. Build an im2col matrix with bilinear-interpolated
+samples at offset-adjusted coordinates, then use optimized GEMM for the actual convolution.
+
+- **Ember**: im2col + gemm with rayon parallelism over batch dimension
+- **NdArray**: im2col + matmul through ndarray
+
+### Basic Deform Conv2d (3x3 kernel)
+
+| Input Shape       | Channels | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| ----------------- | -------- | ---------- | ------------ | -------- | --------- | ----------- |
+| 1x3x8x8           | 3->8     | 10 us      | 101 us       | **10x**  | 14.9 KB   | 30.6 KB     |
+| 1x3x8x8 (no mask) | 3->8     | 9 us       | 82 us        | **9.1x** | 14.9 KB   | 28.2 KB     |
+| 1x3x16x16         | 3->16    | 43 us      | 133 us       | **3.1x** | 118 KB    | 117.5 KB    |
+| 1x3x16x16 s2      | 3->16    | 12 us      | 79 us        | **6.6x** | 20.8 KB   | 34.6 KB     |
+
+### Batched and Multi-Channel
+
+| Input Shape | Channels | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| ----------- | -------- | ---------- | ------------ | -------- | --------- | ----------- |
+| 2x8x16x16   | 8->16    | 129 us     | 263 us       | **2.0x** | 37.9 KB   | 524 KB      |
+| 1x16x32x32  | 16->32   | 966 us     | 688 us       | 0.71x    | 1.17 MB   | 1.98 MB     |
+
+### Weight Groups and Offset Groups
+
+| Input Shape | Config | Ember Time | NdArray Time | Speedup | Ember Mem | NdArray Mem |
+| ----------- | ------ | ---------- | ------------ | ------- | --------- | ----------- |
+| 1x16x32x32  | wg=4   | 991 us     | 600 us       | 0.61x   | 390 KB    | 1.96 MB     |
+| 1x16x32x32  | og=4   | 1 ms       | 688 us       | 0.69x   | 1.17 MB   | 2.31 MB     |
+
+### Memory Efficiency
+
+Ember uses less memory across all configurations, with significant savings on larger inputs:
+
+| Test Case         | Ember Mem | NdArray Mem | Ratio    |
+| ----------------- | --------- | ----------- | -------- |
+| tiny 1x3x8x8      | 14.9 KB   | 30.6 KB     | **2.1x** |
+| small 2x8x16x16   | 37.9 KB   | 524 KB      | **14x**  |
+| medium 1x16x32x32 | 1.17 MB   | 1.98 MB     | **1.7x** |
+| medium wg=4       | 390 KB    | 1.96 MB     | **5.0x** |
+| medium og=4       | 1.17 MB   | 2.31 MB     | **2.0x** |
+
+**Key observations:**
+
+1. **Tiny/small inputs**: Ember 2-10x faster due to lower framework overhead
+2. **Medium inputs**: NdArray 1.4-1.6x faster on the GEMM-dominated regime
+3. **Memory**: Ember uses 1.7-14x less memory, especially with weight groups (5x at wg=4)
+4. **Weight groups**: wg=4 reduces Ember memory to 390 KB vs 1.96 MB for NdArray
+
+---
+
 ## Key Observations
 
 ### Performance Wins
@@ -985,4 +1045,5 @@ cargo bench --bench pool_ops --features simd,rayon,gemm
 cargo bench --bench conv_transpose_ops --features simd,rayon,gemm
 cargo bench --bench interpolate_ops --features simd,rayon,gemm
 cargo bench --bench cross_unfold_ops --features simd,rayon,gemm
+cargo bench --bench deform_conv_ops --features simd,rayon,gemm
 ```

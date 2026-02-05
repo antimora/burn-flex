@@ -6,6 +6,7 @@ mod bool;
 pub mod comparison;
 pub mod conv;
 pub mod cumulative;
+pub mod deform_conv;
 pub mod expand;
 pub mod flip;
 mod float;
