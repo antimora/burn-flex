@@ -412,9 +412,35 @@ pub fn atanh(tensor: EmberTensor) -> EmberTensor {
     unary_op(tensor, f32::atanh, f64::atanh)
 }
 
-/// Round to nearest integer
+/// Round to nearest integer (ties to even / banker's rounding)
 pub fn round(tensor: EmberTensor) -> EmberTensor {
-    unary_op(tensor, f32::round, f64::round)
+    unary_op(tensor, round_ties_even_f32, round_ties_even_f64)
+}
+
+/// Round ties to even for f32 (banker's rounding)
+fn round_ties_even_f32(x: f32) -> f32 {
+    let f = x.fract().abs();
+    if f == 0.5 {
+        // At a tie: round to even
+        let floor = x.floor();
+        let ceil = x.ceil();
+        if floor as i32 % 2 == 0 { floor } else { ceil }
+    } else {
+        x.round()
+    }
+}
+
+/// Round ties to even for f64 (banker's rounding)
+fn round_ties_even_f64(x: f64) -> f64 {
+    let f = x.fract().abs();
+    if f == 0.5 {
+        // At a tie: round to even
+        let floor = x.floor();
+        let ceil = x.ceil();
+        if floor as i64 % 2 == 0 { floor } else { ceil }
+    } else {
+        x.round()
+    }
 }
 
 /// Floor (round down)
