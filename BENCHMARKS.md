@@ -1,6 +1,6 @@
 # Ember vs NdArray Benchmarks
 
-Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
+Benchmarks comparing burn-ember against burn-ndarray on Apple M3 Max.
 
 **Date**: 2026-02-04 **Platform**: darwin (aarch64) **Features**: simd, rayon, gemm
 
