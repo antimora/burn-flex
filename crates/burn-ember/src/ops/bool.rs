@@ -86,12 +86,12 @@ impl BoolTensorOps<Ember> for Ember {
         tensor.transpose(dim1, dim2)
     }
 
-    fn bool_permute(_tensor: BoolTensor<Ember>, _axes: &[usize]) -> BoolTensor<Ember> {
-        todo!("bool_permute")
+    fn bool_permute(tensor: BoolTensor<Ember>, axes: &[usize]) -> BoolTensor<Ember> {
+        tensor.permute(axes)
     }
 
-    fn bool_flip(_tensor: BoolTensor<Ember>, _axes: &[usize]) -> BoolTensor<Ember> {
-        todo!("bool_flip")
+    fn bool_flip(tensor: BoolTensor<Ember>, axes: &[usize]) -> BoolTensor<Ember> {
+        crate::ops::flip::flip(tensor, axes)
     }
 
     fn bool_equal(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
@@ -199,19 +199,19 @@ impl BoolTensorOps<Ember> for Ember {
     }
 
     fn bool_mask_where(
-        _tensor: BoolTensor<Ember>,
-        _mask: BoolTensor<Ember>,
-        _value: BoolTensor<Ember>,
+        tensor: BoolTensor<Ember>,
+        mask: BoolTensor<Ember>,
+        value: BoolTensor<Ember>,
     ) -> BoolTensor<Ember> {
-        todo!("bool_mask_where")
+        crate::ops::mask::mask_where_bool(tensor, mask, value)
     }
 
     fn bool_mask_fill(
-        _tensor: BoolTensor<Ember>,
-        _mask: BoolTensor<Ember>,
-        _value: bool,
+        tensor: BoolTensor<Ember>,
+        mask: BoolTensor<Ember>,
+        value: bool,
     ) -> BoolTensor<Ember> {
-        todo!("bool_mask_fill")
+        crate::ops::mask::mask_fill_bool(tensor, mask, value)
     }
 
     fn bool_gather(

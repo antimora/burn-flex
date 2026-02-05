@@ -369,6 +369,15 @@ impl EmberTensor {
             dtype: self.dtype,
         }
     }
+
+    /// Permute dimensions according to axes. Zero-copy (metadata only).
+    pub fn permute(&self, axes: &[usize]) -> Self {
+        Self {
+            data: Arc::clone(&self.data),
+            layout: self.layout.permute(axes),
+            dtype: self.dtype,
+        }
+    }
 }
 
 impl TensorMetadata for EmberTensor {

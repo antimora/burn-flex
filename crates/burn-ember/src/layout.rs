@@ -103,6 +103,26 @@ impl Layout {
         }
     }
 
+    /// Permute: reorder dimensions according to axes (zero-copy, metadata only).
+    ///
+    /// `axes` must be a permutation of 0..ndim.
+    pub fn permute(&self, axes: &[usize]) -> Self {
+        debug_assert_eq!(
+            axes.len(),
+            self.num_dims(),
+            "permute: axes length must match number of dimensions"
+        );
+
+        let new_dims: Vec<usize> = axes.iter().map(|&i| self.shape.dims[i]).collect();
+        let new_strides: Vec<usize> = axes.iter().map(|&i| self.strides[i]).collect();
+
+        Self {
+            shape: Shape::from(new_dims),
+            strides: new_strides,
+            start_offset: self.start_offset,
+        }
+    }
+
     /// Narrow/slice along a dimension (zero-copy, metadata only).
     pub fn narrow(&self, dim: usize, start: usize, len: usize) -> Self {
         debug_assert!(

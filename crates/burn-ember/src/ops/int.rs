@@ -42,19 +42,19 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_mask_where(
-        _tensor: IntTensor<Ember>,
-        _mask: BoolTensor<Ember>,
-        _value: IntTensor<Ember>,
+        tensor: IntTensor<Ember>,
+        mask: BoolTensor<Ember>,
+        value: IntTensor<Ember>,
     ) -> IntTensor<Ember> {
-        todo!("int_mask_where")
+        crate::ops::mask::mask_where_i64(tensor, mask, value)
     }
 
     fn int_mask_fill(
-        _tensor: IntTensor<Ember>,
-        _mask: BoolTensor<Ember>,
-        _value: Scalar,
+        tensor: IntTensor<Ember>,
+        mask: BoolTensor<Ember>,
+        value: Scalar,
     ) -> IntTensor<Ember> {
-        todo!("int_mask_fill")
+        crate::ops::mask::mask_fill_i64(tensor, mask, value.to_i64().unwrap())
     }
 
     fn int_slice_assign(
@@ -207,12 +207,12 @@ impl IntTensorOps<Ember> for Ember {
         tensor.transpose(dim1, dim2)
     }
 
-    fn int_permute(_tensor: IntTensor<Ember>, _axes: &[usize]) -> IntTensor<Ember> {
-        todo!("int_permute")
+    fn int_permute(tensor: IntTensor<Ember>, axes: &[usize]) -> IntTensor<Ember> {
+        tensor.permute(axes)
     }
 
-    fn int_flip(_tensor: IntTensor<Ember>, _axes: &[usize]) -> IntTensor<Ember> {
-        todo!("int_flip")
+    fn int_flip(tensor: IntTensor<Ember>, axes: &[usize]) -> IntTensor<Ember> {
+        crate::ops::flip::flip(tensor, axes)
     }
 
     fn int_random(

@@ -146,12 +146,12 @@ impl FloatTensorOps<Ember> for Ember {
         tensor.transpose(dim1, dim2)
     }
 
-    fn float_permute(_tensor: FloatTensor<Ember>, _axes: &[usize]) -> FloatTensor<Ember> {
-        todo!("float_permute")
+    fn float_permute(tensor: FloatTensor<Ember>, axes: &[usize]) -> FloatTensor<Ember> {
+        tensor.permute(axes)
     }
 
-    fn float_flip(_tensor: FloatTensor<Ember>, _axes: &[usize]) -> FloatTensor<Ember> {
-        todo!("float_flip")
+    fn float_flip(tensor: FloatTensor<Ember>, axes: &[usize]) -> FloatTensor<Ember> {
+        crate::ops::flip::flip(tensor, axes)
     }
 
     fn float_reshape(tensor: FloatTensor<Ember>, shape: Shape) -> FloatTensor<Ember> {
@@ -205,19 +205,31 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_mask_where(
-        _tensor: FloatTensor<Ember>,
-        _mask: BoolTensor<Ember>,
-        _value: FloatTensor<Ember>,
+        tensor: FloatTensor<Ember>,
+        mask: BoolTensor<Ember>,
+        value: FloatTensor<Ember>,
     ) -> FloatTensor<Ember> {
-        todo!("float_mask_where")
+        match tensor.dtype() {
+            DType::F32 => crate::ops::mask::mask_where_f32(tensor, mask, value),
+            DType::F64 => crate::ops::mask::mask_where_f64(tensor, mask, value),
+            DType::F16 => crate::ops::mask::mask_where_f16(tensor, mask, value),
+            DType::BF16 => crate::ops::mask::mask_where_bf16(tensor, mask, value),
+            dtype => panic!("float_mask_where: unsupported dtype {:?}", dtype),
+        }
     }
 
     fn float_mask_fill(
-        _tensor: FloatTensor<Ember>,
-        _mask: BoolTensor<Ember>,
-        _value: Scalar,
+        tensor: FloatTensor<Ember>,
+        mask: BoolTensor<Ember>,
+        value: Scalar,
     ) -> FloatTensor<Ember> {
-        todo!("float_mask_fill")
+        match tensor.dtype() {
+            DType::F32 => crate::ops::mask::mask_fill_f32(tensor, mask, value.to_f32().unwrap()),
+            DType::F64 => crate::ops::mask::mask_fill_f64(tensor, mask, value.to_f64().unwrap()),
+            DType::F16 => crate::ops::mask::mask_fill_f16(tensor, mask, f16::from_f64(value.to_f64().unwrap())),
+            DType::BF16 => crate::ops::mask::mask_fill_bf16(tensor, mask, bf16::from_f64(value.to_f64().unwrap())),
+            dtype => panic!("float_mask_fill: unsupported dtype {:?}", dtype),
+        }
     }
 
     fn float_equal(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> BoolTensor<Ember> {
