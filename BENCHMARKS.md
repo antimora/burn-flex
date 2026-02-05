@@ -16,7 +16,7 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M3 Max.
 | Int Random      | 0          | 0            | 4      |
 | Matrix Multiply | 20         | 5            | 1      |
 | Slice Ops       | 18         | 0            | 0      |
-| Reduce Ops      | 16         | 0            | 0      |
+| Reduce Ops      | 16         | 0            | 2      |
 | Cumulative Ops  | 14         | 1            | 0      |
 | Gather/Scatter  | 10         | 0            | 0      |
 | Unary Ops       | 15         | 0            | 4      |
@@ -27,7 +27,7 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M3 Max.
 | Interpolate     | 15         | 0            | 0      |
 | Cross/Unfold    | 12         | 0            | 0      |
 | Deform Conv     | 5          | 3            | 0      |
-| **Total**       | **218**    | **13**       | **10** |
+| **Total**       | **218**    | **13**       | **12** |
 
 ---
 
@@ -270,54 +270,54 @@ Sum, mean, argmax reductions with 8-fold unrolled loops (LLVM auto-vectorizes).
 
 | Size | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | ---- | ---------- | ------------ | -------- | --------- | ----------- |
-| 1K   | 190 ns     | 400 ns       | **2.1x** | 104 B     | 8.3 KB      |
-| 64K  | 6.2 us     | 15.5 us      | **2.5x** | 104 B     | 524 KB      |
-| 1M   | 57 us      | 227 us       | **4.0x** | 104 B     | 8.4 MB      |
+| 1K   | 181 ns     | 385 ns       | **2.1x** | 104 B     | 8.3 KB      |
+| 64K  | 5.7 us     | 14.7 us      | **2.6x** | 104 B     | 524 KB      |
+| 1M   | 56 us      | 221 us       | **3.9x** | 104 B     | 8.4 MB      |
 
 ### Sum Along Dimension
 
 | Shape     | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
 | 256x256   | 0   | 5.2 us     | 21 us        | **4.0x** | 2.2 KB    | 524 KB      |
-| 256x256   | 1   | 4.2 us     | 13.5 us      | **3.2x** | 1.2 KB    | 524 KB      |
-| 1024x1024 | 0   | 81 us      | 217 us       | **2.7x** | 8.3 KB    | 8.4 MB      |
-| 1024x1024 | 1   | 79 us      | 214 us       | **2.7x** | 4.2 KB    | 8.4 MB      |
+| 256x256   | 1   | 4.5 us     | 13.7 us      | **3.0x** | 1.2 KB    | 524 KB      |
+| 1024x1024 | 0   | 82 us      | 242 us       | **3.0x** | 8.4 KB    | 8.4 MB      |
+| 1024x1024 | 1   | 81 us      | 229 us       | **2.8x** | 4.3 KB    | 8.4 MB      |
 
 ### 3D Sum (Batched)
 
 | Shape      | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | ---------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
-| 32x256x256 | 1   | 150 us     | 534 us       | **3.6x** | 65.7 KB   | 16.8 MB     |
-| 32x256x256 | 2   | 131 us     | 364 us       | **2.8x** | 32.9 KB   | 16.8 MB     |
+| 32x256x256 | 1   | 154 us     | 572 us       | **3.7x** | 65.7 KB   | 16.8 MB     |
+| 32x256x256 | 2   | 129 us     | 405 us       | **3.1x** | 33 KB     | 16.8 MB     |
 
 ### Sum Transposed (total sum)
 
 | Size      | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | --------- | ---------- | ------------ | -------- | --------- | ----------- |
-| 256x256   | 6.0 us     | 6.5 us       | **1.0x** | 120 B     | 44 B        |
-| 1024x1024 | 57 us      | 98 us        | **1.7x** | 120 B     | 44 B        |
+| 256x256   | 6.4 us     | 6.5 us       | **1.0x** | 120 B     | 44 B        |
+| 1024x1024 | 57 us      | 99 us        | **1.7x** | 120 B     | 44 B        |
 
 ### Sum Dim on Transposed Tensor
 
-| Size      | Dim | Ember Time | NdArray Time | Speedup  |
-| --------- | --- | ---------- | ------------ | -------- |
-| 256x256   | 0   | 3.9 us     | 4.5 us       | **1.2x** |
-| 1024x1024 | 0   | 79 us      | 82 us        | **1.0x** |
+| Size      | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
+| 256x256   | 0   | 3.7 us     | 4.2 us       | **1.1x** | 1.2 KB    | 2.1 KB      |
+| 1024x1024 | 0   | 85 us      | 85 us        | **1.0x** | 4.3 KB    | 8.3 KB      |
 
 ### Mean Along Dimension
 
 | Shape     | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
-| 256x256   | 1   | 4.3 us     | 13.6 us      | **3.2x** | 1.2 KB    | 524 KB      |
-| 1024x1024 | 1   | 85 us      | 216 us       | **2.5x** | 4.2 KB    | 8.4 MB      |
+| 256x256   | 1   | 3.9 us     | 13.7 us      | **3.5x** | 1.2 KB    | 524 KB      |
+| 1024x1024 | 1   | 78 us      | 209 us       | **2.7x** | 4.3 KB    | 8.4 MB      |
 
 ### Argmax
 
 | Shape     | Dim | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ---------- | ------------ | -------- | --------- | ----------- |
-| 1K (flat) | -   | 3.4 us     | 4.2 us       | **1.2x** | 104 B     | 8.3 KB      |
-| 256x256   | 1   | 221 us     | 250 us       | **1.1x** | 2.2 KB    | 524 KB      |
-| 1024x1024 | 1   | 3.34 ms    | 4.0 ms       | **1.2x** | 8.3 KB    | 8.4 MB      |
+| 1K (flat) | -   | 3.2 us     | 4.4 us       | **1.4x** | 120 B     | 8.3 KB      |
+| 256x256   | 1   | 201 us     | 264 us       | **1.3x** | 2.2 KB    | 528 KB      |
+| 1024x1024 | 1   | 3.26 ms    | 3.87 ms      | **1.2x** | 8.4 KB    | 8.4 MB      |
 
 ---
 

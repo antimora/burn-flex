@@ -347,11 +347,7 @@ enum ReduceOp {
 
 /// Optimized f32 dimension reduction with SIMD.
 fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor {
-    // Ensure contiguous for correct 3D+ stride handling
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
-    let ndims = shape.num_dims();
+    let ndims = tensor.layout().shape().num_dims();
 
     assert!(
         dim < ndims,
@@ -359,6 +355,23 @@ fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor
         dim,
         ndims
     );
+
+    // The optimized branches use strides[dim-1] and strides[dim+1] as flat strides
+    // to iterate the outer/inner regions. This only works when each region spans at
+    // most one dimension or when the tensor is contiguous (so strides are products
+    // of trailing dimensions). For non-contiguous tensors where these assumptions
+    // break, copy to contiguous first.
+    let outer_dims = dim;           // number of dimensions before `dim`
+    let inner_dims = ndims - dim - 1; // number of dimensions after `dim`
+    let needs_copy =
+        !tensor.is_contiguous() && (outer_dims > 1 || inner_dims > 1);
+    let tensor = if needs_copy {
+        tensor.to_contiguous()
+    } else {
+        tensor.clone()
+    };
+    let shape = tensor.layout().shape();
+    let strides = tensor.layout().strides();
 
     let dim_size = shape.dims[dim];
     let mut out_shape: Vec<usize> = shape.dims.clone();
@@ -611,18 +624,27 @@ where
     E: Element + bytemuck::Pod + Copy,
     F: Fn(E, E) -> E,
 {
-    // Ensure contiguous for correct 3D+ stride handling
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
-    let ndims = shape.num_dims();
-
+    let ndims = tensor.layout().shape().num_dims();
     assert!(
         dim < ndims,
         "dim {} out of bounds for {} dimensions",
         dim,
         ndims
     );
+
+    // Only copy when the flattened outer/inner stride assumption breaks:
+    // non-contiguous tensor with 2+ outer dims or 2+ inner dims.
+    let outer_dims = dim;
+    let inner_dims = ndims - dim - 1;
+    let needs_copy =
+        !tensor.is_contiguous() && (outer_dims > 1 || inner_dims > 1);
+    let tensor = if needs_copy {
+        tensor.to_contiguous()
+    } else {
+        tensor.clone()
+    };
+    let shape = tensor.layout().shape();
+    let strides = tensor.layout().strides();
 
     let dim_size = shape.dims[dim];
     let mut out_shape: Vec<usize> = shape.dims.clone();
@@ -665,6 +687,7 @@ fn reduce_dim_f16<F>(tensor: &EmberTensor, dim: usize, init: f32, reduce_fn: F) 
 where
     F: Fn(f32, f32) -> f32,
 {
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -717,6 +740,7 @@ fn reduce_dim_bf16<F>(tensor: &EmberTensor, dim: usize, init: f32, reduce_fn: F)
 where
     F: Fn(f32, f32) -> f32,
 {
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -814,6 +838,7 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
     tensor: &EmberTensor,
     dim: usize,
 ) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -868,6 +893,7 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
 }
 
 fn argmax_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -917,6 +943,7 @@ fn argmax_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
 }
 
 fn argmax_bf16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -969,6 +996,7 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
     tensor: &EmberTensor,
     dim: usize,
 ) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -1023,6 +1051,7 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
 }
 
 fn argmin_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -1072,6 +1101,7 @@ fn argmin_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
 }
 
 fn argmin_bf16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -1451,5 +1481,79 @@ mod tests {
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![10.0]);
+    }
+
+    // Regression tests: argmax/argmin on permuted 4D tensors (was index OOB)
+
+    #[test]
+    fn test_argmax_permuted_4d() {
+        // Shape [2,3,4,5] permuted to [2,4,3,5] via permute [0,2,1,3]
+        // argmax on dim 3 should work without panicking
+        let n = 2 * 3 * 4 * 5;
+        let data: Vec<f32> = (0..n).map(|i| i as f32).collect();
+        let tensor = EmberTensor::from_data(TensorData::new(data, [2, 3, 4, 5]));
+        let permuted = tensor.permute(&[0, 2, 1, 3]);
+
+        assert!(!permuted.is_contiguous());
+        assert_eq!(permuted.layout().shape().dims, vec![2, 4, 3, 5]);
+
+        let result = argmax(permuted.clone(), 3);
+        assert_eq!(result.layout().shape().dims, vec![2, 4, 3, 1]);
+
+        // Verify values are valid indices (0..5)
+        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        for &v in &values {
+            assert!(v >= 0 && v < 5, "argmax index out of range: {v}");
+        }
+
+        // Also test argmax on dim 2 of permuted tensor
+        let result = argmax(permuted, 2);
+        assert_eq!(result.layout().shape().dims, vec![2, 4, 1, 5]);
+        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        for &v in &values {
+            assert!(v >= 0 && v < 3, "argmax index out of range: {v}");
+        }
+    }
+
+    #[test]
+    fn test_argmin_permuted_4d() {
+        let n = 2 * 3 * 4 * 5;
+        let data: Vec<f32> = (0..n).map(|i| (n - i) as f32).collect();
+        let tensor = EmberTensor::from_data(TensorData::new(data, [2, 3, 4, 5]));
+        let permuted = tensor.permute(&[0, 2, 1, 3]);
+
+        assert!(!permuted.is_contiguous());
+
+        let result = argmin(permuted, 3);
+        assert_eq!(result.layout().shape().dims, vec![2, 4, 3, 1]);
+
+        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        for &v in &values {
+            assert!(v >= 0 && v < 5, "argmin index out of range: {v}");
+        }
+    }
+
+    #[test]
+    fn test_argmax_permuted_correctness() {
+        // Verify actual correctness, not just no-panic
+        // Data: [2,2,3] = [[[ 1, 2, 3], [ 4, 5, 6]],
+        //                   [[ 7, 8, 9], [10,11,12]]]
+        // Permute [0,2,1] -> [2,2,3] but with transposed middle dims:
+        //   [[[ 1, 2, 3], [ 7, 8, 9]],
+        //    [[ 4, 5, 6], [10,11,12]]]
+        // argmax on dim 2 of permuted:
+        //   row [1,2,3] -> idx 2, row [7,8,9] -> idx 2
+        //   row [4,5,6] -> idx 2, row [10,11,12] -> idx 2
+        let data: Vec<f32> = (1..=12).map(|i| i as f32).collect();
+        let tensor = EmberTensor::from_data(TensorData::new(data, [2, 2, 3]));
+        let permuted = tensor.permute(&[0, 2, 1]);
+        // Shape is now [2, 3, 2]
+
+        let result = argmax(permuted, 2);
+        assert_eq!(result.layout().shape().dims, vec![2, 3, 1]);
+        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        // For each row along dim 2, the second element (from the original dim 0 of 2x3 blocks)
+        // is always larger: [1 vs 4] -> idx 1, [2 vs 5] -> idx 1, etc.
+        assert_eq!(values, vec![1, 1, 1, 1, 1, 1]);
     }
 }
