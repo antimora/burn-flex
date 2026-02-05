@@ -13,10 +13,11 @@
 ## Bugs
 - [ ] Chained tensor op bugs
 - [ ] Reference counting for highly parallelized operations
+- [ ] int_matmul batch dimension mismatch
 
 ## Unimplemented Operations
 
-**Test status: 614 passed, 464 failed** (tensor tests only)
+**Test status: 669 passed, 409 failed** (tensor tests only)
 
 ### Critical (blocks many tests)
 - [x] `float_random` - implemented with no_std support (+63 tests now passing)
