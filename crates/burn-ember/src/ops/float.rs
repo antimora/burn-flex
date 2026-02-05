@@ -132,11 +132,60 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_cross(
-        _lhs: FloatTensor<Ember>,
-        _rhs: FloatTensor<Ember>,
-        _dim: usize,
+        lhs: FloatTensor<Ember>,
+        rhs: FloatTensor<Ember>,
+        dim: usize,
     ) -> FloatTensor<Ember> {
-        todo!("float_cross")
+        let shape = lhs.layout().shape();
+        let ndims = shape.num_dims();
+        assert_eq!(
+            shape.dims[dim], 3,
+            "cross product requires dimension {} to have size 3, got {}",
+            dim, shape.dims[dim]
+        );
+
+        // Helper to create slices that select index `idx` along `dim`
+        let make_slices = |idx: usize| -> alloc::vec::Vec<Slice> {
+            (0..ndims)
+                .map(|d| {
+                    if d == dim {
+                        Slice::new(idx as isize, Some((idx + 1) as isize), 1)
+                    } else {
+                        Slice::new(0, None, 1)
+                    }
+                })
+                .collect()
+        };
+
+        // Extract components along the dimension
+        // a = [a0, a1, a2], b = [b0, b1, b2]
+        let a0 = Self::float_slice(lhs.clone(), &make_slices(0));
+        let a1 = Self::float_slice(lhs.clone(), &make_slices(1));
+        let a2 = Self::float_slice(lhs, &make_slices(2));
+
+        let b0 = Self::float_slice(rhs.clone(), &make_slices(0));
+        let b1 = Self::float_slice(rhs.clone(), &make_slices(1));
+        let b2 = Self::float_slice(rhs, &make_slices(2));
+
+        // Cross product: c = a × b
+        // c0 = a1*b2 - a2*b1
+        // c1 = a2*b0 - a0*b2
+        // c2 = a0*b1 - a1*b0
+        let c0 = Self::float_sub(
+            Self::float_mul(a1.clone(), b2.clone()),
+            Self::float_mul(a2.clone(), b1.clone()),
+        );
+        let c1 = Self::float_sub(
+            Self::float_mul(a2, b0.clone()),
+            Self::float_mul(a0.clone(), b2),
+        );
+        let c2 = Self::float_sub(
+            Self::float_mul(a0, b1),
+            Self::float_mul(a1, b0),
+        );
+
+        // Concatenate along the dimension
+        Self::float_cat(vec![c0, c1, c2], dim)
     }
 
     fn float_recip(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
@@ -524,12 +573,18 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_unfold(
-        _tensor: FloatTensor<Ember>,
-        _dim: usize,
-        _size: usize,
-        _step: usize,
+        tensor: FloatTensor<Ember>,
+        dim: usize,
+        size: usize,
+        step: usize,
     ) -> FloatTensor<Ember> {
-        todo!("float_unfold")
+        match tensor.dtype() {
+            DType::F32 => crate::ops::unfold::unfold::<f32>(tensor, dim, size, step),
+            DType::F64 => crate::ops::unfold::unfold::<f64>(tensor, dim, size, step),
+            DType::F16 => crate::ops::unfold::unfold::<f16>(tensor, dim, size, step),
+            DType::BF16 => crate::ops::unfold::unfold::<bf16>(tensor, dim, size, step),
+            _ => panic!("float_unfold: unsupported dtype {:?}", tensor.dtype()),
+        }
     }
 }
 
@@ -717,5 +772,48 @@ mod tests {
         let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
 
         assert_eq!(data, vec![1i64, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_cross_product() {
+        // Cross product of [1, 0, 0] x [0, 1, 0] = [0, 0, 1]
+        let a: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 0.0, 0.0], &Default::default());
+        let b: Tensor<Ember, 1> = Tensor::from_data([0.0f32, 1.0, 0.0], &Default::default());
+        let result = a.cross(b, 0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![0.0, 0.0, 1.0]);
+
+        // Cross product of [1, 2, 3] x [4, 5, 6] = [-3, 6, -3]
+        let a: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 2.0, 3.0], &Default::default());
+        let b: Tensor<Ember, 1> = Tensor::from_data([4.0f32, 5.0, 6.0], &Default::default());
+        let result = a.cross(b, 0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![-3.0, 6.0, -3.0]);
+    }
+
+    #[test]
+    fn test_cross_product_2d() {
+        // Batched cross product: [[1,0,0], [0,1,0]] x [[0,1,0], [0,0,1]]
+        // = [[0,0,1], [1,0,0]]
+        let a: Tensor<Ember, 2> =
+            Tensor::from_data([[1.0f32, 0.0, 0.0], [0.0, 1.0, 0.0]], &Default::default());
+        let b: Tensor<Ember, 2> =
+            Tensor::from_data([[0.0f32, 1.0, 0.0], [0.0, 0.0, 1.0]], &Default::default());
+        let result = a.cross(b, 1); // dim=1 is the 3-element dimension
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_unfold() {
+        // Input: [1, 2, 3, 4, 5] shape [5]
+        // Unfold dim=0, size=3, step=1
+        // Output shape: [3, 3]
+        let t: Tensor<Ember, 1> =
+            Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &Default::default());
+        let result: Tensor<Ember, 2> = t.unfold(0, 3, 1);
+        assert_eq!(result.shape().dims, [3, 3]);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 3.0, 4.0, 5.0]);
     }
 }

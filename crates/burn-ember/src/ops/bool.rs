@@ -261,12 +261,12 @@ impl BoolTensorOps<Ember> for Ember {
     }
 
     fn bool_unfold(
-        _tensor: BoolTensor<Ember>,
-        _dim: usize,
-        _size: usize,
-        _step: usize,
+        tensor: BoolTensor<Ember>,
+        dim: usize,
+        size: usize,
+        step: usize,
     ) -> BoolTensor<Ember> {
-        todo!("bool_unfold")
+        crate::ops::unfold::unfold_bool(tensor, dim, size, step)
     }
 }
 
