@@ -23,7 +23,8 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Pooling          | 17         | 0            | 0     |
 | Conv Transpose   | 14         | 0            | 0     |
 | Interpolate      | 15         | 0            | 0     |
-| **Total**        | **193**    | **10**       | **6** |
+| Cross/Unfold     | 10         | 2            | 0     |
+| **Total**        | **203**    | **12**       | **6** |
 
 ---
 
@@ -742,6 +743,55 @@ Fastest mode using floor-based coordinate mapping.
 
 ---
 
+## Cross Product and Unfold Operations
+
+Cross product for 3D vectors and unfold (sliding window extraction) operations.
+
+### Cross Product
+
+Cross product computes c = a × b for 3-element vectors along a specified dimension. Ember uses slice-based component extraction with element-wise operations.
+
+| Shape          | Ember Time | NdArray Time | Speedup   | Ember Mem | NdArray Mem |
+| -------------- | ---------- | ------------ | --------- | --------- | ----------- |
+| 1K x 3         | 27 us      | 47 us        | **1.7x**  | 77 KB     | 1.6 MB      |
+| 64K x 3        | 1.58 ms    | 2.87 ms      | **1.8x**  | 4.7 MB    | 6.3 MB      |
+| 256K x 3       | 6.25 ms    | 11.7 ms      | **1.9x**  | 18.9 MB   | 25.2 MB     |
+| 64 x 3 x 64    | 145 us     | 304 us       | **2.1x**  | 300 KB    | 780 KB      |
+
+### Unfold (Sliding Window Extraction)
+
+Unfold extracts sliding windows from a tensor along a dimension. Output shape: `[..., windows, ..., window_size]`.
+
+**1D Unfold**
+
+| Input Size | Window | Step | Ember Time | NdArray Time | Speedup    | Ember Mem | NdArray Mem |
+| ---------- | ------ | ---- | ---------- | ------------ | ---------- | --------- | ----------- |
+| 1K         | 8      | 1    | 9.7 us     | 110 us       | **11x**    | 33 KB     | 196 KB      |
+| 64K        | 8      | 1    | 580 us     | 7.07 ms      | **12x**    | 2.1 MB    | 12.6 MB     |
+| 64K        | 64     | 1    | 4.68 ms    | 7.54 ms      | **1.6x**   | 16.8 MB   | 41.9 MB     |
+| 64K        | 64     | 32   | 146 us     | 262 us       | **1.8x**   | 524 KB    | 1.8 MB      |
+
+**2D/3D Unfold**
+
+| Shape       | Dim | Window | Step | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| ----------- | --- | ------ | ---- | ---------- | ------------ | -------- | --------- | ----------- |
+| 256x256     | 1   | 8      | 1    | 800 us     | 914 us       | **1.1x** | 2.0 MB    | 4.6 MB      |
+| 256x256     | 1   | 32     | 16   | 198 us     | 68 us        | 0.3x     | 492 KB    | 1.5 MB      |
+| 1024x256    | 1   | 8      | 1    | 3.35 ms    | 3.44 ms      | ~1.0x    | 8.2 MB    | 18.5 MB     |
+| 32x64x64    | 2   | 8      | 4    | 610 us     | 437 us       | 0.7x     | 3.0 MB    | 3.0 MB      |
+
+**Key observations:**
+
+1. **Cross product**: Ember 1.7-2.1x faster with slice-based component extraction
+2. **1D unfold**: Ember **11-12x faster** due to direct index computation vs NdArray's per-window allocation overhead
+3. **Large windows with small steps**: Both backends similar (compute-bound)
+4. **Large steps (sparse windows)**: NdArray faster when it can use strided views without copying
+5. **Memory efficiency**: Ember uses 2-6x less memory on most operations
+
+**Trade-off analysis:** Ember copies data for each window while NdArray can use strided views for certain access patterns. Ember wins decisively on 1D operations and small step sizes where the copy cost is amortized. NdArray wins on 2D/3D with large steps where strided views avoid data movement entirely.
+
+---
+
 ## Key Observations
 
 ### Performance Wins
@@ -771,6 +821,8 @@ Fastest mode using floor-based coordinate mapping.
 23. **powf/atan2**: Ember 1.1-1.2x faster with standard library implementations
 24. **Gather/scatter**: Ember 5-11x faster with specialized 2D paths and adaptive parallelization
 25. **Select/select_add**: Ember 2-8x faster with bulk row copies and parallelization threshold
+26. **Cross product**: Ember 1.7-2.1x faster with slice-based component extraction
+27. **Unfold (1D)**: Ember 11-12x faster due to direct index computation vs per-window allocation
 
 ### Memory Efficiency
 
@@ -785,6 +837,7 @@ Fastest mode using floor-based coordinate mapping.
 1. **Boolean ops**: NdArray ~20% faster on bool_not
 2. **Integer matmul**: Both backends similar; neither has SIMD optimization
 3. **Cumsum dim=0 on 2D**: NdArray 5x faster due to better cache access patterns for outer dimension
+4. **Unfold with large steps**: NdArray 1.4-3x faster on 2D/3D unfold with large step sizes (uses strided views)
 
 ### Arc-based COW Analysis
 
@@ -852,4 +905,5 @@ cargo bench --bench conv_ops --features simd,rayon,gemm
 cargo bench --bench pool_ops --features simd,rayon,gemm
 cargo bench --bench conv_transpose_ops --features simd,rayon,gemm
 cargo bench --bench interpolate_ops --features simd,rayon,gemm
+cargo bench --bench cross_unfold_ops --features simd,rayon,gemm
 ```
