@@ -547,11 +547,11 @@ Fastest mode using floor-based coordinate mapping.
 
 | Input Shape      | Output Size | Ember Time | NdArray Time | Speedup   |
 | ---------------- | ----------- | ---------- | ------------ | --------- |
-| 1x3x64x64        | 128x128     | 58 us      | 161 us       | **2.8x**  |
-| 1x3x32x32        | 128x128     | 55 us      | 161 us       | **2.9x**  |
-| 1x3x256x256      | 128x128     | 63 us      | 186 us       | **2.9x**  |
-| 8x3x64x64        | 128x128     | 101 us     | 350 us       | **3.5x**  |
-| 1x64x32x32       | 64x64       | 84 us      | 294 us       | **3.5x**  |
+| 1x3x64x64        | 128x128     | 63 us      | 171 us       | **2.7x**  |
+| 1x3x32x32        | 128x128     | 61 us      | 165 us       | **2.7x**  |
+| 1x3x256x256      | 128x128     | 66 us      | 198 us       | **3.0x**  |
+| 8x3x64x64        | 128x128     | 92 us      | 352 us       | **3.8x**  |
+| 1x64x32x32       | 64x64       | 83 us      | 276 us       | **3.3x**  |
 
 ### Bilinear Interpolation
 
@@ -559,11 +559,11 @@ Fastest mode using floor-based coordinate mapping.
 
 | Input Shape      | Output Size | Ember Time | NdArray Time | Speedup   |
 | ---------------- | ----------- | ---------- | ------------ | --------- |
-| 1x3x64x64        | 128x128     | 83 us      | 166 us       | **2.0x**  |
-| 1x3x32x32        | 128x128     | 81 us      | 167 us       | **2.1x**  |
-| 1x3x256x256      | 128x128     | 80 us      | 204 us       | **2.5x**  |
-| 8x3x64x64        | 128x128     | 165 us     | 433 us       | **2.6x**  |
-| 1x64x32x32       | 64x64       | 109 us     | 351 us       | **3.2x**  |
+| 1x3x64x64        | 128x128     | 84 us      | 183 us       | **2.2x**  |
+| 1x3x32x32        | 128x128     | 90 us      | 171 us       | **1.9x**  |
+| 1x3x256x256      | 128x128     | 108 us     | 214 us       | **2.0x**  |
+| 8x3x64x64        | 128x128     | 170 us     | 440 us       | **2.6x**  |
+| 1x64x32x32       | 64x64       | 219 us     | 367 us       | **1.7x**  |
 
 ### Bicubic Interpolation
 
@@ -574,7 +574,7 @@ Fastest mode using floor-based coordinate mapping.
 | 1x3x64x64        | 128x128     | 195 us     | 262 us       | **1.34x** |
 | 1x3x32x32        | 128x128     | 212 us     | 265 us       | **1.25x** |
 | 1x3x256x256      | 128x128     | 198 us     | 301 us       | **1.52x** |
-| 8x3x64x64        | 128x128     | 934 us     | 1103 us      | **1.18x** |
+| 8x3x64x64        | 128x128     | 934 us     | 1.1 ms       | **1.18x** |
 | 1x64x32x32       | 64x64       | 668 us     | 795 us       | **1.19x** |
 
 ### Memory Efficiency
@@ -587,8 +587,8 @@ Fastest mode using floor-based coordinate mapping.
 
 **Key observations:**
 
-1. **Nearest mode**: Ember 2.8-3.5x faster with rayon parallelism
-2. **Bilinear mode**: Ember 2.0-3.2x faster across all configurations
+1. **Nearest mode**: Ember 2.7-3.8x faster with rayon parallelism
+2. **Bilinear mode**: Ember 1.7-2.6x faster across all configurations
 3. **Bicubic mode**: Ember 1.18-1.52x faster with adaptive parallelization
 4. **Memory**: Ember uses ~1.5x less memory across all modes
 
@@ -616,8 +616,8 @@ Fastest mode using floor-based coordinate mapping.
 14. **Pooling memory**: Ember uses 8-128x less memory for pooling operations
 15. **Conv transpose**: Ember 1.1-1.9x faster with scatter-based algorithm
 16. **Conv transpose memory**: Ember uses 1.2-336x less memory (extreme savings on small inputs)
-17. **Nearest interpolate**: Ember 2.8-3.5x faster with rayon parallelism
-18. **Bilinear interpolate**: Ember 2.0-3.2x faster across all configurations
+17. **Nearest interpolate**: Ember 2.7-3.8x faster with rayon parallelism
+18. **Bilinear interpolate**: Ember 1.7-2.6x faster across all configurations
 19. **Bicubic interpolate**: Ember 1.18-1.52x faster with adaptive parallelization
 
 ### Memory Efficiency
