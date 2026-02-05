@@ -11,6 +11,7 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Category        | Ember Wins | NdArray Wins | Ties  |
 | --------------- | ---------- | ------------ | ----- |
 | Binary Ops      | 11         | 0            | 0     |
+| Int Binary Ops  | 12         | 0            | 1     |
 | Matrix Multiply | 16         | 5            | 1     |
 | Slice Ops       | 18         | 0            | 0     |
 | Reduce Ops      | 16         | 0            | 0     |
@@ -20,7 +21,7 @@ Benchmarks comparing burn-ember against burn-ndarray on Apple M1 Max.
 | Pooling         | 17         | 0            | 0     |
 | Conv Transpose  | 14         | 0            | 0     |
 | Interpolate     | 15         | 0            | 0     |
-| **Total**       | **154**    | **9**        | **5** |
+| **Total**       | **166**    | **9**        | **6** |
 
 ---
 
@@ -57,6 +58,40 @@ mutation for unique tensors.
 
 **Key improvement**: Arc-based COW now enables true in-place mutation when tensor is uniquely owned.
 This nearly doubles performance vs previous implementation (was 1.4-1.8x, now 2.6-4.2x).
+
+---
+
+## Int Binary Operations
+
+Integer element-wise operations using i64 dtype. Uses same in-place optimization as float ops.
+
+### Tensor-Tensor Operations (i64)
+
+| Operation | Size         | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | ------------ | ---------- | ------------ | -------- | --------- | ----------- |
+| int_add   | small (4K)   | 846 ns     | 4.55 us      | **5.4x** | 32.9 KB   | 98.5 KB     |
+| int_add   | medium (64K) | 16.4 us    | 41.2 us      | **2.5x** | 524 KB    | 1.57 MB     |
+| int_add   | large (1M)   | 225 us     | 746 us       | **3.3x** | 8.4 MB    | 25.2 MB     |
+| int_mul   | small (4K)   | 1.37 us    | 4.88 us      | **3.6x** | 32.9 KB   | 98.4 KB     |
+| int_mul   | medium (64K) | 19.1 us    | 48.5 us      | **2.5x** | 524 KB    | 1.57 MB     |
+| int_mul   | large (1M)   | 241 us     | 711 us       | **2.9x** | 8.4 MB    | 25.2 MB     |
+| int_div   | large (1M)   | 610 us     | 1094 us      | **1.8x** | 8.4 MB    | 25.2 MB     |
+
+### Transposed Input Operations (i64)
+
+| Operation | Size      | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| --------- | --------- | ---------- | ------------ | -------- | --------- | ----------- |
+| int_add   | 256x256   | 56 us      | 72 us        | **1.3x** | 524 KB    | 1.05 MB     |
+| int_add   | 1024x1024 | 1.49 ms    | 1.39 ms      | 0.93x    | 8.4 MB    | 16.8 MB     |
+
+### Scalar Operations (i64)
+
+| Operation      | Size       | Ember Time | NdArray Time | Speedup  | Ember Mem | NdArray Mem |
+| -------------- | ---------- | ---------- | ------------ | -------- | --------- | ----------- |
+| int_add_scalar | large (1M) | 152 us     | 420 us       | **2.8x** | 8.4 MB    | 16.8 MB     |
+| int_mul_scalar | large (1M) | 284 us     | 462 us       | **1.6x** | 8.4 MB    | 16.8 MB     |
+
+**Key observation**: Ember wins on all contiguous int operations (1.6-5.4x faster). The transposed 1024x1024 case is ~tied, indicating room for optimization on non-contiguous int paths.
 
 ---
 
@@ -601,29 +636,31 @@ Fastest mode using floor-based coordinate mapping.
 ### Performance Wins
 
 1. **Matrix multiplication**: Ember 1.3-3.4x faster on f32 with gemm + rayon parallelism
-2. **Binary ops**: Ember 2.6-4.2x faster due to Arc-based COW in-place mutation and NEON SIMD
-3. **Slice operations**: Ember 60-2300x faster using zero-copy views vs data copying
-4. **Reduce dim=0**: Ember 2.7-4.1x faster using cache-friendly scatter-add pattern
-5. **Scalar ops**: Ember 2.6x faster with in-place mutation
-6. **Unary trig ops**: Ember 1.5-2.1x faster on tanh, sin, cos
-7. **Expand (broadcast)**: Ember 530-2850x faster using zero-copy stride manipulation
-8. **Comparison ops (contiguous)**: Ember 2.5-3.2x faster with NEON SIMD for f32
-9. **Broadcast comparisons**: Ember 2.7-3.3x faster with optimized outer-product SIMD
-10. **Convolutions**: Ember 1.1-3.3x faster on all kernel sizes with tiled im2col + NHWC layout
-11. **Batched convolutions**: Ember 3.6-5.3x faster with nested parallelism (batch + tile)
-12. **Conv1d**: Ember 3-9x faster via unified 3D tiled approach
-13. **Pooling**: Ember 1.2-12x faster with rayon parallelism over (batch, channel) pairs
-14. **Pooling memory**: Ember uses 8-128x less memory for pooling operations
-15. **Conv transpose**: Ember 1.1-1.9x faster with scatter-based algorithm
-16. **Conv transpose memory**: Ember uses 1.2-336x less memory (extreme savings on small inputs)
-17. **Nearest interpolate**: Ember 2.7-3.8x faster with rayon parallelism
-18. **Bilinear interpolate**: Ember 1.7-2.6x faster across all configurations
-19. **Bicubic interpolate**: Ember 1.18-1.52x faster with adaptive parallelization
+2. **Binary ops (float)**: Ember 2.6-4.2x faster due to Arc-based COW in-place mutation and NEON SIMD
+3. **Binary ops (int)**: Ember 1.6-5.4x faster on i64 with same in-place optimization
+4. **Slice operations**: Ember 60-2300x faster using zero-copy views vs data copying
+5. **Reduce dim=0**: Ember 2.7-4.1x faster using cache-friendly scatter-add pattern
+6. **Scalar ops**: Ember 2.6x faster with in-place mutation
+7. **Unary trig ops**: Ember 1.5-2.1x faster on tanh, sin, cos
+8. **Expand (broadcast)**: Ember 530-2850x faster using zero-copy stride manipulation
+9. **Comparison ops (contiguous)**: Ember 2.5-3.2x faster with NEON SIMD for f32
+10. **Broadcast comparisons**: Ember 2.7-3.3x faster with optimized outer-product SIMD
+11. **Convolutions**: Ember 1.1-3.3x faster on all kernel sizes with tiled im2col + NHWC layout
+12. **Batched convolutions**: Ember 3.6-5.3x faster with nested parallelism (batch + tile)
+13. **Conv1d**: Ember 3-9x faster via unified 3D tiled approach
+14. **Pooling**: Ember 1.2-12x faster with rayon parallelism over (batch, channel) pairs
+15. **Pooling memory**: Ember uses 8-128x less memory for pooling operations
+16. **Conv transpose**: Ember 1.1-1.9x faster with scatter-based algorithm
+17. **Conv transpose memory**: Ember uses 1.2-336x less memory (extreme savings on small inputs)
+18. **Nearest interpolate**: Ember 2.7-3.8x faster with rayon parallelism
+19. **Bilinear interpolate**: Ember 1.7-2.6x faster across all configurations
+20. **Bicubic interpolate**: Ember 1.18-1.52x faster with adaptive parallelization
 
 ### Memory Efficiency
 
 - Ember typically allocates 50-70% less memory than NdArray
-- Binary ops: 4.2 MB vs 12.6 MB for 1M elements (3x less)
+- Binary ops (float): 4.2 MB vs 12.6 MB for 1M elements (3x less)
+- Binary ops (int): 8.4 MB vs 25.2 MB for 1M elements (3x less)
 - Slice ops: 80-240 bytes vs kilobytes-megabytes (zero-copy views)
 - Reduce ops: kilobytes vs megabytes (output-only allocation)
 
