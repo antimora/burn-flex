@@ -171,12 +171,12 @@ impl IntTensorOps<Ember> for Ember {
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a / b)
     }
 
-    fn int_remainder(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_remainder")
+    fn int_remainder(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a % b)
     }
 
-    fn int_remainder_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("int_remainder_scalar")
+    fn int_remainder_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a % b)
     }
 
     fn int_into_float(tensor: IntTensor<Ember>) -> FloatTensor<Ember> {

@@ -118,12 +118,13 @@ impl FloatTensorOps<Ember> for Ember {
         scalar_op(lhs, rhs_val, |a, b| a / b, |a, b| a / b)
     }
 
-    fn float_remainder(_lhs: FloatTensor<Ember>, _rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("float_remainder")
+    fn float_remainder(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        binary_op(lhs, rhs, |a, b| a % b, |a, b| a % b)
     }
 
-    fn float_remainder_scalar(_lhs: FloatTensor<Ember>, _rhs: Scalar) -> FloatTensor<Ember> {
-        todo!("float_remainder_scalar")
+    fn float_remainder_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
+        let rhs_val = rhs.to_f64().unwrap();
+        scalar_op(lhs, rhs_val, |a, b| a % b, |a, b| a % b)
     }
 
     fn float_matmul(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {

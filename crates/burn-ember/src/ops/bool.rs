@@ -194,8 +194,14 @@ impl BoolTensorOps<Ember> for Ember {
         Self::bool_empty(shape, device)
     }
 
-    fn bool_ones(_shape: Shape, _device: &Device<Ember>) -> BoolTensor<Ember> {
-        todo!("bool_ones")
+    fn bool_ones(shape: Shape, _device: &Device<Ember>) -> BoolTensor<Ember> {
+        let num_elements = shape.num_elements();
+        let data = vec![1u8; num_elements];
+        EmberTensor::new(
+            Bytes::from_elems(data),
+            Layout::contiguous(shape),
+            DType::Bool,
+        )
     }
 
     fn bool_mask_where(
