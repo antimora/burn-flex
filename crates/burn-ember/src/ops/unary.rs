@@ -696,6 +696,96 @@ mod tests {
     }
 
     #[test]
+    fn test_sin_step_sliced() {
+        // Step-2 slice creates stride=2 on last dim, which previously broke
+        // block_starts() iteration in the unary op path.
+        //
+        // [0, 1, 2, 3, 4, 5, 6, 7] shape [1, 4]
+        // slice(s![.., 0..;2]) -> [0, 2, 4, 6] shape [1, 2] with strides [4, 2]
+        let tensor = EmberTensor::from_data(TensorData::new(
+            vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+            vec![1, 8],
+        ));
+
+        // Step-2 slice: take even-indexed elements
+        let sliced = crate::ops::slice::slice(
+            tensor,
+            &[
+                burn_backend::Slice {
+                    start: 0,
+                    end: None,
+                    step: 1,
+                },
+                burn_backend::Slice {
+                    start: 0,
+                    end: None,
+                    step: 2,
+                },
+            ],
+        );
+        assert_eq!(sliced.layout().shape().dims, &[1, 4]);
+        assert_eq!(sliced.layout().strides()[1], 2); // stride=2 on last dim
+
+        // Verify the sliced data is correct before applying sin
+        let sliced_data: Vec<f32> = sliced.clone().into_data().to_vec().unwrap();
+        assert_approx_eq(&sliced_data, &[0.0, 2.0, 4.0, 6.0], 1e-6);
+
+        // Apply sin to the step-sliced tensor
+        let result = sin(sliced);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        let expected: Vec<f32> = vec![0.0f32, 2.0, 4.0, 6.0]
+            .iter()
+            .map(|x| x.sin())
+            .collect();
+        assert_approx_eq(&data, &expected, 1e-6);
+    }
+
+    #[test]
+    fn test_cos_step_sliced_3d() {
+        // 3D tensor with step-2 slice on last dim (the RF-DETR pattern)
+        // shape [1, 2, 6] -> slice(s![.., .., 0..;2]) -> shape [1, 2, 3] with stride[2]=2
+        let vals: Vec<f32> = (0..12).map(|i| i as f32 * 0.5).collect();
+        let tensor = EmberTensor::from_data(TensorData::new(vals, vec![1, 2, 6]));
+
+        let sliced = crate::ops::slice::slice(
+            tensor,
+            &[
+                burn_backend::Slice {
+                    start: 0,
+                    end: None,
+                    step: 1,
+                },
+                burn_backend::Slice {
+                    start: 0,
+                    end: None,
+                    step: 1,
+                },
+                burn_backend::Slice {
+                    start: 0,
+                    end: None,
+                    step: 2,
+                },
+            ],
+        );
+        assert_eq!(sliced.layout().shape().dims, &[1, 2, 3]);
+
+        let sliced_data: Vec<f32> = sliced.clone().into_data().to_vec().unwrap();
+        // Even indices: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0] -> [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+        // Wait, original is [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5]
+        // shape [1, 2, 6]: row0 = [0, 0.5, 1.0, 1.5, 2.0, 2.5], row1 = [3.0, 3.5, 4.0, 4.5, 5.0, 5.5]
+        // step-2 on last: row0 = [0, 1.0, 2.0], row1 = [3.0, 4.0, 5.0]
+        assert_approx_eq(&sliced_data, &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 1e-6);
+
+        let result = cos(sliced);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        let expected: Vec<f32> = [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0]
+            .iter()
+            .map(|x| x.cos())
+            .collect();
+        assert_approx_eq(&data, &expected, 1e-6);
+    }
+
+    #[test]
     fn test_log_3d_transposed() {
         // 3D tensor with permuted dimensions
         // Shape [2, 2, 2] -> permute to [2, 2, 2] with different strides

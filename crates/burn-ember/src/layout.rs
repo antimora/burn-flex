@@ -408,7 +408,7 @@ impl<'a> StridedBlocks<'a> {
                     if layout.strides[i] == expected_stride {
                         expected_stride *= layout.shape.dims[i] as isize;
                     } else {
-                        outer_dims = ndims - i;
+                        outer_dims = i + 1;
                         break;
                     }
                 }
