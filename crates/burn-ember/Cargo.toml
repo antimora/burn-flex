@@ -83,3 +83,7 @@ harness = false
 [[bench]]
 name = "cumulative_ops"
 harness = false
+
+[[bench]]
+name = "cross_unfold_ops"
+harness = false
