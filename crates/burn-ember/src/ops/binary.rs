@@ -459,6 +459,69 @@ fn make_tensor<E: bytemuck::Pod + Send + Sync>(
     EmberTensor::new(bytes, layout, dtype)
 }
 
+/// Apply a binary operation element-wise to two integer tensors.
+///
+/// Supports all integer dtypes: I64, I32, I16, I8, U64, U32, U16, U8.
+pub fn int_binary_op<Op>(lhs: EmberTensor, rhs: EmberTensor, op: Op) -> EmberTensor
+where
+    Op: Fn(i64, i64) -> i64 + Copy,
+{
+    debug_assert_eq!(
+        lhs.layout().shape(),
+        rhs.layout().shape(),
+        "int_binary_op: shape mismatch"
+    );
+    debug_assert_eq!(lhs.dtype(), rhs.dtype(), "int_binary_op: dtype mismatch");
+
+    let dtype = lhs.dtype();
+
+    match dtype {
+        DType::I64 => binary_op_typed(lhs, &rhs, op),
+        DType::I32 => binary_op_typed(lhs, &rhs, |a: i32, b: i32| op(a as i64, b as i64) as i32),
+        DType::I16 => binary_op_typed(lhs, &rhs, |a: i16, b: i16| op(a as i64, b as i64) as i16),
+        DType::I8 => binary_op_typed(lhs, &rhs, |a: i8, b: i8| op(a as i64, b as i64) as i8),
+        DType::U64 => binary_op_typed(lhs, &rhs, |a: u64, b: u64| op(a as i64, b as i64) as u64),
+        DType::U32 => binary_op_typed(lhs, &rhs, |a: u32, b: u32| op(a as i64, b as i64) as u32),
+        DType::U16 => binary_op_typed(lhs, &rhs, |a: u16, b: u16| op(a as i64, b as i64) as u16),
+        DType::U8 => binary_op_typed(lhs, &rhs, |a: u8, b: u8| op(a as i64, b as i64) as u8),
+        _ => panic!("int_binary_op: unsupported dtype {:?}", dtype),
+    }
+}
+
+/// Apply a scalar operation to each element of an integer tensor.
+pub fn int_scalar_op<Op>(tensor: EmberTensor, scalar: i64, op: Op) -> EmberTensor
+where
+    Op: Fn(i64, i64) -> i64 + Copy,
+{
+    let dtype = tensor.dtype();
+
+    match dtype {
+        DType::I64 => scalar_op_typed(tensor, scalar, op),
+        DType::I32 => scalar_op_typed(tensor, scalar as i32, |a: i32, b: i32| {
+            op(a as i64, b as i64) as i32
+        }),
+        DType::I16 => scalar_op_typed(tensor, scalar as i16, |a: i16, b: i16| {
+            op(a as i64, b as i64) as i16
+        }),
+        DType::I8 => scalar_op_typed(tensor, scalar as i8, |a: i8, b: i8| {
+            op(a as i64, b as i64) as i8
+        }),
+        DType::U64 => scalar_op_typed(tensor, scalar as u64, |a: u64, b: u64| {
+            op(a as i64, b as i64) as u64
+        }),
+        DType::U32 => scalar_op_typed(tensor, scalar as u32, |a: u32, b: u32| {
+            op(a as i64, b as i64) as u32
+        }),
+        DType::U16 => scalar_op_typed(tensor, scalar as u16, |a: u16, b: u16| {
+            op(a as i64, b as i64) as u16
+        }),
+        DType::U8 => scalar_op_typed(tensor, scalar as u8, |a: u8, b: u8| {
+            op(a as i64, b as i64) as u8
+        }),
+        _ => panic!("int_scalar_op: unsupported dtype {:?}", dtype),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

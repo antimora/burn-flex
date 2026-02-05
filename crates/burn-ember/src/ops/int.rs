@@ -8,6 +8,7 @@ use burn_backend::{
 use burn_std::{IntDType, Shape, Slice};
 use num_traits::ToPrimitive;
 
+use crate::ops::binary::{int_binary_op, int_scalar_op};
 use crate::{Ember, EmberTensor, ops::matmul};
 
 impl IntTensorOps<Ember> for Ember {
@@ -137,36 +138,36 @@ impl IntTensorOps<Ember> for Ember {
         crate::ops::comparison::int_lower_equal_elem(lhs, rhs.to_f64().unwrap() as i64)
     }
 
-    fn int_add(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_add")
+    fn int_add(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a + b)
     }
 
-    fn int_add_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("int_add_scalar")
+    fn int_add_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a + b)
     }
 
-    fn int_sub(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_sub")
+    fn int_sub(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a - b)
     }
 
-    fn int_sub_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("int_sub_scalar")
+    fn int_sub_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a - b)
     }
 
-    fn int_mul(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_mul")
+    fn int_mul(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a * b)
     }
 
-    fn int_mul_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("int_mul_scalar")
+    fn int_mul_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a * b)
     }
 
-    fn int_div(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_div")
+    fn int_div(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a / b)
     }
 
-    fn int_div_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("int_div_scalar")
+    fn int_div_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a / b)
     }
 
     fn int_remainder(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
@@ -312,5 +313,123 @@ impl IntTensorOps<Ember> for Ember {
         _step: usize,
     ) -> IntTensor<Ember> {
         todo!("int_unfold")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use burn_tensor::{Int, Tensor, TensorData};
+
+    use crate::Ember;
+
+    #[test]
+    fn test_int_add() {
+        let a: Tensor<Ember, 2, Int> =
+            Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let b: Tensor<Ember, 2, Int> =
+            Tensor::from_data([[5i64, 6], [7, 8]], &Default::default());
+
+        let result = a + b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([[6i64, 8], [10, 12]]));
+    }
+
+    #[test]
+    fn test_int_sub() {
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([10i64, 20, 30], &Default::default());
+        let b: Tensor<Ember, 1, Int> = Tensor::from_data([1i64, 2, 3], &Default::default());
+
+        let result = a - b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([9i64, 18, 27]));
+    }
+
+    #[test]
+    fn test_int_mul() {
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([2i64, 3, 4], &Default::default());
+        let b: Tensor<Ember, 1, Int> = Tensor::from_data([5i64, 6, 7], &Default::default());
+
+        let result = a * b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([10i64, 18, 28]));
+    }
+
+    #[test]
+    fn test_int_div() {
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([10i64, 21, 35], &Default::default());
+        let b: Tensor<Ember, 1, Int> = Tensor::from_data([2i64, 7, 5], &Default::default());
+
+        let result = a / b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([5i64, 3, 7]));
+    }
+
+    #[test]
+    fn test_int_add_scalar() {
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([1i64, 2, 3], &Default::default());
+        let result = a + 10;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([11i64, 12, 13]));
+    }
+
+    #[test]
+    fn test_int_sub_scalar() {
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([10i64, 20, 30], &Default::default());
+        let result = a - 5;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([5i64, 15, 25]));
+    }
+
+    #[test]
+    fn test_int_mul_scalar() {
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([1i64, 2, 3], &Default::default());
+        let result = a * 3;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([3i64, 6, 9]));
+    }
+
+    #[test]
+    fn test_int_div_scalar() {
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([10i64, 20, 30], &Default::default());
+        let result = a / 5;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([2i64, 4, 6]));
+    }
+
+    #[test]
+    fn test_int_add_transposed() {
+        let a: Tensor<Ember, 2, Int> =
+            Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let b: Tensor<Ember, 2, Int> =
+            Tensor::from_data([[10i64, 20], [30, 40]], &Default::default());
+
+        let a_t = a.transpose();
+        let b_t = b.transpose();
+
+        let result = a_t + b_t;
+        let data = result.into_data();
+
+        // a_t = [[1, 3], [2, 4]], b_t = [[10, 30], [20, 40]]
+        // result = [[11, 33], [22, 44]]
+        assert_eq!(data, TensorData::from([[11i64, 33], [22, 44]]));
+    }
+
+    #[test]
+    fn test_int_negative_values() {
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([-5i64, 10, -15], &Default::default());
+        let b: Tensor<Ember, 1, Int> = Tensor::from_data([5i64, -10, 15], &Default::default());
+
+        let result = a + b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([0i64, 0, 0]));
     }
 }
