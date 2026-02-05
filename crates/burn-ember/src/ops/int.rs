@@ -468,4 +468,97 @@ mod tests {
 
         assert_eq!(data, vec![1.0f32, 2.0, 3.0, 4.0]);
     }
+
+    // === Non-contiguous (negative stride) tests ===
+
+    #[test]
+    fn test_int_add_flipped() {
+        // [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
+        // [10, 20, 30, 40] flipped -> [40, 30, 20, 10]
+        // [4, 3, 2, 1] + [40, 30, 20, 10] = [44, 33, 22, 11]
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([1i64, 2, 3, 4], &Default::default());
+        let b: Tensor<Ember, 1, Int> = Tensor::from_data([10i64, 20, 30, 40], &Default::default());
+
+        let a = a.flip([0]);
+        let b = b.flip([0]);
+
+        let result = a + b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([44i64, 33, 22, 11]));
+    }
+
+    #[test]
+    fn test_int_sub_flipped() {
+        // [10, 20, 30, 40] flipped -> [40, 30, 20, 10]
+        // [1, 2, 3, 4] (contiguous)
+        // [40, 30, 20, 10] - [1, 2, 3, 4] = [39, 28, 17, 6]
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([10i64, 20, 30, 40], &Default::default());
+        let b: Tensor<Ember, 1, Int> = Tensor::from_data([1i64, 2, 3, 4], &Default::default());
+
+        let a = a.flip([0]);
+
+        let result = a - b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([39i64, 28, 17, 6]));
+    }
+
+    #[test]
+    fn test_int_mul_flipped_2d() {
+        // [[1, 2], [3, 4]] with axis 0 flipped -> [[3, 4], [1, 2]]
+        // [[10, 20], [30, 40]]
+        // [[3, 4], [1, 2]] * [[10, 20], [30, 40]] = [[30, 80], [30, 80]]
+        let a: Tensor<Ember, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let b: Tensor<Ember, 2, Int> =
+            Tensor::from_data([[10i64, 20], [30, 40]], &Default::default());
+
+        let a = a.flip([0]);
+
+        let result = a * b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([[30i64, 80], [30, 80]]));
+    }
+
+    #[test]
+    fn test_int_add_scalar_flipped() {
+        // [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
+        // [4, 3, 2, 1] + 10 = [14, 13, 12, 11]
+        let a: Tensor<Ember, 1, Int> = Tensor::from_data([1i64, 2, 3, 4], &Default::default());
+        let a = a.flip([0]);
+
+        let result = a + 10;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([14i64, 13, 12, 11]));
+    }
+
+    #[test]
+    fn test_int_into_float_flipped() {
+        // [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
+        // Convert to float: [4.0, 3.0, 2.0, 1.0]
+        let t: Tensor<Ember, 1, Int> = Tensor::from_data([1i64, 2, 3, 4], &Default::default());
+        let t = t.flip([0]);
+        let float_t: Tensor<Ember, 1> = t.float();
+        let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![4.0f32, 3.0, 2.0, 1.0]);
+    }
+
+    #[test]
+    fn test_int_mul_flipped_both_axes() {
+        // [[1, 2], [3, 4]] flipped on both axes -> [[4, 3], [2, 1]]
+        // [[5, 5], [5, 5]]
+        // [[4, 3], [2, 1]] * [[5, 5], [5, 5]] = [[20, 15], [10, 5]]
+        let a: Tensor<Ember, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let b: Tensor<Ember, 2, Int> = Tensor::from_data([[5i64, 5], [5, 5]], &Default::default());
+
+        let a = a.flip([0, 1]);
+
+        let result = a * b;
+        let data = result.into_data();
+
+        assert_eq!(data, TensorData::from([[20i64, 15], [10, 5]]));
+    }
 }

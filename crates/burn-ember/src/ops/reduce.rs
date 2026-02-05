@@ -375,8 +375,11 @@ fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor
         ReduceOp::Prod => (1.0, |a, b| a * b),
     };
 
-    // Check if inner dimension is contiguous (stride = 1)
-    let inner_contiguous = dim + 1 >= ndims || strides[ndims - 1] == 1;
+    // Check for negative strides (from flip operations) - fall back to general case
+    let has_negative_strides = strides.iter().any(|&s| s < 0);
+
+    // Check if inner dimension is contiguous (stride = 1) and no negative strides
+    let inner_contiguous = !has_negative_strides && (dim + 1 >= ndims || strides[ndims - 1] == 1);
 
     let result: Vec<f32> = if inner_contiguous && dim == ndims - 1 {
         // Reducing last dimension with contiguous data: use SIMD
@@ -1284,5 +1287,165 @@ mod tests {
         let result_data = result.into_data();
         let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![1]); // index of 5
+    }
+
+    // === Non-contiguous / negative stride tests ===
+
+    #[test]
+    fn test_sum_flipped() {
+        // [1, 2, 3, 4, 5] flipped -> [5, 4, 3, 2, 1]
+        // Sum is order-independent, should still be 15
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [5]));
+        let flipped = crate::ops::flip::flip(tensor, &[0]);
+        assert!(flipped.layout().strides()[0] < 0);
+
+        let result = sum(flipped);
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![15.0]);
+    }
+
+    #[test]
+    fn test_sum_dim_flipped() {
+        // [[1, 2, 3], [4, 5, 6]] with axis 0 flipped -> [[4, 5, 6], [1, 2, 3]]
+        // sum along dim 0 -> [[5, 7, 9]]
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [2, 3]));
+        let flipped = crate::ops::flip::flip(tensor, &[0]);
+        assert!(flipped.layout().strides()[0] < 0);
+
+        let result = sum_dim(flipped, 0);
+        assert_eq!(result.layout().shape().dims, vec![1, 3]);
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        // Same sum regardless of row order
+        assert_eq!(values, vec![5.0, 7.0, 9.0]);
+    }
+
+    #[test]
+    fn test_sum_dim_flipped_axis1() {
+        // [[1, 2, 3], [4, 5, 6]] with axis 1 flipped -> [[3, 2, 1], [6, 5, 4]]
+        // sum along dim 1 -> [[6], [15]]
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [2, 3]));
+        let flipped = crate::ops::flip::flip(tensor, &[1]);
+        assert!(flipped.layout().strides()[1] < 0);
+
+        let result = sum_dim(flipped, 1);
+        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![6.0, 15.0]);
+    }
+
+    #[test]
+    fn test_argmax_flipped() {
+        // [1, 5, 3, 2, 4] flipped -> [4, 2, 3, 5, 1]
+        // argmax of flipped tensor -> index 3 (where 5 is in the flipped view)
+        let data: Vec<f32> = vec![1.0, 5.0, 3.0, 2.0, 4.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [5]));
+        let flipped = crate::ops::flip::flip(tensor, &[0]);
+        assert!(flipped.layout().strides()[0] < 0);
+
+        let result = argmax(flipped, 0);
+        let result_data = result.into_data();
+        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        // In flipped view [4, 2, 3, 5, 1], max is 5 at index 3
+        assert_eq!(values, vec![3]);
+    }
+
+    #[test]
+    fn test_argmax_2d_flipped() {
+        // [[1, 5, 3], [6, 2, 4]] with axis 1 flipped -> [[3, 5, 1], [4, 2, 6]]
+        // argmax along dim 1 -> [[1], [2]]
+        let data: Vec<f32> = vec![1.0, 5.0, 3.0, 6.0, 2.0, 4.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [2, 3]));
+        let flipped = crate::ops::flip::flip(tensor, &[1]);
+        assert!(flipped.layout().strides()[1] < 0);
+
+        let result = argmax(flipped, 1);
+        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        let result_data = result.into_data();
+        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        // Row 0: [3, 5, 1] -> max at index 1
+        // Row 1: [4, 2, 6] -> max at index 2
+        assert_eq!(values, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_argmin_flipped() {
+        // [5, 1, 4, 2, 3] flipped -> [3, 2, 4, 1, 5]
+        // argmin of flipped tensor -> index 3 (where 1 is)
+        let data: Vec<f32> = vec![5.0, 1.0, 4.0, 2.0, 3.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [5]));
+        let flipped = crate::ops::flip::flip(tensor, &[0]);
+        assert!(flipped.layout().strides()[0] < 0);
+
+        let result = argmin(flipped, 0);
+        let result_data = result.into_data();
+        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        // In flipped view [3, 2, 4, 1, 5], min is 1 at index 3
+        assert_eq!(values, vec![3]);
+    }
+
+    #[test]
+    fn test_mean_dim_flipped() {
+        // [[1, 2, 3], [4, 5, 6]] with axis 0 flipped -> [[4, 5, 6], [1, 2, 3]]
+        // mean along dim 0 -> [[2.5, 3.5, 4.5]]
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [2, 3]));
+        let flipped = crate::ops::flip::flip(tensor, &[0]);
+
+        let result = mean_dim(flipped, 0);
+        assert_eq!(result.layout().shape().dims, vec![1, 3]);
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![2.5, 3.5, 4.5]);
+    }
+
+    #[test]
+    fn test_prod_flipped() {
+        // [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
+        // Product is order-independent, should be 24
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [4]));
+        let flipped = crate::ops::flip::flip(tensor, &[0]);
+        assert!(flipped.layout().strides()[0] < 0);
+
+        let result = prod(flipped);
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![24.0]);
+    }
+
+    #[test]
+    fn test_sum_narrowed() {
+        // [0, 1, 2, 3, 4] narrowed to [1, 2, 3] (indices 1..4)
+        // sum = 6
+        let data: Vec<f32> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [5]));
+        let narrowed = tensor.narrow(0, 1, 3);
+
+        let result = sum(narrowed);
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![6.0]);
+    }
+
+    #[test]
+    fn test_sum_flipped_both_axes() {
+        // [[1, 2], [3, 4]] flipped on both axes -> [[4, 3], [2, 1]]
+        // Sum is still 10
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [2, 2]));
+        let flipped = crate::ops::flip::flip(tensor, &[0, 1]);
+        assert!(flipped.layout().strides()[0] < 0);
+        assert!(flipped.layout().strides()[1] < 0);
+
+        let result = sum(flipped);
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![10.0]);
     }
 }

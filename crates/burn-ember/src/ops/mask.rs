@@ -253,4 +253,116 @@ mod tests {
         // Columns 0 and 2 should be filled with 0
         assert_eq!(data, vec![0.0, 2.0, 0.0, 0.0, 5.0, 0.0]);
     }
+
+    // === Non-contiguous tensor tests ===
+
+    #[test]
+    fn test_mask_fill_transposed_tensor() {
+        // [[1, 2], [3, 4]] transposed -> [[1, 3], [2, 4]]
+        // Mask [[T, F], [F, T]]
+        // Result: [[0, 3], [2, 0]]
+        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2, 2]));
+        let tensor = tensor.transpose(0, 1);
+        assert!(!tensor.is_contiguous());
+
+        let mask = EmberTensor::from_data(TensorData::new(vec![true, false, false, true], [2, 2]));
+        let result = mask_fill_f32(tensor, mask, 0.0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![0.0, 3.0, 2.0, 0.0]);
+    }
+
+    #[test]
+    fn test_mask_fill_flipped_tensor() {
+        // [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
+        // Mask [T, T, F, F]
+        // Result: [0, 0, 2, 1]
+        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [4]));
+        let tensor = crate::ops::flip::flip(tensor, &[0]);
+        assert!(tensor.layout().strides()[0] < 0);
+
+        let mask = EmberTensor::from_data(TensorData::new(vec![true, true, false, false], [4]));
+        let result = mask_fill_f32(tensor, mask, 0.0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![0.0, 0.0, 2.0, 1.0]);
+    }
+
+    #[test]
+    fn test_mask_fill_flipped_mask() {
+        // Tensor [1, 2, 3, 4]
+        // Mask [F, F, T, T] flipped -> [T, T, F, F]
+        // Result: [0, 0, 3, 4]
+        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [4]));
+        let mask = EmberTensor::from_data(TensorData::new(vec![false, false, true, true], [4]));
+        let mask = crate::ops::flip::flip(mask, &[0]);
+        assert!(mask.layout().strides()[0] < 0);
+
+        let result = mask_fill_f32(tensor, mask, 0.0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![0.0, 0.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_mask_where_flipped_2d() {
+        // [[1, 2], [3, 4]] with axis 0 flipped -> [[3, 4], [1, 2]]
+        // Mask [[T, F], [F, T]]
+        // Value [[10, 20], [30, 40]]
+        // Result: [[10, 4], [1, 40]]
+        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2, 2]));
+        let tensor = crate::ops::flip::flip(tensor, &[0]);
+        assert!(tensor.layout().strides()[0] < 0);
+
+        let mask = EmberTensor::from_data(TensorData::new(vec![true, false, false, true], [2, 2]));
+        let value = EmberTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], [2, 2]));
+
+        let result = mask_where_f32(tensor, mask, value);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![10.0, 4.0, 1.0, 40.0]);
+    }
+
+    #[test]
+    fn test_mask_fill_both_flipped() {
+        // Both tensor and mask flipped
+        // Tensor [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
+        // Mask [T, F, T, F] flipped -> [F, T, F, T]
+        // Result: [4, 0, 2, 0]
+        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [4]));
+        let tensor = crate::ops::flip::flip(tensor, &[0]);
+        assert!(tensor.layout().strides()[0] < 0);
+
+        let mask = EmberTensor::from_data(TensorData::new(vec![true, false, true, false], [4]));
+        let mask = crate::ops::flip::flip(mask, &[0]);
+        assert!(mask.layout().strides()[0] < 0);
+
+        let result = mask_fill_f32(tensor, mask, 0.0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![4.0, 0.0, 2.0, 0.0]);
+    }
+
+    #[test]
+    fn test_mask_fill_narrowed_tensor() {
+        // Tensor [1, 2, 3, 4, 5, 6] narrowed to [2, 3, 4, 5]
+        // Mask [T, F, F, T]
+        // Result: [0, 3, 4, 0]
+        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [6]));
+        let tensor = tensor.narrow(0, 1, 4);
+
+        let mask = EmberTensor::from_data(TensorData::new(vec![true, false, false, true], [4]));
+        let result = mask_fill_f32(tensor, mask, 0.0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![0.0, 3.0, 4.0, 0.0]);
+    }
+
+    #[test]
+    fn test_mask_fill_i64_flipped() {
+        // Integer tensor with flip
+        let tensor = EmberTensor::from_data(TensorData::new(vec![10i64, 20, 30, 40], [4]));
+        let tensor = crate::ops::flip::flip(tensor, &[0]);
+        assert!(tensor.layout().strides()[0] < 0);
+
+        // [40, 30, 20, 10] with mask [T, F, T, F] -> [-1, 30, -1, 10]
+        let mask = EmberTensor::from_data(TensorData::new(vec![true, false, true, false], [4]));
+        let result = mask_fill_i64(tensor, mask, -1);
+        let data: Vec<i64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![-1, 30, -1, 10]);
+    }
 }

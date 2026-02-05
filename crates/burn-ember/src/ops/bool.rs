@@ -417,4 +417,144 @@ mod tests {
 
         assert_eq!(data, vec![1.0f32, 0.0, 0.0, 1.0]);
     }
+
+    // === Non-contiguous (negative stride) tests ===
+
+    #[test]
+    fn test_bool_into_int_flipped() {
+        // [T, F, T, F] flipped -> [F, T, F, T]
+        // Convert to int: [0, 1, 0, 1]
+        let t: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let t = t.flip([0]);
+        let int_t: Tensor<Ember, 1, Int> = t.int();
+        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![0i64, 1, 0, 1]);
+    }
+
+    #[test]
+    fn test_bool_into_float_flipped() {
+        // [T, F, T, F] flipped -> [F, T, F, T]
+        // Convert to float: [0.0, 1.0, 0.0, 1.0]
+        let t: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let t = t.flip([0]);
+        let float_t: Tensor<Ember, 1> = t.float();
+        let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![0.0f32, 1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_bool_not_flipped() {
+        // [T, F, T, F] flipped -> [F, T, F, T]
+        // NOT: [T, F, T, F]
+        let t: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let t = t.flip([0]);
+        let result = t.bool_not();
+        let data: Vec<bool> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![true, false, true, false]);
+    }
+
+    #[test]
+    fn test_bool_and_flipped() {
+        // a: [T, F, T, F] flipped -> [F, T, F, T]
+        // b: [T, T, F, F]
+        // AND: [F, T, F, F]
+        let a: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let b: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, true, false, false], &Default::default());
+        let a = a.flip([0]);
+
+        let result = a.bool_and(b);
+        let data: Vec<bool> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![false, true, false, false]);
+    }
+
+    #[test]
+    fn test_bool_or_flipped() {
+        // a: [T, F, T, F] flipped -> [F, T, F, T]
+        // b: [T, F, F, F]
+        // OR: [T, T, F, T]
+        let a: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let b: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, false, false], &Default::default());
+        let a = a.flip([0]);
+
+        let result = a.bool_or(b);
+        let data: Vec<bool> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![true, true, false, true]);
+    }
+
+    #[test]
+    fn test_bool_xor_flipped() {
+        // a: [T, F, T, F] flipped -> [F, T, F, T]
+        // b: [T, T, F, F]
+        // XOR: [T, F, F, T]
+        let a: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let b: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, true, false, false], &Default::default());
+        let a = a.flip([0]);
+
+        let result = a.bool_xor(b);
+        let data: Vec<bool> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![true, false, false, true]);
+    }
+
+    #[test]
+    fn test_bool_equal_flipped() {
+        // a: [T, F, T, F] flipped -> [F, T, F, T]
+        // b: [F, T, F, T]
+        // EQUAL: [T, T, T, T]
+        let a: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let b: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([false, true, false, true], &Default::default());
+        let a = a.flip([0]);
+
+        let result = a.equal(b);
+        let data: Vec<bool> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![true, true, true, true]);
+    }
+
+    #[test]
+    fn test_bool_and_both_flipped() {
+        // a: [T, F, T, F] flipped -> [F, T, F, T]
+        // b: [T, T, F, F] flipped -> [F, F, T, T]
+        // AND: [F, F, F, T]
+        let a: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let b: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, true, false, false], &Default::default());
+        let a = a.flip([0]);
+        let b = b.flip([0]);
+
+        let result = a.bool_and(b);
+        let data: Vec<bool> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![false, false, false, true]);
+    }
+
+    #[test]
+    fn test_bool_into_int_flipped_2d() {
+        // [[T, F], [F, T]] with axis 0 flipped -> [[F, T], [T, F]]
+        // Convert to int: [[0, 1], [1, 0]]
+        let t: Tensor<Ember, 2, Bool> =
+            Tensor::from_data([[true, false], [false, true]], &Default::default());
+        let t = t.flip([0]);
+        let int_t: Tensor<Ember, 2, Int> = t.int();
+        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![0i64, 1, 1, 0]);
+    }
 }

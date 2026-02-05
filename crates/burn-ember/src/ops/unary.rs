@@ -46,12 +46,25 @@ where
     let layout = tensor.layout().clone();
     let src: &[E] = tensor.storage();
 
+    // Check for negative strides (from flip operations)
+    let has_negative_strides = layout.strides().iter().any(|&s| s < 0);
+
     // Fast path: storage exactly matches tensor view (covers transposed tensors)
     // Iterate in storage order (contiguous) and preserve original layout.
-    if layout.start_offset() == 0 && src.len() == n {
+    // Only valid when all strides are positive.
+    if !has_negative_strides && layout.start_offset() == 0 && src.len() == n {
         let result: Vec<E> = src.iter().map(|&x| op(x)).collect();
         let bytes = Bytes::from_elems(result);
         return EmberTensor::new(bytes, layout, E::dtype());
+    }
+
+    // Fallback for negative strides: use StridedIter for correct element order
+    if has_negative_strides {
+        let result: Vec<E> = crate::strided_index::StridedIter::new(&layout)
+            .map(|idx| op(src[idx]))
+            .collect();
+        let bytes = Bytes::from_elems(result);
+        return EmberTensor::new(bytes, Layout::contiguous(layout.shape().clone()), E::dtype());
     }
 
     // General path for views/slices with offset or extra storage
@@ -114,11 +127,23 @@ where
     let layout = tensor.layout().clone();
     let src: &[f16] = bytemuck::cast_slice(tensor.bytes());
 
-    // Fast path: storage exactly matches tensor view
-    if layout.start_offset() == 0 && src.len() == n {
+    // Check for negative strides (from flip operations)
+    let has_negative_strides = layout.strides().iter().any(|&s| s < 0);
+
+    // Fast path: storage exactly matches tensor view (only with positive strides)
+    if !has_negative_strides && layout.start_offset() == 0 && src.len() == n {
         let result: Vec<f16> = src.iter().map(|&x| op(x)).collect();
         let bytes = Bytes::from_elems(result);
         return EmberTensor::new(bytes, layout, DType::F16);
+    }
+
+    // Fallback for negative strides: use StridedIter for correct element order
+    if has_negative_strides {
+        let result: Vec<f16> = crate::strided_index::StridedIter::new(&layout)
+            .map(|idx| op(src[idx]))
+            .collect();
+        let bytes = Bytes::from_elems(result);
+        return EmberTensor::new(bytes, Layout::contiguous(layout.shape().clone()), DType::F16);
     }
 
     let result = match layout.strided_blocks() {
@@ -173,11 +198,23 @@ where
     let layout = tensor.layout().clone();
     let src: &[bf16] = bytemuck::cast_slice(tensor.bytes());
 
-    // Fast path: storage exactly matches tensor view
-    if layout.start_offset() == 0 && src.len() == n {
+    // Check for negative strides (from flip operations)
+    let has_negative_strides = layout.strides().iter().any(|&s| s < 0);
+
+    // Fast path: storage exactly matches tensor view (only with positive strides)
+    if !has_negative_strides && layout.start_offset() == 0 && src.len() == n {
         let result: Vec<bf16> = src.iter().map(|&x| op(x)).collect();
         let bytes = Bytes::from_elems(result);
         return EmberTensor::new(bytes, layout, DType::BF16);
+    }
+
+    // Fallback for negative strides: use StridedIter for correct element order
+    if has_negative_strides {
+        let result: Vec<bf16> = crate::strided_index::StridedIter::new(&layout)
+            .map(|idx| op(src[idx]))
+            .collect();
+        let bytes = Bytes::from_elems(result);
+        return EmberTensor::new(bytes, Layout::contiguous(layout.shape().clone()), DType::BF16);
     }
 
     let result = match layout.strided_blocks() {
@@ -477,5 +514,106 @@ mod tests {
         let data: &[f32] = result.storage();
         // Expected values from standard erf tables
         assert_approx_eq(data, &[0.0, 0.5205, 0.8427, 0.9953], 1e-3);
+    }
+
+    // === Non-contiguous tensor tests ===
+
+    fn tensor_2d(data: Vec<f32>, rows: usize, cols: usize) -> EmberTensor {
+        EmberTensor::from_data(TensorData::new(data, vec![rows, cols]))
+    }
+
+    #[test]
+    fn test_exp_transposed() {
+        // [[0, 1], [2, 3]] transposed -> [[0, 2], [1, 3]]
+        // Storage order: [0, 1, 2, 3], but logical order after transpose: [0, 2, 1, 3]
+        let tensor = tensor_2d(vec![0.0, 1.0, 2.0, 3.0], 2, 2);
+        let transposed = tensor.transpose(0, 1);
+        assert!(!transposed.is_contiguous());
+
+        let result = exp(transposed);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        // exp([0, 2, 1, 3]) = [1.0, e^2, e, e^3]
+        let e = std::f32::consts::E;
+        assert_approx_eq(&data, &[1.0, e * e, e, e * e * e], 1e-5);
+    }
+
+    #[test]
+    fn test_sqrt_narrowed() {
+        // Original: [1, 4, 9, 16, 25, 36] shape [6]
+        // Narrow to middle 4 elements: [4, 9, 16, 25]
+        let tensor = tensor_from_vec(vec![1.0, 4.0, 9.0, 16.0, 25.0, 36.0]);
+        let narrowed = tensor.narrow(0, 1, 4);
+        assert!(!narrowed.is_contiguous() || narrowed.layout().start_offset() != 0);
+
+        let result = sqrt(narrowed);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_approx_eq(&data, &[2.0, 3.0, 4.0, 5.0], 1e-5);
+    }
+
+    #[test]
+    fn test_abs_flipped() {
+        // Test with negative strides from flip
+        // [1, -2, 3, -4] flipped -> [-4, 3, -2, 1]
+        let tensor = tensor_from_vec(vec![1.0, -2.0, 3.0, -4.0]);
+        let flipped = crate::ops::flip::flip(tensor, &[0]);
+
+        // Verify it's using negative strides (zero-copy)
+        assert!(flipped.layout().strides()[0] < 0);
+
+        let result = abs(flipped);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        // abs([-4, 3, -2, 1]) = [4, 3, 2, 1]
+        assert_approx_eq(&data, &[4.0, 3.0, 2.0, 1.0], 1e-5);
+    }
+
+    #[test]
+    fn test_sqrt_flipped_2d() {
+        // [[1, 4], [9, 16]] with axis 0 flipped -> [[9, 16], [1, 4]]
+        // sqrt of that -> [[3, 4], [1, 2]]
+        let tensor = tensor_2d(vec![1.0, 4.0, 9.0, 16.0], 2, 2);
+        let flipped = crate::ops::flip::flip(tensor, &[0]);
+
+        // Axis 0 stride should be negative
+        assert!(flipped.layout().strides()[0] < 0);
+
+        let result = sqrt(flipped);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        // sqrt([[9, 16], [1, 4]]) = [[3, 4], [1, 2]]
+        assert_approx_eq(&data, &[3.0, 4.0, 1.0, 2.0], 1e-5);
+    }
+
+    #[test]
+    fn test_cos_flipped_axis1() {
+        // [[0, pi], [pi/2, 3pi/2]] with axis 1 flipped -> [[pi, 0], [3pi/2, pi/2]]
+        // cos of that -> [[-1, 1], [0, 0]]
+        use std::f32::consts::{FRAC_PI_2, PI};
+        let tensor = tensor_2d(vec![0.0, PI, FRAC_PI_2, 3.0 * FRAC_PI_2], 2, 2);
+        let flipped = crate::ops::flip::flip(tensor, &[1]);
+
+        // Axis 1 stride should be negative
+        assert!(flipped.layout().strides()[1] < 0);
+
+        let result = cos(flipped);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        // cos([[pi, 0], [3pi/2, pi/2]]) = [[-1, 1], [0, 0]]
+        assert_approx_eq(&data, &[-1.0, 1.0, 0.0, 0.0], 1e-5);
+    }
+
+    #[test]
+    fn test_log_3d_transposed() {
+        // 3D tensor with permuted dimensions
+        // Shape [2, 2, 2] -> permute to [2, 2, 2] with different strides
+        let e = std::f32::consts::E;
+        let data = vec![1.0, e, e * e, e * e * e, 1.0, e, e * e, e * e * e];
+        let tensor = EmberTensor::from_data(TensorData::new(data, vec![2, 2, 2]));
+        let permuted = tensor.permute(&[2, 0, 1]); // Swap dimensions around
+        assert!(!permuted.is_contiguous());
+
+        let result = log(permuted);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // All values should be 0, 1, 2, or 3 depending on permutation
+        for &v in &out {
+            assert!(v >= -0.01 && v <= 3.01, "unexpected log value: {}", v);
+        }
     }
 }
