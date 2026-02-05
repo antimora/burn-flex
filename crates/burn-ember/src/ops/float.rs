@@ -547,7 +547,8 @@ mod tests {
         use burn_tensor::Distribution;
 
         let device = Default::default();
-        let t: Tensor<Ember, 2> = Tensor::random([10, 10], Distribution::Uniform(0.0, 1.0), &device);
+        let t: Tensor<Ember, 2> =
+            Tensor::random([10, 10], Distribution::Uniform(0.0, 1.0), &device);
         let data = t.into_data();
         let values: Vec<f32> = data.to_vec().unwrap();
 

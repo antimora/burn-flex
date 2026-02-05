@@ -286,7 +286,6 @@ dependencies = [
  "half",
  "num-traits",
  "pulp",
- "rand",
  "rayon",
 ]
 
