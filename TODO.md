@@ -9,6 +9,9 @@
 - [ ] Test without feature flags
 - [ ] Licenses
 - [ ] Give credit to Ndarray and Candle
+- [ ] Proper testing of strides and storage
+- [ ] Zero rank tensors
+- [ ] Non contiguous tensors operations
 
 ## Bugs
 - [ ] Chained tensor op bugs
