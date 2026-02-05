@@ -107,6 +107,10 @@ pub fn unfold_bool(tensor: EmberTensor, dim: usize, size: usize, step: usize) ->
     unfold(tensor, dim, size, step)
 }
 
+pub fn unfold_int(tensor: EmberTensor, dim: usize, size: usize, step: usize) -> EmberTensor {
+    unfold(tensor, dim, size, step)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,10 +125,7 @@ mod tests {
         // Window 0: [1, 2, 3]
         // Window 1: [2, 3, 4]
         // Window 2: [3, 4, 5]
-        let tensor = EmberTensor::from_data(TensorData::new(
-            vec![1.0f32, 2.0, 3.0, 4.0, 5.0],
-            [5],
-        ));
+        let tensor = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0], [5]));
         let result = unfold_f32(tensor, 0, 3, 1);
         assert_eq!(result.layout().shape().dims, vec![3, 3]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
@@ -139,10 +140,8 @@ mod tests {
         // Output shape: [2, 3]
         // Window 0: [1, 2, 3]
         // Window 1: [3, 4, 5]
-        let tensor = EmberTensor::from_data(TensorData::new(
-            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0],
-            [6],
-        ));
+        let tensor =
+            EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [6]));
         let result = unfold_f32(tensor, 0, 3, 2);
         assert_eq!(result.layout().shape().dims, vec![2, 3]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();

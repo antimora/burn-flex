@@ -179,10 +179,7 @@ impl FloatTensorOps<Ember> for Ember {
             Self::float_mul(a2, b0.clone()),
             Self::float_mul(a0.clone(), b2),
         );
-        let c2 = Self::float_sub(
-            Self::float_mul(a0, b1),
-            Self::float_mul(a1, b0),
-        );
+        let c2 = Self::float_sub(Self::float_mul(a0, b1), Self::float_mul(a1, b0));
 
         // Concatenate along the dimension
         Self::float_cat(vec![c0, c1, c2], dim)

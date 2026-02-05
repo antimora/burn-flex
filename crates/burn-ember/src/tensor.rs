@@ -146,10 +146,10 @@ impl EmberTensor {
     ///
     /// # Panics
     /// Debug-asserts if `E::dtype()` doesn't match the tensor's dtype.
+    /// Note: Bool tensors are stored as u8, so both Bool and U8 dtypes accept u8 access.
     pub fn storage<E: Element + bytemuck::Pod>(&self) -> &[E] {
-        debug_assert_eq!(
-            E::dtype(),
-            self.dtype,
+        debug_assert!(
+            E::dtype() == self.dtype || (self.dtype == DType::Bool && E::dtype() == DType::U8),
             "storage: dtype mismatch (expected {:?}, got {:?})",
             self.dtype,
             E::dtype()
@@ -165,10 +165,10 @@ impl EmberTensor {
     ///
     /// # Panics
     /// Debug-asserts if `E::dtype()` doesn't match the tensor's dtype.
+    /// Note: Bool tensors are stored as u8, so both Bool and U8 dtypes accept u8 access.
     pub fn storage_mut<E: Element + bytemuck::Pod>(&mut self) -> &mut [E] {
-        debug_assert_eq!(
-            E::dtype(),
-            self.dtype,
+        debug_assert!(
+            E::dtype() == self.dtype || (self.dtype == DType::Bool && E::dtype() == DType::U8),
             "storage_mut: dtype mismatch (expected {:?}, got {:?})",
             self.dtype,
             E::dtype()
@@ -182,10 +182,10 @@ impl EmberTensor {
     ///
     /// Returns `Some` if tensor is uniquely owned, `None` if shared.
     /// Use this when you want to avoid the implicit copy in `storage_mut()`.
+    /// Note: Bool tensors are stored as u8, so both Bool and U8 dtypes accept u8 access.
     pub fn try_storage_mut<E: Element + bytemuck::Pod>(&mut self) -> Option<&mut [E]> {
-        debug_assert_eq!(
-            E::dtype(),
-            self.dtype,
+        debug_assert!(
+            E::dtype() == self.dtype || (self.dtype == DType::Bool && E::dtype() == DType::U8),
             "try_storage_mut: dtype mismatch (expected {:?}, got {:?})",
             self.dtype,
             E::dtype()

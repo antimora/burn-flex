@@ -340,7 +340,8 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
 
     let [stride_d, stride_h, stride_w] = options.stride;
     let [pad_d, pad_h, pad_w] = options.padding;
-    let _groups = options.groups;
+    let groups = options.groups;
+    let out_channels_per_group = channels_out / groups;
 
     let out_d = calculate_conv_output_size(kernel_d, stride_d, pad_d, options.dilation[0], in_d);
     let out_h = calculate_conv_output_size(kernel_h, stride_h, pad_h, options.dilation[1], in_h);
@@ -430,69 +431,88 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
                     let tile_end = (tile_start + TILE_SIZE).min(spatial_out);
                     let tile_size = tile_end - tile_start;
 
-                    // Build im2col for this tile
-                    let mut col_tile = vec![zero; col_len * tile_size];
+                    // Process each group separately
+                    for g in 0..groups {
+                        let in_c_start = g * channels_per_group;
+                        let out_c_start = g * out_channels_per_group;
 
-                    for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
-                        // Convert linear index to 3D output coords
-                        let out_d_idx = global_idx / (out_h * out_w);
-                        let rem = global_idx % (out_h * out_w);
-                        let out_h_idx = rem / out_w;
-                        let out_w_idx = rem % out_w;
+                        // Build im2col for this tile and group
+                        let mut col_tile = vec![zero; col_len * tile_size];
 
-                        // Extract im2col patch for this output position
-                        let mut col_offset = 0;
-                        for kd in 0..kernel_d {
-                            let id =
-                                (out_d_idx * stride_d + kd * dilation_d) as isize - pad_d as isize;
-                            for kh in 0..kernel_h {
-                                let ih = (out_h_idx * stride_h + kh * dilation_h) as isize
-                                    - pad_h as isize;
-                                for kw in 0..kernel_w {
-                                    let iw = (out_w_idx * stride_w + kw * dilation_w) as isize
-                                        - pad_w as isize;
+                        for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
+                            // Convert linear index to 3D output coords
+                            let out_d_idx = global_idx / (out_h * out_w);
+                            let rem = global_idx % (out_h * out_w);
+                            let out_h_idx = rem / out_w;
+                            let out_w_idx = rem % out_w;
 
-                                    if id >= 0
-                                        && id < in_d as isize
-                                        && ih >= 0
-                                        && ih < in_h as isize
-                                        && iw >= 0
-                                        && iw < in_w as isize
-                                    {
-                                        let id = id as usize;
-                                        let ih = ih as usize;
-                                        let iw = iw as usize;
-                                        // NHWC access: x_nhwc[b, d, h, w, c]
-                                        let inp_base = b * nhwc_stride.0
-                                            + id * nhwc_stride.1
-                                            + ih * nhwc_stride.2
-                                            + iw * nhwc_stride.3;
-                                        for c in 0..channels_per_group {
-                                            col_tile[local_idx * col_len + col_offset] =
-                                                x_nhwc[inp_base + c];
-                                            col_offset += 1;
+                            // Extract im2col patch for this output position
+                            let mut col_offset = 0;
+                            for kd in 0..kernel_d {
+                                let id = (out_d_idx * stride_d + kd * dilation_d) as isize
+                                    - pad_d as isize;
+                                for kh in 0..kernel_h {
+                                    let ih = (out_h_idx * stride_h + kh * dilation_h) as isize
+                                        - pad_h as isize;
+                                    for kw in 0..kernel_w {
+                                        let iw = (out_w_idx * stride_w + kw * dilation_w) as isize
+                                            - pad_w as isize;
+
+                                        if id >= 0
+                                            && id < in_d as isize
+                                            && ih >= 0
+                                            && ih < in_h as isize
+                                            && iw >= 0
+                                            && iw < in_w as isize
+                                        {
+                                            let id = id as usize;
+                                            let ih = ih as usize;
+                                            let iw = iw as usize;
+                                            // NHWC access: x_nhwc[b, d, h, w, c]
+                                            let inp_base = b * nhwc_stride.0
+                                                + id * nhwc_stride.1
+                                                + ih * nhwc_stride.2
+                                                + iw * nhwc_stride.3
+                                                + in_c_start; // Offset to group's channels
+                                            for c in 0..channels_per_group {
+                                                col_tile[local_idx * col_len + col_offset] =
+                                                    x_nhwc[inp_base + c];
+                                                col_offset += 1;
+                                            }
+                                        } else {
+                                            // Padding: skip channels_per_group positions (already zero)
+                                            col_offset += channels_per_group;
                                         }
-                                    } else {
-                                        // Padding: skip channels_per_group positions (already zero)
-                                        col_offset += channels_per_group;
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // GEMM: w_flat[c_out, col_len] @ col_tile[tile_size, col_len]^T -> [c_out, tile_size]
-                    let result = gemm_fn(&w_flat, &col_tile, channels_out, col_len, tile_size);
+                        // Get weight slice for this group
+                        let w_start = out_c_start * col_len;
+                        let w_end = w_start + out_channels_per_group * col_len;
+                        let w_group = &w_flat[w_start..w_end];
 
-                    // Write results to output
-                    for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
-                        for c_out in 0..channels_out {
-                            let dst_idx =
-                                b * channels_out * spatial_out + c_out * spatial_out + global_idx;
-                            let res_idx = c_out * tile_size + local_idx;
-                            unsafe {
-                                let ptr = dst.as_ptr().add(dst_idx) as *mut T;
-                                *ptr = result[res_idx];
+                        // GEMM: w_group[out_c_per_group, col_len] @ col_tile[tile_size, col_len]^T
+                        let result = gemm_fn(
+                            w_group,
+                            &col_tile,
+                            out_channels_per_group,
+                            col_len,
+                            tile_size,
+                        );
+
+                        // Write results to output for this group's output channels
+                        for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
+                            for c_out in 0..out_channels_per_group {
+                                let dst_idx = b * channels_out * spatial_out
+                                    + (out_c_start + c_out) * spatial_out
+                                    + global_idx;
+                                let res_idx = c_out * tile_size + local_idx;
+                                unsafe {
+                                    let ptr = dst.as_ptr().add(dst_idx) as *mut T;
+                                    *ptr = result[res_idx];
+                                }
                             }
                         }
                     }
@@ -511,62 +531,81 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
                     let tile_end = (tile_start + TILE_SIZE).min(spatial_out);
                     let tile_size = tile_end - tile_start;
 
-                    let mut col_tile = vec![zero; col_len * tile_size];
+                    // Process each group separately
+                    for g in 0..groups {
+                        let in_c_start = g * channels_per_group;
+                        let out_c_start = g * out_channels_per_group;
 
-                    for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
-                        let out_d_idx = global_idx / (out_h * out_w);
-                        let rem = global_idx % (out_h * out_w);
-                        let out_h_idx = rem / out_w;
-                        let out_w_idx = rem % out_w;
+                        let mut col_tile = vec![zero; col_len * tile_size];
 
-                        let mut col_offset = 0;
-                        for kd in 0..kernel_d {
-                            let id =
-                                (out_d_idx * stride_d + kd * dilation_d) as isize - pad_d as isize;
-                            for kh in 0..kernel_h {
-                                let ih = (out_h_idx * stride_h + kh * dilation_h) as isize
-                                    - pad_h as isize;
-                                for kw in 0..kernel_w {
-                                    let iw = (out_w_idx * stride_w + kw * dilation_w) as isize
-                                        - pad_w as isize;
+                        for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
+                            let out_d_idx = global_idx / (out_h * out_w);
+                            let rem = global_idx % (out_h * out_w);
+                            let out_h_idx = rem / out_w;
+                            let out_w_idx = rem % out_w;
 
-                                    if id >= 0
-                                        && id < in_d as isize
-                                        && ih >= 0
-                                        && ih < in_h as isize
-                                        && iw >= 0
-                                        && iw < in_w as isize
-                                    {
-                                        let id = id as usize;
-                                        let ih = ih as usize;
-                                        let iw = iw as usize;
-                                        let inp_base = b * nhwc_stride.0
-                                            + id * nhwc_stride.1
-                                            + ih * nhwc_stride.2
-                                            + iw * nhwc_stride.3;
-                                        for c in 0..channels_per_group {
-                                            col_tile[local_idx * col_len + col_offset] =
-                                                x_nhwc[inp_base + c];
-                                            col_offset += 1;
+                            let mut col_offset = 0;
+                            for kd in 0..kernel_d {
+                                let id = (out_d_idx * stride_d + kd * dilation_d) as isize
+                                    - pad_d as isize;
+                                for kh in 0..kernel_h {
+                                    let ih = (out_h_idx * stride_h + kh * dilation_h) as isize
+                                        - pad_h as isize;
+                                    for kw in 0..kernel_w {
+                                        let iw = (out_w_idx * stride_w + kw * dilation_w) as isize
+                                            - pad_w as isize;
+
+                                        if id >= 0
+                                            && id < in_d as isize
+                                            && ih >= 0
+                                            && ih < in_h as isize
+                                            && iw >= 0
+                                            && iw < in_w as isize
+                                        {
+                                            let id = id as usize;
+                                            let ih = ih as usize;
+                                            let iw = iw as usize;
+                                            let inp_base = b * nhwc_stride.0
+                                                + id * nhwc_stride.1
+                                                + ih * nhwc_stride.2
+                                                + iw * nhwc_stride.3
+                                                + in_c_start; // Offset to group's channels
+                                            for c in 0..channels_per_group {
+                                                col_tile[local_idx * col_len + col_offset] =
+                                                    x_nhwc[inp_base + c];
+                                                col_offset += 1;
+                                            }
+                                        } else {
+                                            col_offset += channels_per_group;
                                         }
-                                    } else {
-                                        col_offset += channels_per_group;
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // GEMM: w_flat[c_out, col_len] @ col_tile[tile_size, col_len]^T -> [c_out, tile_size]
-                    let result = gemm_fn(&w_flat, &col_tile, channels_out, col_len, tile_size);
+                        // Get weight slice for this group
+                        let w_start = out_c_start * col_len;
+                        let w_end = w_start + out_channels_per_group * col_len;
+                        let w_group = &w_flat[w_start..w_end];
 
-                    // Write results to output
-                    for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
-                        for c_out in 0..channels_out {
-                            let dst_idx =
-                                b * channels_out * spatial_out + c_out * spatial_out + global_idx;
-                            let res_idx = c_out * tile_size + local_idx;
-                            output[dst_idx] = result[res_idx];
+                        // GEMM for this group
+                        let result = gemm_fn(
+                            w_group,
+                            &col_tile,
+                            out_channels_per_group,
+                            col_len,
+                            tile_size,
+                        );
+
+                        // Write results to output for this group's output channels
+                        for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
+                            for c_out in 0..out_channels_per_group {
+                                let dst_idx = b * channels_out * spatial_out
+                                    + (out_c_start + c_out) * spatial_out
+                                    + global_idx;
+                                let res_idx = c_out * tile_size + local_idx;
+                                output[dst_idx] = result[res_idx];
+                            }
                         }
                     }
                 }

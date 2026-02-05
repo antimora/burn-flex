@@ -275,8 +275,8 @@ impl IntTensorOps<Ember> for Ember {
         crate::ops::reduce::argmin(tensor, dim)
     }
 
-    fn int_abs(_tensor: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("int_abs")
+    fn int_abs(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
+        crate::ops::unary::int_abs(tensor)
     }
 
     fn bitwise_and(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
@@ -328,12 +328,12 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_unfold(
-        _tensor: IntTensor<Ember>,
-        _dim: usize,
-        _size: usize,
-        _step: usize,
+        tensor: IntTensor<Ember>,
+        dim: usize,
+        size: usize,
+        step: usize,
     ) -> IntTensor<Ember> {
-        todo!("int_unfold")
+        crate::ops::unfold::unfold_int(tensor, dim, size, step)
     }
 }
 

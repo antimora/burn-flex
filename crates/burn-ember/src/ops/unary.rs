@@ -284,9 +284,67 @@ pub fn sqrt(tensor: EmberTensor) -> EmberTensor {
     unary_op(tensor, f32::sqrt, f64::sqrt)
 }
 
-/// Absolute value
+/// Absolute value (float)
 pub fn abs(tensor: EmberTensor) -> EmberTensor {
     unary_op(tensor, f32::abs, f64::abs)
+}
+
+/// Absolute value (integer)
+pub fn int_abs(tensor: EmberTensor) -> EmberTensor {
+    let dtype = tensor.dtype();
+    match dtype {
+        DType::I64 => int_unary_op_typed::<i64, _>(tensor, |x| x.abs()),
+        DType::I32 => int_unary_op_typed::<i32, _>(tensor, |x| x.abs()),
+        DType::I16 => int_unary_op_typed::<i16, _>(tensor, |x| x.abs()),
+        DType::I8 => int_unary_op_typed::<i8, _>(tensor, |x| x.abs()),
+        // Unsigned integers: abs is identity
+        DType::U64 | DType::U32 | DType::U16 | DType::U8 => tensor,
+        _ => panic!("int_abs: unsupported dtype {:?}", dtype),
+    }
+}
+
+/// Generic int unary operation for any element type.
+fn int_unary_op_typed<E, Op>(mut tensor: EmberTensor, op: Op) -> EmberTensor
+where
+    E: burn_backend::Element + bytemuck::Pod,
+    Op: Fn(E) -> E,
+{
+    let n = tensor.layout().num_elements();
+
+    // In-place fast path: unique, contiguous tensor at offset 0
+    if tensor.is_unique() && tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0
+    {
+        let storage: &mut [E] = tensor.storage_mut();
+        for x in storage[..n].iter_mut() {
+            *x = op(*x);
+        }
+        return tensor;
+    }
+
+    // Allocating path for non-contiguous or offset tensors
+    let layout = tensor.layout().clone();
+    let src: &[E] = tensor.storage();
+
+    // Check for negative strides (from flip operations)
+    let has_negative_strides = layout.strides().iter().any(|&s| s < 0);
+
+    // Fast path: storage exactly matches tensor view
+    if !has_negative_strides && layout.start_offset() == 0 && src.len() == n {
+        let result: Vec<E> = src.iter().map(|&x| op(x)).collect();
+        let bytes = Bytes::from_elems(result);
+        return EmberTensor::new(bytes, layout, E::dtype());
+    }
+
+    // Fallback: use StridedIter for correct element order
+    let result: Vec<E> = crate::strided_index::StridedIter::new(&layout)
+        .map(|idx| op(src[idx]))
+        .collect();
+    let bytes = Bytes::from_elems(result);
+    EmberTensor::new(
+        bytes,
+        Layout::contiguous(layout.shape().clone()),
+        E::dtype(),
+    )
 }
 
 /// Reciprocal: 1/x
