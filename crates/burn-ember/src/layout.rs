@@ -208,19 +208,21 @@ impl Layout {
             };
 
             // Normalize end index (handle negative and None)
+            // Note: Range [start, end) determines WHICH elements to select,
+            // step determines iteration ORDER
             let end = match slice.end {
                 Some(e) if e < 0 => (dim_size + e).max(0) as usize,
                 Some(e) => (e as usize).min(dim_size as usize),
-                None if slice.step > 0 => dim_size as usize,
-                None => 0, // For negative step with no end, go to beginning
+                None => dim_size as usize, // Always full range when end is None
             };
 
             let step = slice.step;
+            let abs_step = step.unsigned_abs();
 
             if step > 0 {
                 // Positive step: forward iteration
                 let len = if end > start {
-                    (end - start).div_ceil(step as usize)
+                    (end - start).div_ceil(abs_step)
                 } else {
                     0
                 };
@@ -228,24 +230,11 @@ impl Layout {
                 new_strides[dim] = stride * step;
                 new_offset += stride * start as isize;
             } else {
-                // Negative step: reverse iteration - requires copy for now
-                // TODO: Could potentially handle with negative strides
+                // Negative step: select range then iterate in reverse
+                // Requires copy to reorder elements
                 needs_copy = true;
-                let abs_step = (-step) as usize;
-                // For negative step, start from higher index going down
-                let (actual_start, actual_end) = if slice.end.is_none() {
-                    // No end specified: start from slice.start going to 0
-                    let s = if slice.start < 0 {
-                        (dim_size + slice.start).max(0) as usize
-                    } else {
-                        (slice.start as usize).min(dim_size.saturating_sub(1) as usize)
-                    };
-                    (s, 0)
-                } else {
-                    (start, end)
-                };
-                let len = if actual_start >= actual_end {
-                    (actual_start - actual_end + abs_step) / abs_step
+                let len = if end > start {
+                    (end - start).div_ceil(abs_step)
                 } else {
                     0
                 };

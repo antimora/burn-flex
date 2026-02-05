@@ -66,42 +66,9 @@ fn slice_copy_impl<E: Element + bytemuck::Pod + Default>(
             &Slice::new(0, None, 1)
         };
 
-        let step = slice.step;
-        let abs_step = step.unsigned_abs();
-
-        if step > 0 {
-            // Forward iteration
-            let start = normalize_index(slice.start, dim_size);
-            let end = match slice.end {
-                Some(e) => normalize_index(e, dim_size).min(dim_size as usize),
-                None => dim_size as usize,
-            };
-            let len = if end > start {
-                (end - start).div_ceil(abs_step)
-            } else {
-                0
-            };
-            out_shape.push(len);
-            slice_info.push((start, len, step));
-        } else {
-            // Backward iteration (negative step)
-            let start = match slice.start {
-                s if s < 0 => (dim_size + s).max(0) as usize,
-                s => (s as usize).min((dim_size - 1).max(0) as usize),
-            };
-            let end = match slice.end {
-                Some(e) if e < 0 => (dim_size + e).max(-1),
-                Some(e) => (e - 1).max(-1),
-                None => -1,
-            };
-            let len = if (start as isize) > end {
-                ((start as isize - end) as usize).div_ceil(abs_step)
-            } else {
-                0
-            };
-            out_shape.push(len);
-            slice_info.push((start, len, step));
-        }
+        let (start, len, step) = compute_slice_info(slice, dim_size);
+        out_shape.push(len);
+        slice_info.push((start, len, step));
     }
 
     let out_layout = Layout::contiguous(Shape::from(out_shape.clone()));
@@ -352,38 +319,36 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
 }
 
 /// Compute slice info (start, len, step) for a dimension.
+/// For negative step: start is the LAST index in the range (end-1), iterating down.
 fn compute_slice_info(slice: &Slice, dim_size: isize) -> (usize, usize, isize) {
     let step = slice.step;
     let abs_step = step.unsigned_abs();
 
-    if step > 0 {
-        let start = normalize_index(slice.start, dim_size);
-        let end = match slice.end {
-            Some(e) => normalize_index(e, dim_size).min(dim_size as usize),
-            None => dim_size as usize,
-        };
-        let len = if end > start {
-            (end - start).div_ceil(abs_step)
-        } else {
-            0
-        };
-        (start, len, step)
+    // Normalize start and end to [0, dim_size]
+    let range_start = normalize_index(slice.start, dim_size);
+    let range_end = match slice.end {
+        Some(e) => normalize_index(e, dim_size).min(dim_size as usize),
+        None => dim_size as usize,
+    };
+
+    let len = if range_end > range_start {
+        (range_end - range_start).div_ceil(abs_step)
     } else {
-        let start = match slice.start {
-            s if s < 0 => (dim_size + s).max(0) as usize,
-            s => (s as usize).min((dim_size - 1).max(0) as usize),
-        };
-        let end = match slice.end {
-            Some(e) if e < 0 => (dim_size + e).max(-1),
-            Some(e) => (e - 1).max(-1),
-            None => -1,
-        };
-        let len = if (start as isize) > end {
-            ((start as isize - end) as usize).div_ceil(abs_step)
+        0
+    };
+
+    if step > 0 {
+        // Forward: start at low index, go up
+        (range_start, len, step)
+    } else {
+        // Reverse: start at end-1 (highest index in range), go down
+        // For s![2..8;-2]: start from index 7, go to 5, then 3
+        let reverse_start = if range_end > range_start {
+            range_end - 1
         } else {
-            0
+            range_start
         };
-        (start, len, step)
+        (reverse_start, len, step)
     }
 }
 
@@ -446,8 +411,9 @@ mod tests {
         let data: Vec<f32> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
         let tensor = EmberTensor::from_data(TensorData::new(data, [5]));
 
-        // Slice [::-1] -> [4, 3, 2, 1, 0] (reverse)
-        let slices = vec![Slice::new(4, None, -1)];
+        // Slice [0..;-1] -> [4, 3, 2, 1, 0] (reverse full range)
+        // In Burn's semantics: range selects elements, step determines order
+        let slices = vec![Slice::new(0, None, -1)];
         let result = slice(tensor, &slices);
 
         assert_eq!(result.layout().shape().dims, vec![5]);
