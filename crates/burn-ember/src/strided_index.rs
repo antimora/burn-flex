@@ -4,10 +4,11 @@ use alloc::vec::Vec;
 
 /// Iterator that yields linear indices for strided tensor access.
 ///
-/// Handles non-contiguous tensors by computing the correct storage index
-/// for each logical element position.
+/// Handles non-contiguous tensors (including those with negative strides from flip)
+/// by computing the correct storage index for each logical element position.
 pub struct StridedIter<'a> {
-    storage_index: usize,
+    /// Current storage index (signed to handle negative strides)
+    storage_index: isize,
     multi_index: Vec<usize>,
     layout: &'a Layout,
     remaining: usize,
@@ -18,7 +19,7 @@ impl<'a> StridedIter<'a> {
     pub fn new(layout: &'a Layout) -> Self {
         let ndims = layout.num_dims();
         Self {
-            storage_index: layout.start_offset(),
+            storage_index: layout.start_offset() as isize,
             multi_index: vec![0; ndims],
             layout,
             remaining: layout.num_elements(),
@@ -34,7 +35,7 @@ impl Iterator for StridedIter<'_> {
             return None;
         }
 
-        let idx = self.storage_index;
+        let idx = self.storage_index as usize;
         self.remaining -= 1;
 
         // Advance multi-index (last dimension first, like odometer)
@@ -49,7 +50,7 @@ impl Iterator for StridedIter<'_> {
             }
             // Wrap around this dimension
             self.multi_index[d] = 0;
-            self.storage_index -= (shape.dims[d] - 1) * strides[d];
+            self.storage_index -= (shape.dims[d] as isize - 1) * strides[d];
         }
 
         Some(idx)

@@ -4,11 +4,13 @@ use burn_std::{Shape, Slice};
 
 /// Layout describes how to interpret a linear buffer as an N-dimensional tensor.
 ///
-/// Stores shape, strides (in elements), and an optional start offset for views/slices.
+/// Stores shape, strides (in elements, can be negative for flipped dimensions),
+/// and a start offset for views/slices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     shape: Shape,
-    strides: Vec<usize>,
+    /// Strides in elements. Negative strides enable zero-copy flip.
+    strides: Vec<isize>,
     start_offset: usize,
 }
 
@@ -16,11 +18,11 @@ impl Layout {
     /// Create a new contiguous layout (row-major/C-order).
     pub fn contiguous(shape: Shape) -> Self {
         let ndims = shape.num_dims();
-        let mut strides = vec![1usize; ndims];
+        let mut strides = vec![1isize; ndims];
 
         // Compute strides from right to left
         for i in (0..ndims.saturating_sub(1)).rev() {
-            strides[i] = strides[i + 1] * shape.dims[i + 1];
+            strides[i] = strides[i + 1] * shape.dims[i + 1] as isize;
         }
 
         Self {
@@ -31,7 +33,7 @@ impl Layout {
     }
 
     /// Create a layout with explicit strides.
-    pub fn new(shape: Shape, strides: Vec<usize>, start_offset: usize) -> Self {
+    pub fn new(shape: Shape, strides: Vec<isize>, start_offset: usize) -> Self {
         debug_assert_eq!(shape.num_dims(), strides.len());
         Self {
             shape,
@@ -45,8 +47,8 @@ impl Layout {
         &self.shape
     }
 
-    /// The strides in elements.
-    pub fn strides(&self) -> &[usize] {
+    /// The strides in elements (can be negative for flipped dimensions).
+    pub fn strides(&self) -> &[isize] {
         &self.strides
     }
 
@@ -65,18 +67,18 @@ impl Layout {
         self.shape.num_elements()
     }
 
-    /// Check if this layout is contiguous (row-major).
+    /// Check if this layout is contiguous (row-major, positive strides).
     pub fn is_contiguous(&self) -> bool {
         if self.shape.num_dims() == 0 {
             return true;
         }
 
-        let mut expected_stride = 1usize;
+        let mut expected_stride = 1isize;
         for i in (0..self.shape.num_dims()).rev() {
             if self.strides[i] != expected_stride {
                 return false;
             }
-            expected_stride *= self.shape.dims[i];
+            expected_stride *= self.shape.dims[i] as isize;
         }
         true
     }
@@ -114,12 +116,46 @@ impl Layout {
         );
 
         let new_dims: Vec<usize> = axes.iter().map(|&i| self.shape.dims[i]).collect();
-        let new_strides: Vec<usize> = axes.iter().map(|&i| self.strides[i]).collect();
+        let new_strides: Vec<isize> = axes.iter().map(|&i| self.strides[i]).collect();
 
         Self {
             shape: Shape::from(new_dims),
             strides: new_strides,
             start_offset: self.start_offset,
+        }
+    }
+
+    /// Flip: reverse elements along specified axes (zero-copy, metadata only).
+    ///
+    /// For each flipped axis, negates the stride and adjusts start_offset
+    /// to point to the last element along that dimension.
+    pub fn flip(&self, axes: &[usize]) -> Self {
+        let mut new_strides = self.strides.clone();
+        let mut offset_adjustment: isize = 0;
+
+        for &axis in axes {
+            debug_assert!(
+                axis < self.num_dims(),
+                "flip: axis {} out of bounds for {} dimensions",
+                axis,
+                self.num_dims()
+            );
+
+            let dim_size = self.shape.dims[axis];
+            if dim_size > 1 {
+                // Move start to last element along this axis
+                offset_adjustment += (dim_size as isize - 1) * self.strides[axis];
+                // Negate stride to iterate backwards
+                new_strides[axis] = -new_strides[axis];
+            }
+        }
+
+        let new_start = (self.start_offset as isize + offset_adjustment) as usize;
+
+        Self {
+            shape: self.shape.clone(),
+            strides: new_strides,
+            start_offset: new_start,
         }
     }
 
@@ -134,23 +170,26 @@ impl Layout {
         );
         let mut dims = self.shape.dims.clone();
         dims[dim] = len;
+
+        let new_offset = (self.start_offset as isize + self.strides[dim] * start as isize) as usize;
+
         Self {
             shape: Shape::from(dims),
             strides: self.strides.clone(),
-            start_offset: self.start_offset + self.strides[dim] * start,
+            start_offset: new_offset,
         }
     }
 
-    /// Apply slices to create a new layout (zero-copy for positive steps).
+    /// Apply slices to create a new layout.
     ///
     /// Returns `(new_layout, needs_copy)`:
     /// - `needs_copy = false`: Can use zero-copy view with new layout
-    /// - `needs_copy = true`: Has negative steps, requires data copy
+    /// - `needs_copy = true`: Has negative steps requiring data reordering
     pub fn slice(&self, slices: &[Slice]) -> (Self, bool) {
         let ndims = self.num_dims();
         let mut new_dims = self.shape.dims.clone();
         let mut new_strides = self.strides.clone();
-        let mut new_offset = self.start_offset;
+        let mut new_offset = self.start_offset as isize;
         let mut needs_copy = false;
 
         for (dim, slice) in slices.iter().enumerate() {
@@ -186,10 +225,11 @@ impl Layout {
                     0
                 };
                 new_dims[dim] = len;
-                new_strides[dim] = stride * step as usize;
-                new_offset += stride * start;
+                new_strides[dim] = stride * step;
+                new_offset += stride * start as isize;
             } else {
-                // Negative step: reverse iteration - requires copy
+                // Negative step: reverse iteration - requires copy for now
+                // TODO: Could potentially handle with negative strides
                 needs_copy = true;
                 let abs_step = (-step) as usize;
                 // For negative step, start from higher index going down
@@ -218,7 +258,7 @@ impl Layout {
             Self {
                 shape: Shape::from(new_dims),
                 strides: new_strides,
-                start_offset: new_offset,
+                start_offset: new_offset as usize,
             },
             needs_copy,
         )
@@ -242,20 +282,21 @@ impl Layout {
     /// Compute linear index from multi-dimensional indices.
     pub fn index(&self, indices: &[usize]) -> usize {
         debug_assert_eq!(indices.len(), self.num_dims());
-        let mut offset = self.start_offset;
+        let mut offset = self.start_offset as isize;
         for (i, &idx) in indices.iter().enumerate() {
-            offset += idx * self.strides[i];
+            offset += idx as isize * self.strides[i];
         }
-        offset
+        offset as usize
     }
 
     /// Get stride of the innermost (last) dimension.
     /// Returns 1 for contiguous tensors, larger values for transposed.
+    /// Returns absolute value (ignores flip).
     pub fn inner_stride(&self) -> usize {
-        self.strides.last().copied().unwrap_or(1)
+        self.strides.last().map(|s| s.unsigned_abs()).unwrap_or(1)
     }
 
-    /// Check if innermost dimension is contiguous (stride == 1).
+    /// Check if innermost dimension is contiguous (|stride| == 1).
     /// This enables efficient vectorized inner loops.
     pub fn has_contiguous_inner(&self) -> bool {
         self.inner_stride() == 1
@@ -263,7 +304,7 @@ impl Layout {
 
     /// For 2D layouts, get (outer_size, inner_size, outer_stride, inner_stride).
     /// Returns None if not 2D.
-    pub fn as_2d_strides(&self) -> Option<(usize, usize, usize, usize)> {
+    pub fn as_2d_strides(&self) -> Option<(usize, usize, isize, isize)> {
         if self.num_dims() != 2 {
             return None;
         }
@@ -273,6 +314,11 @@ impl Layout {
             self.strides[0],
             self.strides[1],
         ))
+    }
+
+    /// Check if all strides are non-negative.
+    pub fn has_positive_strides(&self) -> bool {
+        self.strides.iter().all(|&s| s >= 0)
     }
 
     /// Compute strided blocks for efficient iteration.
@@ -298,16 +344,16 @@ impl Layout {
             };
         }
 
-        // Find contiguous inner dimensions
+        // Find contiguous inner dimensions (only positive strides)
         // Start from innermost and work outward while strides match contiguous pattern
         let ndims = self.num_dims();
         let mut block_len = 1usize;
-        let mut expected_stride = 1usize;
+        let mut expected_stride = 1isize;
 
         for i in (0..ndims).rev() {
             if self.strides[i] == expected_stride {
                 block_len *= self.shape.dims[i];
-                expected_stride *= self.shape.dims[i];
+                expected_stride *= self.shape.dims[i] as isize;
             } else {
                 break;
             }
@@ -367,11 +413,11 @@ impl<'a> StridedBlocks<'a> {
                 // Calculate dimensions for outer iteration (non-contiguous part)
                 let ndims = layout.num_dims();
                 let mut outer_dims = 0;
-                let mut expected_stride = 1usize;
+                let mut expected_stride = 1isize;
 
                 for i in (0..ndims).rev() {
                     if layout.strides[i] == expected_stride {
-                        expected_stride *= layout.shape.dims[i];
+                        expected_stride *= layout.shape.dims[i] as isize;
                     } else {
                         outer_dims = ndims - i;
                         break;
@@ -428,9 +474,9 @@ impl Iterator for BlockStartIter<'_> {
 
                 // Compute current block start
                 let outer_dims = multi_index.len();
-                let mut offset = layout.start_offset;
+                let mut offset = layout.start_offset as isize;
                 for (i, &idx) in multi_index.iter().enumerate() {
-                    offset += idx * layout.strides[i];
+                    offset += idx as isize * layout.strides[i];
                 }
 
                 *remaining -= 1;
@@ -445,7 +491,7 @@ impl Iterator for BlockStartIter<'_> {
                     multi_index[d] = 0;
                 }
 
-                Some(offset)
+                Some(offset as usize)
             }
         }
     }
@@ -508,5 +554,79 @@ mod tests {
         assert_eq!(layout.index(&[0, 2]), 2);
         assert_eq!(layout.index(&[1, 0]), 3);
         assert_eq!(layout.index(&[1, 2]), 5);
+    }
+
+    #[test]
+    fn test_flip_1d() {
+        // Original: [0, 1, 2, 3] with strides [1]
+        // Flipped: strides [-1], start_offset = 3
+        let layout = Layout::contiguous(Shape::from(vec![4]));
+        let flipped = layout.flip(&[0]);
+
+        assert_eq!(flipped.shape().dims, vec![4]);
+        assert_eq!(flipped.strides(), &[-1]);
+        assert_eq!(flipped.start_offset(), 3);
+
+        // Verify indices: logical [0] -> physical [3], logical [1] -> physical [2], etc.
+        assert_eq!(flipped.index(&[0]), 3);
+        assert_eq!(flipped.index(&[1]), 2);
+        assert_eq!(flipped.index(&[2]), 1);
+        assert_eq!(flipped.index(&[3]), 0);
+    }
+
+    #[test]
+    fn test_flip_2d_axis0() {
+        // [[0, 1, 2], [3, 4, 5]] with strides [3, 1]
+        // Flip axis 0: strides [-3, 1], start_offset = 3
+        let layout = Layout::contiguous(Shape::from(vec![2, 3]));
+        let flipped = layout.flip(&[0]);
+
+        assert_eq!(flipped.strides(), &[-3, 1]);
+        assert_eq!(flipped.start_offset(), 3);
+
+        // Row 0 of flipped = Row 1 of original
+        assert_eq!(flipped.index(&[0, 0]), 3);
+        assert_eq!(flipped.index(&[0, 1]), 4);
+        assert_eq!(flipped.index(&[0, 2]), 5);
+        // Row 1 of flipped = Row 0 of original
+        assert_eq!(flipped.index(&[1, 0]), 0);
+        assert_eq!(flipped.index(&[1, 1]), 1);
+        assert_eq!(flipped.index(&[1, 2]), 2);
+    }
+
+    #[test]
+    fn test_flip_2d_axis1() {
+        // [[0, 1, 2], [3, 4, 5]] with strides [3, 1]
+        // Flip axis 1: strides [3, -1], start_offset = 2
+        let layout = Layout::contiguous(Shape::from(vec![2, 3]));
+        let flipped = layout.flip(&[1]);
+
+        assert_eq!(flipped.strides(), &[3, -1]);
+        assert_eq!(flipped.start_offset(), 2);
+
+        // Col 0 of flipped = Col 2 of original
+        assert_eq!(flipped.index(&[0, 0]), 2);
+        assert_eq!(flipped.index(&[0, 1]), 1);
+        assert_eq!(flipped.index(&[0, 2]), 0);
+        assert_eq!(flipped.index(&[1, 0]), 5);
+        assert_eq!(flipped.index(&[1, 1]), 4);
+        assert_eq!(flipped.index(&[1, 2]), 3);
+    }
+
+    #[test]
+    fn test_flip_both_axes() {
+        // [[0, 1, 2], [3, 4, 5]] -> [[5, 4, 3], [2, 1, 0]]
+        let layout = Layout::contiguous(Shape::from(vec![2, 3]));
+        let flipped = layout.flip(&[0, 1]);
+
+        assert_eq!(flipped.strides(), &[-3, -1]);
+        assert_eq!(flipped.start_offset(), 5); // 3 + 2 = 5
+
+        assert_eq!(flipped.index(&[0, 0]), 5);
+        assert_eq!(flipped.index(&[0, 1]), 4);
+        assert_eq!(flipped.index(&[0, 2]), 3);
+        assert_eq!(flipped.index(&[1, 0]), 2);
+        assert_eq!(flipped.index(&[1, 1]), 1);
+        assert_eq!(flipped.index(&[1, 2]), 0);
     }
 }

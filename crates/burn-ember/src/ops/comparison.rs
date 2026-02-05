@@ -104,16 +104,16 @@ fn try_broadcast_cmp_f32(
 
     // Pattern 1: lhs has stride 0 in dim 1 (column broadcast), rhs contiguous
     // lhs[i,j] = lhs_data[i*stride], rhs[i,j] = rhs_data[i*cols + j]
-    if lhs_strides[1] == 0 && rhs_strides == [cols, 1] {
+    if lhs_strides[1] == 0 && rhs_strides == [cols as isize, 1] {
         let lhs_storage: &[f32] = lhs.storage();
         let rhs_storage: &[f32] = rhs.storage();
-        let l_offset = lhs.layout().start_offset();
+        let l_offset = lhs.layout().start_offset() as isize;
         let l_stride = lhs_strides[0];
         let r_offset = rhs.layout().start_offset();
 
         let mut result = vec![0u8; rows * cols];
         for row in 0..rows {
-            let a_val = lhs_storage[l_offset + row * l_stride];
+            let a_val = lhs_storage[(l_offset + row as isize * l_stride) as usize];
             let r_row_start = r_offset + row * cols;
             let r_slice = &rhs_storage[r_row_start..r_row_start + cols];
             let out_start = row * cols;
@@ -129,16 +129,16 @@ fn try_broadcast_cmp_f32(
 
     // Pattern 2: rhs has stride 0 in dim 0 (row broadcast), lhs contiguous
     // lhs[i,j] = lhs_data[i*cols + j], rhs[i,j] = rhs_data[j*stride]
-    if rhs_strides[0] == 0 && lhs_strides == [cols, 1] {
+    if rhs_strides[0] == 0 && lhs_strides == [cols as isize, 1] {
         let lhs_storage: &[f32] = lhs.storage();
         let rhs_storage: &[f32] = rhs.storage();
         let l_offset = lhs.layout().start_offset();
-        let r_offset = rhs.layout().start_offset();
+        let r_offset = rhs.layout().start_offset() as isize;
         let r_stride = rhs_strides[1];
 
         // Build the broadcast rhs values once
         let rhs_row: Vec<f32> = (0..cols)
-            .map(|j| rhs_storage[r_offset + j * r_stride])
+            .map(|j| rhs_storage[(r_offset + j as isize * r_stride) as usize])
             .collect();
 
         let mut result = vec![0u8; rows * cols];
@@ -166,19 +166,19 @@ fn try_broadcast_cmp_f32(
     if lhs_strides[1] == 0 && rhs_strides[0] == 0 {
         let lhs_storage: &[f32] = lhs.storage();
         let rhs_storage: &[f32] = rhs.storage();
-        let l_offset = lhs.layout().start_offset();
+        let l_offset = lhs.layout().start_offset() as isize;
         let l_stride = lhs_strides[0];
-        let r_offset = rhs.layout().start_offset();
+        let r_offset = rhs.layout().start_offset() as isize;
         let r_stride = rhs_strides[1];
 
         // Build the broadcast rhs row once
         let rhs_row: Vec<f32> = (0..cols)
-            .map(|j| rhs_storage[r_offset + j * r_stride])
+            .map(|j| rhs_storage[(r_offset + j as isize * r_stride) as usize])
             .collect();
 
         let mut result = vec![0u8; rows * cols];
         for row in 0..rows {
-            let a_val = lhs_storage[l_offset + row * l_stride];
+            let a_val = lhs_storage[(l_offset + row as isize * l_stride) as usize];
             let out_start = row * cols;
             simd::cmp_scalar_f32(
                 &rhs_row,
@@ -346,17 +346,17 @@ where
 {
     let (rows, cols, l_row_stride, l_col_stride) = lhs_layout.as_2d_strides().unwrap();
     let (_, _, r_row_stride, r_col_stride) = rhs_layout.as_2d_strides().unwrap();
-    let l_offset = lhs_layout.start_offset();
-    let r_offset = rhs_layout.start_offset();
+    let l_offset = lhs_layout.start_offset() as isize;
+    let r_offset = rhs_layout.start_offset() as isize;
 
     let mut result = Vec::with_capacity(rows * cols);
 
     for row in 0..rows {
-        let l_row_start = l_offset + row * l_row_stride;
-        let r_row_start = r_offset + row * r_row_stride;
+        let l_row_start = l_offset + row as isize * l_row_stride;
+        let r_row_start = r_offset + row as isize * r_row_stride;
         for col in 0..cols {
-            let l_idx = l_row_start + col * l_col_stride;
-            let r_idx = r_row_start + col * r_col_stride;
+            let l_idx = (l_row_start + col as isize * l_col_stride) as usize;
+            let r_idx = (r_row_start + col as isize * r_col_stride) as usize;
             result.push(cmp(lhs[l_idx], rhs[r_idx]) as u8);
         }
     }

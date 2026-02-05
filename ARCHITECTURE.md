@@ -170,9 +170,21 @@ use burn_backend::Shape;
 
 pub struct Layout {
     shape: Shape,
-    strides: Vec<usize>,
+    strides: Vec<isize>,   // Signed strides for zero-copy flip
     start_offset: usize,
 }
+```
+
+**Signed Strides**
+
+Strides are `isize` (signed) to enable zero-copy flip operations. A negative stride means we iterate backward through that dimension:
+
+```rust
+// Original tensor [1, 2, 3, 4] with shape [4], stride [1], offset 0
+// Flipped tensor uses:
+//   - offset: 3 (point to last element)
+//   - stride: -1 (move backward)
+// Iteration: indices 3, 2, 1, 0 -> values 4, 3, 2, 1
 ```
 
 Many operations are zero-copy (metadata changes only):
@@ -181,6 +193,34 @@ Many operations are zero-copy (metadata changes only):
 - `narrow()` - adjust offset
 - `reshape()` - recompute strides if contiguous
 - `broadcast()` - set stride to 0
+- `flip()` - negate stride, adjust offset
+- `permute()` - reorder strides
+
+**Zero-Copy Flip**
+
+With signed strides, `flip(tensor, axes)` is O(1):
+
+```rust
+pub fn flip(&self, axes: &[usize]) -> Self {
+    let mut new_strides = self.strides.clone();
+    let mut offset_adjustment: isize = 0;
+
+    for &axis in axes {
+        let dim_size = self.shape.dims[axis];
+        if dim_size > 1 {
+            // Move start to the last element in this dimension
+            offset_adjustment += (dim_size as isize - 1) * self.strides[axis];
+            // Negate stride to iterate backward
+            new_strides[axis] = -new_strides[axis];
+        }
+    }
+
+    let new_start = (self.start_offset as isize + offset_adjustment) as usize;
+    Self { shape: self.shape.clone(), strides: new_strides, start_offset: new_start }
+}
+```
+
+This avoids the O(n) element-by-element copy that would be required with unsigned strides.
 
 ### Tensor
 

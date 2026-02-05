@@ -164,7 +164,7 @@ fn compute_src_index(
             // Negative step: start from high index, go down
             (start as isize - (out_i as isize) * (-step)) as usize
         };
-        idx += src_i * layout.strides()[dim];
+        idx = (idx as isize + src_i as isize * layout.strides()[dim]) as usize;
     }
     idx
 }
@@ -288,7 +288,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
 
         for _ in 0..outer_count {
             // Compute destination offset for current outer indices
-            let mut dst_offset = dst_layout.start_offset();
+            let mut dst_offset = dst_layout.start_offset() as isize;
             for (dim, &idx) in outer_indices.iter().enumerate() {
                 let (start, _, step) = slice_info[dim];
                 let src_i = if step > 0 {
@@ -296,10 +296,11 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
                 } else {
                     (start as isize - (idx as isize) * (-step)) as usize
                 };
-                dst_offset += src_i * dst_strides[dim];
+                dst_offset += src_i as isize * dst_strides[dim];
             }
             // Add inner dimension start
-            dst_offset += slice_info[ndims - 1].0 * dst_strides[ndims - 1];
+            dst_offset += slice_info[ndims - 1].0 as isize * dst_strides[ndims - 1];
+            let dst_offset = dst_offset as usize;
 
             // Copy inner row
             dst[dst_offset..dst_offset + inner_len]
@@ -323,7 +324,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
 
         for &val in val_src.iter().take(total_elements) {
             // Compute destination index
-            let mut dst_offset = dst_layout.start_offset();
+            let mut dst_offset = dst_layout.start_offset() as isize;
             for (dim, &idx) in indices.iter().enumerate() {
                 let (start, _, step) = slice_info[dim];
                 let src_i = if step > 0 {
@@ -331,10 +332,10 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
                 } else {
                     (start as isize - (idx as isize) * (-step)) as usize
                 };
-                dst_offset += src_i * dst_strides[dim];
+                dst_offset += src_i as isize * dst_strides[dim];
             }
 
-            dst[dst_offset] = val;
+            dst[dst_offset as usize] = val;
 
             // Increment indices (odometer style)
             for dim in (0..ndims).rev() {

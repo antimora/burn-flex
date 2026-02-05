@@ -199,17 +199,17 @@ where
 {
     let (rows, cols, l_row_stride, l_col_stride) = lhs_layout.as_2d_strides().unwrap();
     let (_, _, r_row_stride, r_col_stride) = rhs_layout.as_2d_strides().unwrap();
-    let l_offset = lhs_layout.start_offset();
-    let r_offset = rhs_layout.start_offset();
+    let l_offset = lhs_layout.start_offset() as isize;
+    let r_offset = rhs_layout.start_offset() as isize;
 
     let mut result = Vec::with_capacity(rows * cols);
 
     for row in 0..rows {
-        let l_row_start = l_offset + row * l_row_stride;
-        let r_row_start = r_offset + row * r_row_stride;
+        let l_row_start = l_offset + row as isize * l_row_stride;
+        let r_row_start = r_offset + row as isize * r_row_stride;
         for col in 0..cols {
-            let l_idx = l_row_start + col * l_col_stride;
-            let r_idx = r_row_start + col * r_col_stride;
+            let l_idx = (l_row_start + col as isize * l_col_stride) as usize;
+            let r_idx = (r_row_start + col as isize * r_col_stride) as usize;
             result.push(op(lhs[l_idx], rhs[r_idx]));
         }
     }

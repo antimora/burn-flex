@@ -95,6 +95,17 @@ impl EmberTensor {
         &self.layout
     }
 
+    /// Create a new tensor with a different layout but sharing the same data.
+    ///
+    /// This is a zero-copy operation used for operations like flip, transpose, etc.
+    pub fn with_layout(self, layout: Layout) -> Self {
+        Self {
+            data: self.data,
+            layout,
+            dtype: self.dtype,
+        }
+    }
+
     /// Get the dtype.
     pub fn dtype(&self) -> DType {
         self.dtype
@@ -251,11 +262,12 @@ impl EmberTensor {
 
         // Fast path for 2D tensors (common for transpose)
         if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
-            let offset = self.layout.start_offset();
+            let offset = self.layout.start_offset() as isize;
             for row in 0..rows {
-                let row_start = offset + row * row_stride;
+                let row_start = offset + row as isize * row_stride;
                 for col in 0..cols {
-                    dst.push(src[row_start + col * col_stride]);
+                    let idx = (row_start + col as isize * col_stride) as usize;
+                    dst.push(src[idx]);
                 }
             }
         } else {
@@ -281,11 +293,12 @@ impl EmberTensor {
 
         // Fast path for 2D tensors
         if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
-            let offset = self.layout.start_offset();
+            let offset = self.layout.start_offset() as isize;
             for row in 0..rows {
-                let row_start = offset + row * row_stride;
+                let row_start = offset + row as isize * row_stride;
                 for col in 0..cols {
-                    dst.push(src[row_start + col * col_stride]);
+                    let idx = (row_start + col as isize * col_stride) as usize;
+                    dst.push(src[idx]);
                 }
             }
         } else {
@@ -310,11 +323,12 @@ impl EmberTensor {
 
         // Fast path for 2D tensors
         if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
-            let offset = self.layout.start_offset();
+            let offset = self.layout.start_offset() as isize;
             for row in 0..rows {
-                let row_start = offset + row * row_stride;
+                let row_start = offset + row as isize * row_stride;
                 for col in 0..cols {
-                    dst.push(src[row_start + col * col_stride]);
+                    let idx = (row_start + col as isize * col_stride) as usize;
+                    dst.push(src[idx]);
                 }
             }
         } else {
