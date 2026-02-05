@@ -589,10 +589,10 @@ mod tests {
     fn test_round_floor_ceil() {
         let tensor = tensor_from_vec(vec![-1.5, -0.5, 0.5, 1.5]);
 
-        // Rust uses "round half away from zero": -0.5 -> -1, 0.5 -> 1
+        // Banker's rounding (ties to even): -0.5 -> 0, 0.5 -> 0, -1.5 -> -2, 1.5 -> 2
         let round_result = round(tensor.clone());
         let round_data: &[f32] = round_result.storage();
-        assert_approx_eq(round_data, &[-2.0, -1.0, 1.0, 2.0], 1e-5);
+        assert_approx_eq(round_data, &[-2.0, 0.0, 0.0, 2.0], 1e-5);
 
         let floor_result = floor(tensor.clone());
         let floor_data: &[f32] = floor_result.storage();
