@@ -1,10 +1,31 @@
 use alloc::string::String;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use burn_backend::{Backend, DType, DTypeUsage, DTypeUsageSet, DeviceId, DeviceOps};
 use burn_std::device::Device;
+use rand::{SeedableRng, rngs::StdRng};
 
 use crate::qtensor::EmberQTensor;
 use crate::tensor::EmberTensor;
+
+/// Global seed for random number generation.
+/// Uses AtomicU64 for thread-safe seed storage.
+static SEED: AtomicU64 = AtomicU64::new(0);
+
+/// Flag indicating if a seed has been explicitly set.
+static SEED_SET: AtomicU64 = AtomicU64::new(0);
+
+/// Get a random number generator, either seeded or with OS entropy.
+pub(crate) fn get_rng() -> StdRng {
+    if SEED_SET.load(Ordering::SeqCst) != 0 {
+        // Use the stored seed, then increment it for next call
+        let seed = SEED.fetch_add(1, Ordering::SeqCst);
+        StdRng::seed_from_u64(seed)
+    } else {
+        // Use OS entropy
+        StdRng::from_os_rng()
+    }
+}
 
 /// CPU device for the Ember backend.
 ///
@@ -56,8 +77,9 @@ impl Backend for Ember {
         "ember".into()
     }
 
-    fn seed(_device: &Self::Device, _seed: u64) {
-        // TODO: Implement seeding for random number generation
+    fn seed(_device: &Self::Device, seed: u64) {
+        SEED.store(seed, Ordering::SeqCst);
+        SEED_SET.store(1, Ordering::SeqCst);
     }
 
     fn dtype_usage(_device: &Self::Device, dtype: DType) -> DTypeUsageSet {

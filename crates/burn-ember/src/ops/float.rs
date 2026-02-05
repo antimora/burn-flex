@@ -19,11 +19,13 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_random(
-        _shape: Shape,
-        _distribution: Distribution,
+        shape: Shape,
+        distribution: Distribution,
         _device: &Device<Ember>,
     ) -> FloatTensor<Ember> {
-        todo!("float_random")
+        let mut rng = crate::backend::get_rng();
+        let data = TensorData::random::<f32, _, _>(shape, distribution, &mut rng);
+        EmberTensor::from_data(data)
     }
 
     async fn float_into_data(tensor: FloatTensor<Ember>) -> Result<TensorData, ExecutionError> {
