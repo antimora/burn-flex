@@ -23,8 +23,14 @@ impl FloatTensorOps<Ember> for Ember {
         distribution: Distribution,
         _device: &Device<Ember>,
     ) -> FloatTensor<Ember> {
-        let mut rng = crate::backend::get_rng();
+        let mut seed = crate::backend::SEED.lock().unwrap();
+        let mut rng = if let Some(rng_seeded) = seed.as_ref() {
+            rng_seeded.clone()
+        } else {
+            crate::backend::get_seeded_rng()
+        };
         let data = TensorData::random::<f32, _, _>(shape, distribution, &mut rng);
+        *seed = Some(rng);
         EmberTensor::from_data(data)
     }
 
@@ -534,5 +540,48 @@ mod tests {
         assert_approx(floor_result, &[1.0, 1.0, -2.0, -2.0], 1e-5);
         assert_approx(ceil_result, &[2.0, 2.0, -1.0, -1.0], 1e-5);
         assert_approx(round_result, &[1.0, 2.0, -1.0, -2.0], 1e-5);
+    }
+
+    #[test]
+    fn test_random_uniform() {
+        use burn_tensor::Distribution;
+
+        let device = Default::default();
+        let t: Tensor<Ember, 2> = Tensor::random([10, 10], Distribution::Uniform(0.0, 1.0), &device);
+        let data = t.into_data();
+        let values: Vec<f32> = data.to_vec().unwrap();
+
+        // All values should be in [0, 1]
+        for v in &values {
+            assert!(*v >= 0.0 && *v <= 1.0, "value {} out of range [0, 1]", v);
+        }
+    }
+
+    #[test]
+    fn test_random_seeded_reproducibility() {
+        use burn_backend::Backend;
+        use burn_tensor::Distribution;
+
+        let device = Default::default();
+
+        // Set seed and generate random tensor
+        Ember::seed(&device, 42);
+        let t1: Tensor<Ember, 2> = Tensor::random([5, 5], Distribution::Uniform(0.0, 1.0), &device);
+        let data1: Vec<f32> = t1.into_data().to_vec().unwrap();
+
+        // Reset seed and generate again
+        Ember::seed(&device, 42);
+        let t2: Tensor<Ember, 2> = Tensor::random([5, 5], Distribution::Uniform(0.0, 1.0), &device);
+        let data2: Vec<f32> = t2.into_data().to_vec().unwrap();
+
+        // Should be identical
+        for (a, b) in data1.iter().zip(data2.iter()) {
+            assert!(
+                (a - b).abs() < 1e-10,
+                "Reproducibility failed: {} != {}",
+                a,
+                b
+            );
+        }
     }
 }

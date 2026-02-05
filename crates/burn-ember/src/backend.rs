@@ -1,30 +1,25 @@
 use alloc::string::String;
-use core::sync::atomic::{AtomicU64, Ordering};
 
 use burn_backend::{Backend, DType, DTypeUsage, DTypeUsageSet, DeviceId, DeviceOps};
 use burn_std::device::Device;
-use rand::{SeedableRng, rngs::StdRng};
+use burn_std::rand::{SeedableRng, StdRng};
+use burn_std::stub::Mutex;
 
 use crate::qtensor::EmberQTensor;
 use crate::tensor::EmberTensor;
 
-/// Global seed for random number generation.
-/// Uses AtomicU64 for thread-safe seed storage.
-static SEED: AtomicU64 = AtomicU64::new(0);
+/// Type alias for the RNG used by Ember.
+pub type EmberRng = StdRng;
 
-/// Flag indicating if a seed has been explicitly set.
-static SEED_SET: AtomicU64 = AtomicU64::new(0);
+/// Global seed storage for reproducible random number generation.
+/// Uses Mutex for thread-safe RNG state management.
+pub(crate) static SEED: Mutex<Option<EmberRng>> = Mutex::new(None);
 
-/// Get a random number generator, either seeded or with OS entropy.
-pub(crate) fn get_rng() -> StdRng {
-    if SEED_SET.load(Ordering::SeqCst) != 0 {
-        // Use the stored seed, then increment it for next call
-        let seed = SEED.fetch_add(1, Ordering::SeqCst);
-        StdRng::seed_from_u64(seed)
-    } else {
-        // Use OS entropy
-        StdRng::from_os_rng()
-    }
+/// Get a random number generator.
+/// If a seed was set, clones and returns the seeded RNG.
+/// Otherwise, creates a new RNG with OS entropy (std) or constant seed (no_std).
+pub(crate) fn get_seeded_rng() -> EmberRng {
+    burn_std::rand::get_seeded_rng()
 }
 
 /// CPU device for the Ember backend.
@@ -78,8 +73,9 @@ impl Backend for Ember {
     }
 
     fn seed(_device: &Self::Device, seed: u64) {
-        SEED.store(seed, Ordering::SeqCst);
-        SEED_SET.store(1, Ordering::SeqCst);
+        let rng = EmberRng::seed_from_u64(seed);
+        let mut seed_lock = SEED.lock().unwrap();
+        *seed_lock = Some(rng);
     }
 
     fn dtype_usage(_device: &Self::Device, dtype: DType) -> DTypeUsageSet {
