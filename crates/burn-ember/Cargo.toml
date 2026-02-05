@@ -87,3 +87,7 @@ harness = false
 [[bench]]
 name = "cross_unfold_ops"
 harness = false
+
+[[bench]]
+name = "int_ops"
+harness = false

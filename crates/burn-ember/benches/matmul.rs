@@ -271,3 +271,65 @@ macro_rules! bench_int_backend {
 
 bench_int_backend!(Ember, ember_int, "Ember_Int");
 bench_int_backend!(NdArray, ndarray_int, "NdArray_Int");
+
+// Broadcast matmul benchmarks
+fn make_batch_matrix_4d<B: Backend>(
+    b1: usize,
+    b2: usize,
+    rows: usize,
+    cols: usize,
+) -> Tensor<B, 4> {
+    let data: Vec<f32> = (0..b1 * b2 * rows * cols)
+        .map(|i| ((i % 1000) as f32 / 1000.0) - 0.5)
+        .collect();
+    Tensor::from_data(
+        TensorData::new(data, [b1, b2, rows, cols]),
+        &Default::default(),
+    )
+}
+
+macro_rules! bench_broadcast_backend {
+    ($backend:ty, $mod_name:ident, $backend_name:literal) => {
+        #[divan::bench_group(name = $backend_name)]
+        mod $mod_name {
+            use super::*;
+
+            type B = $backend;
+
+            // Broadcast: [1, M, K] x [batch, K, N] -> [batch, M, N]
+            #[divan::bench]
+            fn broadcast_1_vs_8_64x64(bencher: Bencher) {
+                let a = make_batch_matrix::<B>(1, 64, 64);
+                let b = make_batch_matrix::<B>(8, 64, 64);
+                bencher.bench(|| a.clone().matmul(b.clone()));
+            }
+
+            // Broadcast: [batch, M, K] x [1, K, N] -> [batch, M, N]
+            #[divan::bench]
+            fn broadcast_8_vs_1_64x64(bencher: Bencher) {
+                let a = make_batch_matrix::<B>(8, 64, 64);
+                let b = make_batch_matrix::<B>(1, 64, 64);
+                bencher.bench(|| a.clone().matmul(b.clone()));
+            }
+
+            // 4D broadcast: [2, 1, M, K] x [1, 4, K, N] -> [2, 4, M, N]
+            #[divan::bench]
+            fn broadcast_4d_2x1_vs_1x4_32x32(bencher: Bencher) {
+                let a = make_batch_matrix_4d::<B>(2, 1, 32, 32);
+                let b = make_batch_matrix_4d::<B>(1, 4, 32, 32);
+                bencher.bench(|| a.clone().matmul(b.clone()));
+            }
+
+            // Larger 4D broadcast
+            #[divan::bench]
+            fn broadcast_4d_4x1_vs_1x4_64x64(bencher: Bencher) {
+                let a = make_batch_matrix_4d::<B>(4, 1, 64, 64);
+                let b = make_batch_matrix_4d::<B>(1, 4, 64, 64);
+                bencher.bench(|| a.clone().matmul(b.clone()));
+            }
+        }
+    };
+}
+
+bench_broadcast_backend!(Ember, ember_broadcast, "Ember_Broadcast");
+bench_broadcast_backend!(NdArray, ndarray_broadcast, "NdArray_Broadcast");
