@@ -578,13 +578,8 @@ impl FloatTensorOps<Ember> for Ember {
         size: usize,
         step: usize,
     ) -> FloatTensor<Ember> {
-        match tensor.dtype() {
-            DType::F32 => crate::ops::unfold::unfold::<f32>(tensor, dim, size, step),
-            DType::F64 => crate::ops::unfold::unfold::<f64>(tensor, dim, size, step),
-            DType::F16 => crate::ops::unfold::unfold::<f16>(tensor, dim, size, step),
-            DType::BF16 => crate::ops::unfold::unfold::<bf16>(tensor, dim, size, step),
-            _ => panic!("float_unfold: unsupported dtype {:?}", tensor.dtype()),
-        }
+        // unfold is now type-agnostic (zero-copy strided view)
+        crate::ops::unfold::unfold(tensor, dim, size, step)
     }
 }
 

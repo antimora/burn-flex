@@ -347,6 +347,8 @@ enum ReduceOp {
 
 /// Optimized f32 dimension reduction with SIMD.
 fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor {
+    // Ensure contiguous for correct 3D+ stride handling
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
@@ -609,6 +611,8 @@ where
     E: Element + bytemuck::Pod + Copy,
     F: Fn(E, E) -> E,
 {
+    // Ensure contiguous for correct 3D+ stride handling
+    let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
     let ndims = shape.num_dims();

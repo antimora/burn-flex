@@ -1,10 +1,11 @@
 //! Unfold operation for sliding window extraction.
+//!
+//! Implemented as a zero-copy strided view. The output tensor shares storage
+//! with the input, using strides to represent overlapping windows.
 
-use alloc::vec;
 use alloc::vec::Vec;
-use burn_backend::Element;
-use burn_std::{Bytes, Shape};
-use bytemuck::Pod;
+
+use burn_std::Shape;
 
 use crate::{EmberTensor, Layout};
 
@@ -27,23 +28,31 @@ fn calculate_windows(dim_size: usize, window_size: usize, step: usize) -> usize 
 /// Returns a tensor with shape `[pre..., windows, post..., size]` where:
 /// - `windows = (dim_size - size + step) / step`
 /// - The `size` dimension is appended at the end
-pub fn unfold<E: Element + Pod + Default + Copy>(
-    tensor: EmberTensor,
-    dim: usize,
-    size: usize,
-    step: usize,
-) -> EmberTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
+///
+/// This is a zero-copy operation that returns a strided view of the input.
+/// The same storage elements may appear in multiple windows (overlapping).
+pub fn unfold(tensor: EmberTensor, dim: usize, size: usize, step: usize) -> EmberTensor {
+    let input_layout = tensor.layout();
+    let shape = input_layout.shape();
+    let input_strides = input_layout.strides();
+    let start_offset = input_layout.start_offset();
     let ndims = shape.num_dims();
+    let dtype = tensor.dtype();
 
-    assert!(dim < ndims, "dim {} out of bounds for {} dimensions", dim, ndims);
+    assert!(
+        dim < ndims,
+        "dim {} out of bounds for {} dimensions",
+        dim,
+        ndims
+    );
     assert!(size > 0, "window size must be positive");
     assert!(step > 0, "step must be positive");
     assert!(
         shape.dims[dim] >= size,
         "dimension {} has size {} which is smaller than window size {}",
-        dim, shape.dims[dim], size
+        dim,
+        shape.dims[dim],
+        size
     );
 
     let dim_size = shape.dims[dim];
@@ -60,71 +69,42 @@ pub fn unfold<E: Element + Pod + Default + Copy>(
     }
     output_dims.push(size); // Append size at the end
 
-    let output_shape = Shape::from(output_dims);
-    let output_size = output_shape.num_elements();
-
-    let tensor_data: &[E] = tensor.storage();
-
-    // Compute input strides
-    let input_strides = compute_strides(&shape.dims);
-
-    // Compute output strides
-    let output_strides = compute_strides(&output_shape.dims);
-
-    let mut result = vec![E::default(); output_size];
-
-    // For each output position, compute the corresponding input position
-    for out_idx in 0..output_size {
-        let mut remaining = out_idx;
-        let mut in_idx = 0;
-
-        // Process dimensions up to and including the unfolded dimension
-        for d in 0..ndims {
-            let coord = remaining / output_strides[d];
-            remaining %= output_strides[d];
-
-            if d == dim {
-                // This is the window index; multiply by step to get starting position
-                in_idx += coord * step * input_strides[d];
-            } else {
-                in_idx += coord * input_strides[d];
-            }
+    // Build output strides:
+    // - Dimensions before `dim`: same stride as input
+    // - Dimension `dim` (now windows): input_stride[dim] * step
+    // - Dimensions after `dim`: same stride as input
+    // - New size dimension (appended): input_stride[dim]
+    let mut output_strides: Vec<isize> = Vec::with_capacity(ndims + 1);
+    for (d, &s) in input_strides.iter().enumerate() {
+        if d == dim {
+            // Windows dimension: stride = original_stride * step
+            output_strides.push(s * step as isize);
+        } else {
+            output_strides.push(s);
         }
-
-        // The last dimension of output is the position within the window
-        let window_pos = remaining; // remaining after processing ndims dimensions
-        in_idx += window_pos * input_strides[dim];
-
-        result[out_idx] = tensor_data[in_idx];
     }
+    // Append stride for the size dimension (position within window)
+    output_strides.push(input_strides[dim]);
 
-    let bytes = Bytes::from_elems(result);
-    EmberTensor::new(bytes, Layout::contiguous(output_shape), E::dtype())
+    let output_shape = Shape::from(output_dims);
+    let output_layout = Layout::new(output_shape, output_strides, start_offset);
+
+    // Zero-copy: reuse the same storage with new layout
+    EmberTensor::from_arc(tensor.data_arc(), output_layout, dtype)
 }
 
-/// Compute row-major strides for a shape.
-#[inline]
-fn compute_strides(dims: &[usize]) -> Vec<usize> {
-    let ndims = dims.len();
-    let mut strides = vec![1usize; ndims];
-    for i in (0..ndims.saturating_sub(1)).rev() {
-        strides[i] = strides[i + 1] * dims[i + 1];
-    }
-    strides
-}
-
-// Type-specific wrappers
+// Type-specific wrappers (all delegate to the generic unfold which is now type-agnostic)
 
 pub fn unfold_f32(tensor: EmberTensor, dim: usize, size: usize, step: usize) -> EmberTensor {
-    unfold::<f32>(tensor, dim, size, step)
+    unfold(tensor, dim, size, step)
 }
 
 pub fn unfold_f64(tensor: EmberTensor, dim: usize, size: usize, step: usize) -> EmberTensor {
-    unfold::<f64>(tensor, dim, size, step)
+    unfold(tensor, dim, size, step)
 }
 
 pub fn unfold_bool(tensor: EmberTensor, dim: usize, size: usize, step: usize) -> EmberTensor {
-    unfold::<u8>(tensor, dim, size, step)
+    unfold(tensor, dim, size, step)
 }
 
 #[cfg(test)]
