@@ -218,11 +218,19 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_random(
-        _shape: Shape,
-        _distribution: Distribution,
+        shape: Shape,
+        distribution: Distribution,
         _device: &Device<Ember>,
     ) -> IntTensor<Ember> {
-        todo!("int_random")
+        let mut seed = crate::backend::SEED.lock().unwrap();
+        let mut rng = if let Some(rng_seeded) = seed.as_ref() {
+            rng_seeded.clone()
+        } else {
+            crate::backend::get_seeded_rng()
+        };
+        let data = TensorData::random::<i64, _, _>(shape, distribution, &mut rng);
+        *seed = Some(rng);
+        EmberTensor::from_data(data)
     }
 
     fn int_expand(tensor: IntTensor<Ember>, shape: Shape) -> IntTensor<Ember> {
@@ -326,8 +334,111 @@ impl IntTensorOps<Ember> for Ember {
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a >> b)
     }
 
-    fn int_cast(_tensor: IntTensor<Ember>, _dtype: IntDType) -> IntTensor<Ember> {
-        todo!("int_cast")
+    fn int_cast(tensor: IntTensor<Ember>, dtype: IntDType) -> IntTensor<Ember> {
+        let target_dtype: DType = dtype.into();
+
+        // If already the target dtype, return as-is
+        if tensor.dtype() == target_dtype {
+            return tensor;
+        }
+
+        // Make contiguous for easier iteration
+        let tensor = tensor.to_contiguous();
+        let shape = tensor.layout().shape().clone();
+
+        // Helper macro to convert between types
+        macro_rules! cast_impl {
+            ($src_type:ty, $dst_type:ty, $dst_dtype:expr) => {{
+                let src: &[$src_type] = tensor.storage();
+                let dst: Vec<$dst_type> = src.iter().map(|&x| x as $dst_type).collect();
+                EmberTensor::new(
+                    Bytes::from_elems(dst),
+                    Layout::contiguous(shape),
+                    $dst_dtype,
+                )
+            }};
+        }
+
+        // Match source dtype to target dtype
+        match (tensor.dtype(), target_dtype) {
+            // From I64
+            (DType::I64, DType::I32) => cast_impl!(i64, i32, DType::I32),
+            (DType::I64, DType::I16) => cast_impl!(i64, i16, DType::I16),
+            (DType::I64, DType::I8) => cast_impl!(i64, i8, DType::I8),
+            (DType::I64, DType::U64) => cast_impl!(i64, u64, DType::U64),
+            (DType::I64, DType::U32) => cast_impl!(i64, u32, DType::U32),
+            (DType::I64, DType::U16) => cast_impl!(i64, u16, DType::U16),
+            (DType::I64, DType::U8) => cast_impl!(i64, u8, DType::U8),
+
+            // From I32
+            (DType::I32, DType::I64) => cast_impl!(i32, i64, DType::I64),
+            (DType::I32, DType::I16) => cast_impl!(i32, i16, DType::I16),
+            (DType::I32, DType::I8) => cast_impl!(i32, i8, DType::I8),
+            (DType::I32, DType::U64) => cast_impl!(i32, u64, DType::U64),
+            (DType::I32, DType::U32) => cast_impl!(i32, u32, DType::U32),
+            (DType::I32, DType::U16) => cast_impl!(i32, u16, DType::U16),
+            (DType::I32, DType::U8) => cast_impl!(i32, u8, DType::U8),
+
+            // From I16
+            (DType::I16, DType::I64) => cast_impl!(i16, i64, DType::I64),
+            (DType::I16, DType::I32) => cast_impl!(i16, i32, DType::I32),
+            (DType::I16, DType::I8) => cast_impl!(i16, i8, DType::I8),
+            (DType::I16, DType::U64) => cast_impl!(i16, u64, DType::U64),
+            (DType::I16, DType::U32) => cast_impl!(i16, u32, DType::U32),
+            (DType::I16, DType::U16) => cast_impl!(i16, u16, DType::U16),
+            (DType::I16, DType::U8) => cast_impl!(i16, u8, DType::U8),
+
+            // From I8
+            (DType::I8, DType::I64) => cast_impl!(i8, i64, DType::I64),
+            (DType::I8, DType::I32) => cast_impl!(i8, i32, DType::I32),
+            (DType::I8, DType::I16) => cast_impl!(i8, i16, DType::I16),
+            (DType::I8, DType::U64) => cast_impl!(i8, u64, DType::U64),
+            (DType::I8, DType::U32) => cast_impl!(i8, u32, DType::U32),
+            (DType::I8, DType::U16) => cast_impl!(i8, u16, DType::U16),
+            (DType::I8, DType::U8) => cast_impl!(i8, u8, DType::U8),
+
+            // From U64
+            (DType::U64, DType::I64) => cast_impl!(u64, i64, DType::I64),
+            (DType::U64, DType::I32) => cast_impl!(u64, i32, DType::I32),
+            (DType::U64, DType::I16) => cast_impl!(u64, i16, DType::I16),
+            (DType::U64, DType::I8) => cast_impl!(u64, i8, DType::I8),
+            (DType::U64, DType::U32) => cast_impl!(u64, u32, DType::U32),
+            (DType::U64, DType::U16) => cast_impl!(u64, u16, DType::U16),
+            (DType::U64, DType::U8) => cast_impl!(u64, u8, DType::U8),
+
+            // From U32
+            (DType::U32, DType::I64) => cast_impl!(u32, i64, DType::I64),
+            (DType::U32, DType::I32) => cast_impl!(u32, i32, DType::I32),
+            (DType::U32, DType::I16) => cast_impl!(u32, i16, DType::I16),
+            (DType::U32, DType::I8) => cast_impl!(u32, i8, DType::I8),
+            (DType::U32, DType::U64) => cast_impl!(u32, u64, DType::U64),
+            (DType::U32, DType::U16) => cast_impl!(u32, u16, DType::U16),
+            (DType::U32, DType::U8) => cast_impl!(u32, u8, DType::U8),
+
+            // From U16
+            (DType::U16, DType::I64) => cast_impl!(u16, i64, DType::I64),
+            (DType::U16, DType::I32) => cast_impl!(u16, i32, DType::I32),
+            (DType::U16, DType::I16) => cast_impl!(u16, i16, DType::I16),
+            (DType::U16, DType::I8) => cast_impl!(u16, i8, DType::I8),
+            (DType::U16, DType::U64) => cast_impl!(u16, u64, DType::U64),
+            (DType::U16, DType::U32) => cast_impl!(u16, u32, DType::U32),
+            (DType::U16, DType::U8) => cast_impl!(u16, u8, DType::U8),
+
+            // From U8
+            (DType::U8, DType::I64) => cast_impl!(u8, i64, DType::I64),
+            (DType::U8, DType::I32) => cast_impl!(u8, i32, DType::I32),
+            (DType::U8, DType::I16) => cast_impl!(u8, i16, DType::I16),
+            (DType::U8, DType::I8) => cast_impl!(u8, i8, DType::I8),
+            (DType::U8, DType::U64) => cast_impl!(u8, u64, DType::U64),
+            (DType::U8, DType::U32) => cast_impl!(u8, u32, DType::U32),
+            (DType::U8, DType::U16) => cast_impl!(u8, u16, DType::U16),
+
+            _ => panic!(
+                "int_cast: unsupported conversion from {:?} to {:?}",
+                tensor.dtype(),
+                target_dtype
+            ),
+        }
     }
 
     fn int_unfold(
