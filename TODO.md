@@ -17,30 +17,32 @@
 
 ## Unimplemented Operations
 
-**Test status: 669 passed, 409 failed** (tensor tests only)
+**Test status: 747 passed, 331 failed** (tensor tests only)
 
 ### Critical (blocks many tests)
 - [x] `float_random` - implemented with no_std support (+63 tests now passing)
 
-### Float Ops (16 missing)
+### Float Ops (12 missing)
 - [x] `float_into_int`
+- [x] `float_permute`, `float_flip`
+- [x] `float_mask_where`, `float_mask_fill`
 - [ ] `float_cast`
 - [ ] `float_remainder`, `float_remainder_scalar`
-- [ ] `float_permute`, `float_flip`
 - [ ] `float_gather`, `float_scatter_add`, `float_select`, `float_select_add`
-- [ ] `float_mask_where`, `float_mask_fill`
 - [ ] `float_cumsum`, `float_cumprod`, `float_cummin`, `float_cummax`
 - [ ] `float_powf`, `float_atan2`, `float_cross`, `float_unfold`
 
-### Int Ops (7 missing)
+### Int Ops (3 missing)
 - [x] `int_add`, `int_sub`, `int_mul`, `int_div` (and scalar variants)
 - [x] `int_into_float`
-- [ ] `int_remainder`, `int_permute`
-- [ ] `int_mask_where`, `int_mask_fill`
+- [x] `int_permute`, `int_flip`
+- [x] `int_mask_where`, `int_mask_fill`
+- [ ] `int_remainder`
 - [ ] `int_gather`, `int_scatter_add`, `int_select`, `int_select_add`
 
-### Bool Ops (8 missing)
+### Bool Ops (4 missing)
 - [x] `bool_into_int`, `bool_into_float`
-- [ ] `bool_permute`, `bool_flip`, `bool_ones`
-- [ ] `bool_mask_where`, `bool_mask_fill`
+- [x] `bool_permute`, `bool_flip`
+- [x] `bool_mask_where`, `bool_mask_fill`
+- [ ] `bool_ones`
 - [ ] `bool_gather`, `bool_scatter_or`, `bool_unfold`
