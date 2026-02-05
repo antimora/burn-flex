@@ -172,11 +172,13 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_remainder(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        int_binary_op(lhs, rhs, |a, b| a % b)
+        // Python/PyTorch-style remainder: result has same sign as divisor
+        int_binary_op(lhs, rhs, |a, b| ((a % b) + b) % b)
     }
 
     fn int_remainder_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
-        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a % b)
+        // Python/PyTorch-style remainder: result has same sign as divisor
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| ((a % b) + b) % b)
     }
 
     fn int_into_float(tensor: IntTensor<Ember>) -> FloatTensor<Ember> {
@@ -279,48 +281,49 @@ impl IntTensorOps<Ember> for Ember {
         crate::ops::unary::int_abs(tensor)
     }
 
-    fn bitwise_and(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("bitwise_and")
+    fn bitwise_and(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a & b)
     }
 
-    fn bitwise_and_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("bitwise_and_scalar")
+    fn bitwise_and_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a & b)
     }
 
-    fn bitwise_or(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("bitwise_or")
+    fn bitwise_or(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a | b)
     }
 
-    fn bitwise_or_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("bitwise_or_scalar")
+    fn bitwise_or_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a | b)
     }
 
-    fn bitwise_xor(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("bitwise_xor")
+    fn bitwise_xor(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a ^ b)
     }
 
-    fn bitwise_xor_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("bitwise_xor_scalar")
+    fn bitwise_xor_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a ^ b)
     }
 
-    fn bitwise_not(_tensor: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("bitwise_not")
+    fn bitwise_not(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
+        // Use scalar op with dummy value, only applying NOT to lhs
+        int_scalar_op(tensor, 0, |a, _| !a)
     }
 
-    fn bitwise_left_shift(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("bitwise_left_shift")
+    fn bitwise_left_shift(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a << b)
     }
 
-    fn bitwise_left_shift_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("bitwise_left_shift_scalar")
+    fn bitwise_left_shift_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a << b)
     }
 
-    fn bitwise_right_shift(_lhs: IntTensor<Ember>, _rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        todo!("bitwise_right_shift")
+    fn bitwise_right_shift(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_binary_op(lhs, rhs, |a, b| a >> b)
     }
 
-    fn bitwise_right_shift_scalar(_lhs: IntTensor<Ember>, _rhs: Scalar) -> IntTensor<Ember> {
-        todo!("bitwise_right_shift_scalar")
+    fn bitwise_right_shift_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a >> b)
     }
 
     fn int_cast(_tensor: IntTensor<Ember>, _dtype: IntDType) -> IntTensor<Ember> {

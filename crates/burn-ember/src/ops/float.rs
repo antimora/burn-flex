@@ -119,12 +119,19 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_remainder(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        binary_op(lhs, rhs, |a, b| a % b, |a, b| a % b)
+        // Python/PyTorch-style remainder: result has same sign as divisor
+        binary_op(lhs, rhs, |a, b| ((a % b) + b) % b, |a, b| ((a % b) + b) % b)
     }
 
     fn float_remainder_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
         let rhs_val = rhs.to_f64().unwrap();
-        scalar_op(lhs, rhs_val, |a, b| a % b, |a, b| a % b)
+        // Python/PyTorch-style remainder: result has same sign as divisor
+        scalar_op(
+            lhs,
+            rhs_val,
+            |a, b| ((a % b) + b) % b,
+            |a, b| ((a % b) + b) % b,
+        )
     }
 
     fn float_matmul(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
@@ -361,6 +368,14 @@ impl FloatTensorOps<Ember> for Ember {
 
     fn float_mean_dim(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
         crate::ops::reduce::mean_dim(tensor, dim)
+    }
+
+    fn float_prod(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        crate::ops::reduce::prod(tensor)
+    }
+
+    fn float_prod_dim(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        crate::ops::reduce::prod_dim(tensor, dim)
     }
 
     fn float_cumsum(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
