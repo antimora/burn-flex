@@ -34,12 +34,10 @@ where
     F32Op: Fn(f32, f32) -> f32 + Copy,
     F64Op: Fn(f64, f64) -> f64 + Copy,
 {
-    debug_assert_eq!(
-        lhs.layout().shape(),
-        rhs.layout().shape(),
-        "binary_op: shape mismatch"
-    );
     debug_assert_eq!(lhs.dtype(), rhs.dtype(), "binary_op: dtype mismatch");
+
+    // Broadcast tensors to the same shape if needed
+    let (lhs, rhs) = crate::ops::expand::broadcast_binary(lhs, rhs);
 
     let dtype = lhs.dtype();
 
@@ -466,12 +464,10 @@ pub fn int_binary_op<Op>(lhs: EmberTensor, rhs: EmberTensor, op: Op) -> EmberTen
 where
     Op: Fn(i64, i64) -> i64 + Copy,
 {
-    debug_assert_eq!(
-        lhs.layout().shape(),
-        rhs.layout().shape(),
-        "int_binary_op: shape mismatch"
-    );
     debug_assert_eq!(lhs.dtype(), rhs.dtype(), "int_binary_op: dtype mismatch");
+
+    // Broadcast tensors to the same shape if needed
+    let (lhs, rhs) = crate::ops::expand::broadcast_binary(lhs, rhs);
 
     let dtype = lhs.dtype();
 

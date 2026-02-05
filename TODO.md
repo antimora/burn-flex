@@ -16,7 +16,7 @@
 
 ## Unimplemented Operations
 
-**Test status: 557 passed, 514 failed**
+**Test status: 614 passed, 464 failed** (tensor tests only)
 
 ### Critical (blocks many tests)
 - [x] `float_random` - implemented with no_std support (+63 tests now passing)
