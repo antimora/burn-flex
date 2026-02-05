@@ -70,7 +70,6 @@ macro_rules! bench_cast_backend {
                     let t = make_int_tensor::<B>(&[256, 256]);
                     bencher.bench(|| t.clone().cast(DType::I8));
                 }
-
             }
         }
     };

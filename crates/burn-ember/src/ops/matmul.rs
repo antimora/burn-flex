@@ -250,8 +250,7 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
 
     // Compute broadcast batch dimensions
-    let (broadcast_shape, lhs_strides, rhs_strides) =
-        broadcast_batch_dims(&lhs_batch, &rhs_batch);
+    let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
     let batch_size: usize = broadcast_shape.iter().product();
     let lhs_matrix_size = m * k;
@@ -288,10 +287,8 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
             // Large matrices, small batch: use per-matrix parallelism
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
-                let lhs_batch_idx =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-                let rhs_batch_idx =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+                let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+                let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
                 let lhs_offset = lhs_batch_idx * lhs_matrix_size;
                 let rhs_offset = rhs_batch_idx * rhs_matrix_size;
                 let out_offset = b * out_matrix_size;
@@ -331,10 +328,8 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(b, out_chunk)| {
-                    let lhs_batch_idx =
-                        batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-                    let rhs_batch_idx =
-                        batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+                    let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+                    let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
                     let lhs_offset = lhs_batch_idx * lhs_matrix_size;
                     let rhs_offset = rhs_batch_idx * rhs_matrix_size;
 
@@ -365,10 +360,8 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
         } else {
             // Small total work: single-threaded
             for b in 0..batch_size {
-                let lhs_batch_idx =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-                let rhs_batch_idx =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+                let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+                let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
                 let lhs_offset = lhs_batch_idx * lhs_matrix_size;
                 let rhs_offset = rhs_batch_idx * rhs_matrix_size;
                 let out_offset = b * out_matrix_size;
@@ -404,10 +397,8 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     {
         let _ = per_matrix_ops; // silence unused warning
         for b in 0..batch_size {
-            let lhs_batch_idx =
-                batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-            let rhs_batch_idx =
-                batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+            let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+            let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
             let lhs_offset = lhs_batch_idx * lhs_matrix_size;
             let rhs_offset = rhs_batch_idx * rhs_matrix_size;
             let out_offset = b * out_matrix_size;
@@ -530,8 +521,7 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
 
     // Compute broadcast batch dimensions
-    let (broadcast_shape, lhs_strides, rhs_strides) =
-        broadcast_batch_dims(&lhs_batch, &rhs_batch);
+    let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
     let batch_size: usize = broadcast_shape.iter().product();
     let lhs_matrix_size = m * k;
@@ -559,10 +549,8 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
         if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
-                let lhs_batch_idx =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-                let rhs_batch_idx =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+                let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+                let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
                 let lhs_offset = lhs_batch_idx * lhs_matrix_size;
                 let rhs_offset = rhs_batch_idx * rhs_matrix_size;
                 let out_offset = b * out_matrix_size;
@@ -600,10 +588,8 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(b, out_chunk)| {
-                    let lhs_batch_idx =
-                        batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-                    let rhs_batch_idx =
-                        batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+                    let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+                    let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
                     let lhs_offset = lhs_batch_idx * lhs_matrix_size;
                     let rhs_offset = rhs_batch_idx * rhs_matrix_size;
 
@@ -633,10 +619,8 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
                 });
         } else {
             for b in 0..batch_size {
-                let lhs_batch_idx =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-                let rhs_batch_idx =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+                let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+                let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
                 let lhs_offset = lhs_batch_idx * lhs_matrix_size;
                 let rhs_offset = rhs_batch_idx * rhs_matrix_size;
                 let out_offset = b * out_matrix_size;
@@ -672,10 +656,8 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     {
         let _ = per_matrix_ops; // silence unused warning
         for b in 0..batch_size {
-            let lhs_batch_idx =
-                batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-            let rhs_batch_idx =
-                batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+            let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+            let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
             let lhs_offset = lhs_batch_idx * lhs_matrix_size;
             let rhs_offset = rhs_batch_idx * rhs_matrix_size;
             let out_offset = b * out_matrix_size;
@@ -1320,8 +1302,7 @@ fn matmul_batched_i64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
 
     // Compute broadcast batch dimensions
-    let (broadcast_shape, lhs_strides, rhs_strides) =
-        broadcast_batch_dims(&lhs_batch, &rhs_batch);
+    let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
     let batch_size: usize = broadcast_shape.iter().product();
     let lhs_matrix_size = m * k;
