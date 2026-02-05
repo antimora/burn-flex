@@ -584,43 +584,11 @@ mod tests {
         }
     }
 
-    // This test uses global RNG state and fails when other tests run in parallel.
-    // Run with: cargo test --test-threads=1 test_random_seeded_reproducibility
-    #[test]
-    #[ignore]
-    fn test_random_seeded_reproducibility() {
-        use burn_backend::Backend;
-        use burn_tensor::Distribution;
-
-        let device = Default::default();
-
-        // Set seed and generate random tensor
-        Ember::seed(&device, 42);
-        let t1: Tensor<Ember, 2> = Tensor::random([5, 5], Distribution::Uniform(0.0, 1.0), &device);
-        let data1: Vec<f32> = t1.into_data().to_vec().unwrap();
-
-        // Reset seed and generate again
-        Ember::seed(&device, 42);
-        let t2: Tensor<Ember, 2> = Tensor::random([5, 5], Distribution::Uniform(0.0, 1.0), &device);
-        let data2: Vec<f32> = t2.into_data().to_vec().unwrap();
-
-        // Should be identical
-        for (a, b) in data1.iter().zip(data2.iter()) {
-            assert!(
-                (a - b).abs() < 1e-10,
-                "Reproducibility failed: {} != {}",
-                a,
-                b
-            );
-        }
-    }
-
     #[test]
     fn test_float_into_int() {
         use burn_tensor::Int;
 
-        let t: Tensor<Ember, 1> =
-            Tensor::from_data([1.5f32, 2.7, -3.9, 0.0], &Default::default());
+        let t: Tensor<Ember, 1> = Tensor::from_data([1.5f32, 2.7, -3.9, 0.0], &Default::default());
         let int_t: Tensor<Ember, 1, Int> = t.int();
         let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
 

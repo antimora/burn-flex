@@ -345,10 +345,8 @@ mod tests {
 
     #[test]
     fn test_int_add() {
-        let a: Tensor<Ember, 2, Int> =
-            Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
-        let b: Tensor<Ember, 2, Int> =
-            Tensor::from_data([[5i64, 6], [7, 8]], &Default::default());
+        let a: Tensor<Ember, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let b: Tensor<Ember, 2, Int> = Tensor::from_data([[5i64, 6], [7, 8]], &Default::default());
 
         let result = a + b;
         let data = result.into_data();
@@ -427,8 +425,7 @@ mod tests {
 
     #[test]
     fn test_int_add_transposed() {
-        let a: Tensor<Ember, 2, Int> =
-            Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let a: Tensor<Ember, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
         let b: Tensor<Ember, 2, Int> =
             Tensor::from_data([[10i64, 20], [30, 40]], &Default::default());
 
@@ -465,8 +462,7 @@ mod tests {
 
     #[test]
     fn test_int_into_float_2d() {
-        let t: Tensor<Ember, 2, Int> =
-            Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let t: Tensor<Ember, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
         let float_t: Tensor<Ember, 2> = t.float();
         let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
 
