@@ -21,9 +21,7 @@ fn main() {
 
 // Cross product requires 3 elements along the specified dimension
 fn make_cross_tensor_1d<B: Backend>(batch: usize) -> Tensor<B, 2> {
-    let data: Vec<f32> = (0..batch * 3)
-        .map(|i| (i % 1000) as f32 / 100.0)
-        .collect();
+    let data: Vec<f32> = (0..batch * 3).map(|i| (i % 1000) as f32 / 100.0).collect();
     Tensor::from_data(TensorData::new(data, [batch, 3]), &Default::default())
 }
 
