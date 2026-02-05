@@ -1,11 +1,13 @@
 //! Float tensor operations for the Ember backend.
 
 use burn_backend::{
-    Distribution, ExecutionError, FloatDType, Scalar, TensorData,
+    DType, Distribution, ExecutionError, FloatDType, Scalar, TensorData,
     ops::FloatTensorOps,
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
-use burn_std::{Shape, Slice};
+use burn_std::{Bytes, Shape, Slice, bf16, f16};
+
+use crate::Layout;
 use num_traits::ToPrimitive;
 
 use crate::ops::binary::{binary_op, scalar_op};
@@ -48,8 +50,32 @@ impl FloatTensorOps<Ember> for Ember {
         tensor
     }
 
-    fn float_into_int(_tensor: FloatTensor<Ember>) -> IntTensor<Ember> {
-        todo!("float_into_int")
+    fn float_into_int(tensor: FloatTensor<Ember>) -> IntTensor<Ember> {
+        let tensor = tensor.to_contiguous();
+        let shape = tensor.layout().shape().clone();
+        let dtype = tensor.dtype();
+
+        let int_data: Vec<i64> = match dtype {
+            DType::F32 => tensor.storage::<f32>().iter().map(|x| *x as i64).collect(),
+            DType::F64 => tensor.storage::<f64>().iter().map(|x| *x as i64).collect(),
+            DType::F16 => tensor
+                .storage::<f16>()
+                .iter()
+                .map(|x| f32::from(*x) as i64)
+                .collect(),
+            DType::BF16 => tensor
+                .storage::<bf16>()
+                .iter()
+                .map(|x| f32::from(*x) as i64)
+                .collect(),
+            _ => panic!("float_into_int: unsupported dtype {:?}", dtype),
+        };
+
+        EmberTensor::new(
+            Bytes::from_elems(int_data),
+            Layout::contiguous(shape),
+            DType::I64,
+        )
     }
 
     fn float_empty(shape: Shape, _device: &Device<Ember>, dtype: FloatDType) -> FloatTensor<Ember> {
@@ -584,5 +610,30 @@ mod tests {
                 b
             );
         }
+    }
+
+    #[test]
+    fn test_float_into_int() {
+        use burn_tensor::Int;
+
+        let t: Tensor<Ember, 1> =
+            Tensor::from_data([1.5f32, 2.7, -3.9, 0.0], &Default::default());
+        let int_t: Tensor<Ember, 1, Int> = t.int();
+        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+
+        // Truncation towards zero
+        assert_eq!(data, vec![1i64, 2, -3, 0]);
+    }
+
+    #[test]
+    fn test_float_into_int_2d() {
+        use burn_tensor::Int;
+
+        let t: Tensor<Ember, 2> =
+            Tensor::from_data([[1.1f32, 2.9], [3.5, 4.0]], &Default::default());
+        let int_t: Tensor<Ember, 2, Int> = t.int();
+        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![1i64, 2, 3, 4]);
     }
 }

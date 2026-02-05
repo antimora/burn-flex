@@ -5,9 +5,9 @@ use burn_backend::{
     ops::BoolTensorOps,
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
-use burn_std::{Shape, Slice};
+use burn_std::{Bytes, Shape, Slice};
 
-use crate::{Ember, EmberTensor};
+use crate::{Ember, EmberTensor, Layout};
 
 impl BoolTensorOps<Ember> for Ember {
     fn bool_from_data(data: TensorData, _device: &Device<Ember>) -> BoolTensor<Ember> {
@@ -46,12 +46,40 @@ impl BoolTensorOps<Ember> for Ember {
         crate::ops::slice::slice_assign(tensor, slices, value)
     }
 
-    fn bool_into_int(_tensor: BoolTensor<Ember>) -> IntTensor<Ember> {
-        todo!("bool_into_int")
+    fn bool_into_int(tensor: BoolTensor<Ember>) -> IntTensor<Ember> {
+        let tensor = tensor.to_contiguous();
+        let shape = tensor.layout().shape().clone();
+        // Bool is stored as u8 internally (0 = false, non-zero = true)
+        // Use bytes() directly since storage() checks dtype
+        let int_data: Vec<i64> = tensor
+            .bytes()
+            .iter()
+            .map(|&x| if x != 0 { 1i64 } else { 0i64 })
+            .collect();
+
+        EmberTensor::new(
+            Bytes::from_elems(int_data),
+            Layout::contiguous(shape),
+            DType::I64,
+        )
     }
 
-    fn bool_into_float(_tensor: BoolTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("bool_into_float")
+    fn bool_into_float(tensor: BoolTensor<Ember>) -> FloatTensor<Ember> {
+        let tensor = tensor.to_contiguous();
+        let shape = tensor.layout().shape().clone();
+        // Bool is stored as u8 internally (0 = false, non-zero = true)
+        // Use bytes() directly since storage() checks dtype
+        let float_data: Vec<f32> = tensor
+            .bytes()
+            .iter()
+            .map(|&x| if x != 0 { 1.0f32 } else { 0.0f32 })
+            .collect();
+
+        EmberTensor::new(
+            Bytes::from_elems(float_data),
+            Layout::contiguous(shape),
+            DType::F32,
+        )
     }
 
     fn bool_swap_dims(tensor: BoolTensor<Ember>, dim1: usize, dim2: usize) -> BoolTensor<Ember> {
@@ -336,4 +364,51 @@ fn bool_binary_op_simd(
 
     let bytes = Bytes::from_elems(result);
     EmberTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
+}
+
+#[cfg(test)]
+mod tests {
+    use burn_tensor::{Bool, Int, Tensor};
+
+    use crate::Ember;
+
+    #[test]
+    fn test_bool_into_int() {
+        let t: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let int_t: Tensor<Ember, 1, Int> = t.int();
+        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![1i64, 0, 1, 0]);
+    }
+
+    #[test]
+    fn test_bool_into_float() {
+        let t: Tensor<Ember, 1, Bool> =
+            Tensor::from_data([true, false, true, false], &Default::default());
+        let float_t: Tensor<Ember, 1> = t.float();
+        let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![1.0f32, 0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn test_bool_into_int_2d() {
+        let t: Tensor<Ember, 2, Bool> =
+            Tensor::from_data([[true, false], [false, true]], &Default::default());
+        let int_t: Tensor<Ember, 2, Int> = t.int();
+        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![1i64, 0, 0, 1]);
+    }
+
+    #[test]
+    fn test_bool_into_float_2d() {
+        let t: Tensor<Ember, 2, Bool> =
+            Tensor::from_data([[true, false], [false, true]], &Default::default());
+        let float_t: Tensor<Ember, 2> = t.float();
+        let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![1.0f32, 0.0, 0.0, 1.0]);
+    }
 }

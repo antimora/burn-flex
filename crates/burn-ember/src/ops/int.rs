@@ -1,13 +1,14 @@
 //! Int tensor operations for the Ember backend.
 
 use burn_backend::{
-    Distribution, ExecutionError, Scalar, TensorData,
+    DType, Distribution, ExecutionError, Scalar, TensorData,
     ops::IntTensorOps,
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
-use burn_std::{IntDType, Shape, Slice};
+use burn_std::{Bytes, IntDType, Shape, Slice};
 use num_traits::ToPrimitive;
 
+use crate::Layout;
 use crate::ops::binary::{int_binary_op, int_scalar_op};
 use crate::{Ember, EmberTensor, ops::matmul};
 
@@ -178,8 +179,28 @@ impl IntTensorOps<Ember> for Ember {
         todo!("int_remainder_scalar")
     }
 
-    fn int_into_float(_tensor: IntTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("int_into_float")
+    fn int_into_float(tensor: IntTensor<Ember>) -> FloatTensor<Ember> {
+        let tensor = tensor.to_contiguous();
+        let shape = tensor.layout().shape().clone();
+        let dtype = tensor.dtype();
+
+        let float_data: Vec<f32> = match dtype {
+            DType::I64 => tensor.storage::<i64>().iter().map(|x| *x as f32).collect(),
+            DType::I32 => tensor.storage::<i32>().iter().map(|x| *x as f32).collect(),
+            DType::I16 => tensor.storage::<i16>().iter().map(|x| *x as f32).collect(),
+            DType::I8 => tensor.storage::<i8>().iter().map(|x| *x as f32).collect(),
+            DType::U64 => tensor.storage::<u64>().iter().map(|x| *x as f32).collect(),
+            DType::U32 => tensor.storage::<u32>().iter().map(|x| *x as f32).collect(),
+            DType::U16 => tensor.storage::<u16>().iter().map(|x| *x as f32).collect(),
+            DType::U8 => tensor.storage::<u8>().iter().map(|x| *x as f32).collect(),
+            _ => panic!("int_into_float: unsupported dtype {:?}", dtype),
+        };
+
+        EmberTensor::new(
+            Bytes::from_elems(float_data),
+            Layout::contiguous(shape),
+            DType::F32,
+        )
     }
 
     fn int_swap_dims(tensor: IntTensor<Ember>, dim1: usize, dim2: usize) -> IntTensor<Ember> {
@@ -431,5 +452,24 @@ mod tests {
         let data = result.into_data();
 
         assert_eq!(data, TensorData::from([0i64, 0, 0]));
+    }
+
+    #[test]
+    fn test_int_into_float() {
+        let t: Tensor<Ember, 1, Int> = Tensor::from_data([1i64, 2, -3, 0], &Default::default());
+        let float_t: Tensor<Ember, 1> = t.float();
+        let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![1.0f32, 2.0, -3.0, 0.0]);
+    }
+
+    #[test]
+    fn test_int_into_float_2d() {
+        let t: Tensor<Ember, 2, Int> =
+            Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let float_t: Tensor<Ember, 2> = t.float();
+        let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
+
+        assert_eq!(data, vec![1.0f32, 2.0, 3.0, 4.0]);
     }
 }
