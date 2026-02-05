@@ -24,3 +24,4 @@ A fast, memory-efficient CPU backend for Burn with multi-threading, SIMD, and ge
 - **Matrix Multiplication**: Optimized via [gemm](https://crates.io/crates/gemm) with native f16 support (1.3-3.4x faster)
 - **Parallel Execution**: Optional rayon for large tensors
 - **Dtype Support**: f32, f64, f16 (native), bf16 (via f32 conversion), i8-i64, u8-u64
+- **Built on Burn**: Leverages Burn's native infrastructure (`Bytes`, `Shape`, `TensorData`, `Element` trait) from burn-backend and burn-std
