@@ -1036,16 +1036,17 @@ where
 
                     for od in 0..out_d {
                         // Compute input range for this output position
+                        // start = floor(out * in / out_size), end = ceil((out+1) * in / out_size)
                         let d_start = (od * in_d) / out_d;
-                        let d_end = ((od + 1) * in_d) / out_d;
+                        let d_end = ((od + 1) * in_d).div_ceil(out_d);
 
                         for oh in 0..out_h {
                             let h_start = (oh * in_h) / out_h;
-                            let h_end = ((oh + 1) * in_h) / out_h;
+                            let h_end = ((oh + 1) * in_h).div_ceil(out_h);
 
                             for ow in 0..out_w {
                                 let w_start = (ow * in_w) / out_w;
-                                let w_end = ((ow + 1) * in_w) / out_w;
+                                let w_end = ((ow + 1) * in_w).div_ceil(out_w);
 
                                 let out_idx = out_offset + od * out_h * out_w + oh * out_w + ow;
                                 let mut sum = zero;
