@@ -59,6 +59,16 @@ memory:
 
 See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 
+### Status
+
+- All `burn-backend-tests` pass across feature flag combinations (`std`, `std+simd`, `std+rayon`,
+  `std+simd+rayon`)
+- All ONNX model checks in `burn-onnx` pass
+- Real model inference verified:
+  - [ALBERT](https://huggingface.co/albert/albert-base-v2) (masked language model, all v2 variants)
+  - [MiniLM](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (sentence embeddings, L6
+    and L12)
+
 ### Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Design decisions, memory strategy, and implementation
