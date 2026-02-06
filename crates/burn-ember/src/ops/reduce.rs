@@ -35,8 +35,8 @@ pub fn sum(tensor: EmberTensor) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => sum_f32(&tensor),
         DType::F64 => sum_impl::<f64>(&tensor),
-        DType::F16 => sum_f16(&tensor),
-        DType::BF16 => sum_bf16(&tensor),
+        DType::F16 => reduce_scalar_half(&tensor, |a, b| a + b, 0.0, f16::to_f32, f16::from_f32),
+        DType::BF16 => reduce_scalar_half(&tensor, |a, b| a + b, 0.0, bf16::to_f32, bf16::from_f32),
         DType::I8 => sum_impl::<i8>(&tensor),
         DType::I16 => sum_impl::<i16>(&tensor),
         DType::I32 => sum_impl::<i32>(&tensor),
@@ -135,41 +135,32 @@ fn sum_impl<E: Element + bytemuck::Pod + Default + core::iter::Sum>(
     )
 }
 
-fn sum_f16(tensor: &EmberTensor) -> EmberTensor {
-    // Accumulate in f32 for precision
+/// Scalar reduction for half-precision types, accumulating in f32.
+fn reduce_scalar_half<E>(
+    tensor: &EmberTensor,
+    fold: fn(f32, f32) -> f32,
+    init: f32,
+    to_f32: fn(E) -> f32,
+    from_f32: fn(f32) -> E,
+) -> EmberTensor
+where
+    E: Element + bytemuck::Pod,
+{
     let result: f32 = match tensor.layout().contiguous_offsets() {
         Some((start, end)) => {
-            let data: &[f16] = tensor.storage();
-            data[start..end].iter().map(|x| x.to_f32()).sum()
+            let data: &[E] = tensor.storage();
+            data[start..end]
+                .iter()
+                .fold(init, |acc, x| fold(acc, to_f32(*x)))
         }
         None => {
-            let data: &[f16] = tensor.storage();
-            StridedIter::new(tensor.layout())
-                .map(|idx| data[idx].to_f32())
-                .sum()
+            let data: &[E] = tensor.storage();
+            StridedIter::new(tensor.layout()).fold(init, |acc, idx| fold(acc, to_f32(data[idx])))
         }
     };
 
-    let bytes = Bytes::from_elems(vec![f16::from_f32(result)]);
-    EmberTensor::new(bytes, Layout::contiguous(Shape::from(vec![1])), DType::F16)
-}
-
-fn sum_bf16(tensor: &EmberTensor) -> EmberTensor {
-    let result: f32 = match tensor.layout().contiguous_offsets() {
-        Some((start, end)) => {
-            let data: &[bf16] = tensor.storage();
-            data[start..end].iter().map(|x| x.to_f32()).sum()
-        }
-        None => {
-            let data: &[bf16] = tensor.storage();
-            StridedIter::new(tensor.layout())
-                .map(|idx| data[idx].to_f32())
-                .sum()
-        }
-    };
-
-    let bytes = Bytes::from_elems(vec![bf16::from_f32(result)]);
-    EmberTensor::new(bytes, Layout::contiguous(Shape::from(vec![1])), DType::BF16)
+    let bytes = Bytes::from_elems(vec![from_f32(result)]);
+    EmberTensor::new(bytes, Layout::contiguous(Shape::from(vec![1])), E::dtype())
 }
 
 // ============================================================================
@@ -181,8 +172,22 @@ pub fn sum_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => reduce_dim_f32(&tensor, dim, ReduceOp::Sum),
         DType::F64 => reduce_dim_impl::<f64, _>(&tensor, dim, 0.0, |acc, x| acc + x),
-        DType::F16 => reduce_dim_f16(&tensor, dim, 0.0, |acc, x| acc + x),
-        DType::BF16 => reduce_dim_bf16(&tensor, dim, 0.0, |acc, x| acc + x),
+        DType::F16 => reduce_dim_half(
+            &tensor,
+            dim,
+            0.0,
+            |acc, x| acc + x,
+            f16::to_f32,
+            f16::from_f32,
+        ),
+        DType::BF16 => reduce_dim_half(
+            &tensor,
+            dim,
+            0.0,
+            |acc, x| acc + x,
+            bf16::to_f32,
+            bf16::from_f32,
+        ),
         DType::I8 => reduce_dim_impl::<i8, _>(&tensor, dim, 0, |acc, x| acc + x),
         DType::I16 => reduce_dim_impl::<i16, _>(&tensor, dim, 0, |acc, x| acc + x),
         DType::I32 => reduce_dim_impl::<i32, _>(&tensor, dim, 0, |acc, x| acc + x),
@@ -216,8 +221,8 @@ pub fn prod(tensor: EmberTensor) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => prod_impl::<f32>(&tensor),
         DType::F64 => prod_impl::<f64>(&tensor),
-        DType::F16 => prod_f16(&tensor),
-        DType::BF16 => prod_bf16(&tensor),
+        DType::F16 => reduce_scalar_half(&tensor, |a, b| a * b, 1.0, f16::to_f32, f16::from_f32),
+        DType::BF16 => reduce_scalar_half(&tensor, |a, b| a * b, 1.0, bf16::to_f32, bf16::from_f32),
         DType::I8 => prod_impl::<i8>(&tensor),
         DType::I16 => prod_impl::<i16>(&tensor),
         DType::I32 => prod_impl::<i32>(&tensor),
@@ -250,49 +255,27 @@ fn prod_impl<E: Element + bytemuck::Pod + Default + core::iter::Product>(
     )
 }
 
-fn prod_f16(tensor: &EmberTensor) -> EmberTensor {
-    let result: f32 = match tensor.layout().contiguous_offsets() {
-        Some((start, end)) => {
-            let data: &[f16] = tensor.storage();
-            data[start..end].iter().map(|x| x.to_f32()).product()
-        }
-        None => {
-            let data: &[f16] = tensor.storage();
-            StridedIter::new(tensor.layout())
-                .map(|idx| data[idx].to_f32())
-                .product()
-        }
-    };
-
-    let bytes = Bytes::from_elems(vec![f16::from_f32(result)]);
-    EmberTensor::new(bytes, Layout::contiguous(Shape::from(vec![1])), DType::F16)
-}
-
-fn prod_bf16(tensor: &EmberTensor) -> EmberTensor {
-    let result: f32 = match tensor.layout().contiguous_offsets() {
-        Some((start, end)) => {
-            let data: &[bf16] = tensor.storage();
-            data[start..end].iter().map(|x| x.to_f32()).product()
-        }
-        None => {
-            let data: &[bf16] = tensor.storage();
-            StridedIter::new(tensor.layout())
-                .map(|idx| data[idx].to_f32())
-                .product()
-        }
-    };
-
-    let bytes = Bytes::from_elems(vec![bf16::from_f32(result)]);
-    EmberTensor::new(bytes, Layout::contiguous(Shape::from(vec![1])), DType::BF16)
-}
-
 /// Product along a dimension, keeping the dimension with size 1.
 pub fn prod_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => reduce_dim_f32(&tensor, dim, ReduceOp::Prod),
         DType::F64 => reduce_dim_impl::<f64, _>(&tensor, dim, 1.0, |acc, x| acc * x),
-        DType::F16 => reduce_dim_f16(&tensor, dim, 1.0, |acc, x| acc * x),
-        DType::BF16 => reduce_dim_bf16(&tensor, dim, 1.0, |acc, x| acc * x),
+        DType::F16 => reduce_dim_half(
+            &tensor,
+            dim,
+            1.0,
+            |acc, x| acc * x,
+            f16::to_f32,
+            f16::from_f32,
+        ),
+        DType::BF16 => reduce_dim_half(
+            &tensor,
+            dim,
+            1.0,
+            |acc, x| acc * x,
+            bf16::to_f32,
+            bf16::from_f32,
+        ),
         DType::I8 => reduce_dim_impl::<i8, _>(&tensor, dim, 1, |acc, x| acc * x),
         DType::I16 => reduce_dim_impl::<i16, _>(&tensor, dim, 1, |acc, x| acc * x),
         DType::I32 => reduce_dim_impl::<i32, _>(&tensor, dim, 1, |acc, x| acc * x),
@@ -310,8 +293,8 @@ pub fn argmax(tensor: EmberTensor, dim: usize) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => argmax_impl::<f32>(&tensor, dim),
         DType::F64 => argmax_impl::<f64>(&tensor, dim),
-        DType::F16 => argmax_f16(&tensor, dim),
-        DType::BF16 => argmax_bf16(&tensor, dim),
+        DType::F16 => argext_half::<f16>(&tensor, dim, |a, b| a > b, f16::to_f32),
+        DType::BF16 => argext_half::<bf16>(&tensor, dim, |a, b| a > b, bf16::to_f32),
         DType::I8 => argmax_impl::<i8>(&tensor, dim),
         DType::I16 => argmax_impl::<i16>(&tensor, dim),
         DType::I32 => argmax_impl::<i32>(&tensor, dim),
@@ -325,8 +308,8 @@ pub fn argmin(tensor: EmberTensor, dim: usize) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => argmin_impl::<f32>(&tensor, dim),
         DType::F64 => argmin_impl::<f64>(&tensor, dim),
-        DType::F16 => argmin_f16(&tensor, dim),
-        DType::BF16 => argmin_bf16(&tensor, dim),
+        DType::F16 => argext_half::<f16>(&tensor, dim, |a, b| a < b, f16::to_f32),
+        DType::BF16 => argext_half::<bf16>(&tensor, dim, |a, b| a < b, bf16::to_f32),
         DType::I8 => argmin_impl::<i8>(&tensor, dim),
         DType::I16 => argmin_impl::<i16>(&tensor, dim),
         DType::I32 => argmin_impl::<i32>(&tensor, dim),
@@ -709,9 +692,19 @@ where
     )
 }
 
-/// F16 dimension reduction with f32 accumulation.
-fn reduce_dim_f16<F>(tensor: &EmberTensor, dim: usize, init: f32, reduce_fn: F) -> EmberTensor
+/// Half-precision dimension reduction with f32 accumulation.
+///
+/// Works for both f16 and bf16 via the `to_f32`/`from_f32` closures.
+fn reduce_dim_half<E, F>(
+    tensor: &EmberTensor,
+    dim: usize,
+    init: f32,
+    reduce_fn: F,
+    to_f32: fn(E) -> f32,
+    from_f32: fn(f32) -> E,
+) -> EmberTensor
 where
+    E: Element + bytemuck::Pod,
     F: Fn(f32, f32) -> f32,
 {
     let tensor = tensor.to_contiguous();
@@ -733,19 +726,19 @@ where
     let outer_size: usize = shape.dims[..dim].iter().product();
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
-    let data: &[f16] = tensor.storage();
+    let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
-    let mut result: Vec<f16> = Vec::with_capacity(out_size);
+    let mut result: Vec<E> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
             let mut acc = init;
             for d in 0..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                acc = reduce_fn(acc, data[idx].to_f32());
+                acc = reduce_fn(acc, to_f32(data[idx]));
             }
-            result.push(f16::from_f32(acc));
+            result.push(from_f32(acc));
         }
     }
 
@@ -753,55 +746,7 @@ where
     EmberTensor::new(
         bytes,
         Layout::contiguous(Shape::from(out_shape)),
-        DType::F16,
-    )
-}
-
-/// BF16 dimension reduction with f32 accumulation.
-fn reduce_dim_bf16<F>(tensor: &EmberTensor, dim: usize, init: f32, reduce_fn: F) -> EmberTensor
-where
-    F: Fn(f32, f32) -> f32,
-{
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(
-        dim < ndims,
-        "dim {} out of bounds for {} dimensions",
-        dim,
-        ndims
-    );
-
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
-
-    let data: &[bf16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<bf16> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut acc = init;
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                acc = reduce_fn(acc, data[idx].to_f32());
-            }
-            result.push(bf16::from_f32(acc));
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    EmberTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::BF16,
+        E::dtype(),
     )
 }
 
@@ -860,12 +805,12 @@ pub fn max_dim_with_indices(tensor: EmberTensor, dim: usize) -> (EmberTensor, Em
         DType::F64 => max_dim_with_indices_impl::<f64>(&tensor, dim),
         DType::F16 => {
             let values = max_dim_f16(&tensor, dim, true);
-            let indices = argmax_f16(&tensor, dim);
+            let indices = argext_half::<f16>(&tensor, dim, |a, b| a > b, f16::to_f32);
             (values, indices)
         }
         DType::BF16 => {
             let values = max_dim_bf16(&tensor, dim, true);
-            let indices = argmax_bf16(&tensor, dim);
+            let indices = argext_half::<bf16>(&tensor, dim, |a, b| a > b, bf16::to_f32);
             (values, indices)
         }
         DType::I64 => max_dim_with_indices_impl::<i64>(&tensor, dim),
@@ -884,12 +829,12 @@ pub fn min_dim_with_indices(tensor: EmberTensor, dim: usize) -> (EmberTensor, Em
         DType::F64 => min_dim_with_indices_impl::<f64>(&tensor, dim),
         DType::F16 => {
             let values = min_dim_f16(&tensor, dim, true);
-            let indices = argmin_f16(&tensor, dim);
+            let indices = argext_half::<f16>(&tensor, dim, |a, b| a < b, f16::to_f32);
             (values, indices)
         }
         DType::BF16 => {
             let values = min_dim_bf16(&tensor, dim, true);
-            let indices = argmin_bf16(&tensor, dim);
+            let indices = argext_half::<bf16>(&tensor, dim, |a, b| a < b, bf16::to_f32);
             (values, indices)
         }
         DType::I64 => min_dim_with_indices_impl::<i64>(&tensor, dim),
@@ -1332,7 +1277,15 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
     )
 }
 
-fn argmax_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
+/// Arg-extremum for half-precision types, comparing via f32 conversion.
+///
+/// `is_better` returns true when `new` should replace `current` (e.g., `>` for argmax, `<` for argmin).
+fn argext_half<E: Element + bytemuck::Pod>(
+    tensor: &EmberTensor,
+    dim: usize,
+    is_better: fn(f32, f32) -> bool,
+    to_f32: fn(E) -> f32,
+) -> EmberTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let ndims = shape.num_dims();
@@ -1347,70 +1300,25 @@ fn argmax_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let outer_size: usize = shape.dims[..dim].iter().product();
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
-    let data: &[f16] = tensor.storage();
+    let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<i64> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let mut max_idx: i64 = 0;
-            let mut max_val: Option<f32> = None;
+            let mut best_idx: i64 = 0;
+            let mut best_val: Option<f32> = None;
 
             for d in 0..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx].to_f32();
-                if max_val.is_none() || val > max_val.unwrap() {
-                    max_val = Some(val);
-                    max_idx = d as i64;
+                let val = to_f32(data[idx]);
+                if best_val.is_none() || is_better(val, best_val.unwrap()) {
+                    best_val = Some(val);
+                    best_idx = d as i64;
                 }
             }
-            result.push(max_idx);
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    EmberTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
-    )
-}
-
-fn argmax_bf16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(dim < ndims);
-
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
-
-    let data: &[bf16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<i64> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut max_idx: i64 = 0;
-            let mut max_val: Option<f32> = None;
-
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx].to_f32();
-                if max_val.is_none() || val > max_val.unwrap() {
-                    max_val = Some(val);
-                    max_idx = d as i64;
-                }
-            }
-            result.push(max_idx);
+            result.push(best_idx);
         }
     }
 
@@ -1458,96 +1366,6 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
             for d in 0..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
-                if min_val.is_none() || val < min_val.unwrap() {
-                    min_val = Some(val);
-                    min_idx = d as i64;
-                }
-            }
-            result.push(min_idx);
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    EmberTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
-    )
-}
-
-fn argmin_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(dim < ndims);
-
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
-
-    let data: &[f16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<i64> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut min_idx: i64 = 0;
-            let mut min_val: Option<f32> = None;
-
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx].to_f32();
-                if min_val.is_none() || val < min_val.unwrap() {
-                    min_val = Some(val);
-                    min_idx = d as i64;
-                }
-            }
-            result.push(min_idx);
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    EmberTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
-    )
-}
-
-fn argmin_bf16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(dim < ndims);
-
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
-
-    let data: &[bf16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<i64> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut min_idx: i64 = 0;
-            let mut min_val: Option<f32> = None;
-
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx].to_f32();
                 if min_val.is_none() || val < min_val.unwrap() {
                     min_val = Some(val);
                     min_idx = d as i64;

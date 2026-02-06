@@ -44,10 +44,10 @@ where
     match dtype {
         DType::F32 => binary_op_f32(lhs, &rhs, f32_op),
         DType::F64 => binary_op_typed(lhs, &rhs, f64_op),
-        DType::F16 => binary_op_half(lhs, &rhs, |a, b| {
+        DType::F16 => binary_op_typed(lhs, &rhs, |a: f16, b: f16| {
             f16::from_f32(f32_op(a.to_f32(), b.to_f32()))
         }),
-        DType::BF16 => binary_op_bhalf(lhs, &rhs, |a, b| {
+        DType::BF16 => binary_op_typed(lhs, &rhs, |a: bf16, b: bf16| {
             bf16::from_f32(f32_op(a.to_f32(), b.to_f32()))
         }),
         _ => panic!("binary_op: unsupported dtype {:?}", dtype),
@@ -168,7 +168,7 @@ where
         }
         // Fast path for 2D non-contiguous (common for transpose)
         _ if lhs.layout().num_dims() == 2 => {
-            binary_op_2d_strided(lhs_storage, rhs_storage, lhs.layout(), rhs.layout(), op)
+            apply_2d_strided(lhs_storage, rhs_storage, lhs.layout(), rhs.layout(), op)
         }
         // General fallback
         _ => {
@@ -186,16 +186,16 @@ where
 
 /// Fast 2D strided binary operation using row-based iteration.
 #[inline]
-fn binary_op_2d_strided<E, Op>(
+pub(crate) fn apply_2d_strided<E, R, Op>(
     lhs: &[E],
     rhs: &[E],
     lhs_layout: &Layout,
     rhs_layout: &Layout,
     op: Op,
-) -> Vec<E>
+) -> Vec<R>
 where
     E: Copy,
-    Op: Fn(E, E) -> E,
+    Op: Fn(E, E) -> R,
 {
     let (rows, cols, l_row_stride, l_col_stride) = lhs_layout.as_2d_strides().unwrap();
     let (_, _, r_row_stride, r_col_stride) = rhs_layout.as_2d_strides().unwrap();
@@ -217,118 +217,6 @@ where
     result
 }
 
-/// Binary operation for f16.
-fn binary_op_half<Op>(mut lhs: EmberTensor, rhs: &EmberTensor, op: Op) -> EmberTensor
-where
-    Op: Fn(f16, f16) -> f16,
-{
-    let rhs_storage: &[f16] = rhs.storage();
-
-    // In-place fast path: lhs unique, contiguous at offset 0, rhs contiguous
-    if lhs.is_unique()
-        && let (Some((0, l_end)), Some((r_start, r_end))) = (
-            lhs.layout().contiguous_offsets(),
-            rhs.layout().contiguous_offsets(),
-        )
-    {
-        let lhs_storage: &mut [f16] = lhs.storage_mut();
-        let r_slice = &rhs_storage[r_start..r_end];
-        for (l, &r) in lhs_storage[..l_end].iter_mut().zip(r_slice) {
-            *l = op(*l, r);
-        }
-        return lhs;
-    }
-
-    // Allocating path
-    let shape = lhs.layout().shape().clone();
-    let lhs_storage: &[f16] = lhs.storage();
-
-    let result: Vec<f16> = match (
-        lhs.layout().contiguous_offsets(),
-        rhs.layout().contiguous_offsets(),
-    ) {
-        (Some((l_start, l_end)), Some((r_start, r_end))) => {
-            let l_slice = &lhs_storage[l_start..l_end];
-            let r_slice = &rhs_storage[r_start..r_end];
-            l_slice
-                .iter()
-                .zip(r_slice)
-                .map(|(&a, &b)| op(a, b))
-                .collect()
-        }
-        // Fast path for 2D non-contiguous
-        _ if lhs.layout().num_dims() == 2 => {
-            binary_op_2d_strided(lhs_storage, rhs_storage, lhs.layout(), rhs.layout(), op)
-        }
-        _ => {
-            let lhs_iter = StridedIter::new(lhs.layout());
-            let rhs_iter = StridedIter::new(rhs.layout());
-            lhs_iter
-                .zip(rhs_iter)
-                .map(|(li, ri)| op(lhs_storage[li], rhs_storage[ri]))
-                .collect()
-        }
-    };
-
-    make_tensor(result, shape, DType::F16)
-}
-
-/// Binary operation for bf16.
-fn binary_op_bhalf<Op>(mut lhs: EmberTensor, rhs: &EmberTensor, op: Op) -> EmberTensor
-where
-    Op: Fn(bf16, bf16) -> bf16,
-{
-    let rhs_storage: &[bf16] = rhs.storage();
-
-    // In-place fast path: lhs unique, contiguous at offset 0, rhs contiguous
-    if lhs.is_unique()
-        && let (Some((0, l_end)), Some((r_start, r_end))) = (
-            lhs.layout().contiguous_offsets(),
-            rhs.layout().contiguous_offsets(),
-        )
-    {
-        let lhs_storage: &mut [bf16] = lhs.storage_mut();
-        let r_slice = &rhs_storage[r_start..r_end];
-        for (l, &r) in lhs_storage[..l_end].iter_mut().zip(r_slice) {
-            *l = op(*l, r);
-        }
-        return lhs;
-    }
-
-    // Allocating path
-    let shape = lhs.layout().shape().clone();
-    let lhs_storage: &[bf16] = lhs.storage();
-
-    let result: Vec<bf16> = match (
-        lhs.layout().contiguous_offsets(),
-        rhs.layout().contiguous_offsets(),
-    ) {
-        (Some((l_start, l_end)), Some((r_start, r_end))) => {
-            let l_slice = &lhs_storage[l_start..l_end];
-            let r_slice = &rhs_storage[r_start..r_end];
-            l_slice
-                .iter()
-                .zip(r_slice)
-                .map(|(&a, &b)| op(a, b))
-                .collect()
-        }
-        // Fast path for 2D non-contiguous
-        _ if lhs.layout().num_dims() == 2 => {
-            binary_op_2d_strided(lhs_storage, rhs_storage, lhs.layout(), rhs.layout(), op)
-        }
-        _ => {
-            let lhs_iter = StridedIter::new(lhs.layout());
-            let rhs_iter = StridedIter::new(rhs.layout());
-            lhs_iter
-                .zip(rhs_iter)
-                .map(|(li, ri)| op(lhs_storage[li], rhs_storage[ri]))
-                .collect()
-        }
-    };
-
-    make_tensor(result, shape, DType::BF16)
-}
-
 /// Apply a scalar operation to each element of a tensor.
 ///
 /// Attempts in-place mutation when tensor is contiguous at offset 0.
@@ -347,10 +235,10 @@ where
     match dtype {
         DType::F32 => scalar_op_typed(tensor, scalar as f32, f32_op),
         DType::F64 => scalar_op_typed(tensor, scalar, f64_op),
-        DType::F16 => scalar_op_half(tensor, f16::from_f64(scalar), |a, b| {
+        DType::F16 => scalar_op_typed(tensor, f16::from_f64(scalar), |a: f16, b: f16| {
             f16::from_f32(f32_op(a.to_f32(), b.to_f32()))
         }),
-        DType::BF16 => scalar_op_bhalf(tensor, bf16::from_f64(scalar), |a, b| {
+        DType::BF16 => scalar_op_typed(tensor, bf16::from_f64(scalar), |a: bf16, b: bf16| {
             bf16::from_f32(f32_op(a.to_f32(), b.to_f32()))
         }),
         _ => panic!("scalar_op: unsupported dtype {:?}", dtype),
@@ -386,64 +274,6 @@ where
     };
 
     make_tensor(result, shape, dtype)
-}
-
-fn scalar_op_half<Op>(mut tensor: EmberTensor, scalar: f16, op: Op) -> EmberTensor
-where
-    Op: Fn(f16, f16) -> f16,
-{
-    // In-place fast path: unique, contiguous at offset 0
-    if tensor.is_unique()
-        && let Some((0, end)) = tensor.layout().contiguous_offsets()
-    {
-        let storage: &mut [f16] = tensor.storage_mut();
-        for x in storage[..end].iter_mut() {
-            *x = op(*x, scalar);
-        }
-        return tensor;
-    }
-
-    // Allocating path
-    let shape = tensor.layout().shape().clone();
-    let storage: &[f16] = tensor.storage();
-
-    let result: Vec<f16> = match tensor.layout().contiguous_offsets() {
-        Some((start, end)) => storage[start..end].iter().map(|&x| op(x, scalar)).collect(),
-        None => StridedIter::new(tensor.layout())
-            .map(|i| op(storage[i], scalar))
-            .collect(),
-    };
-
-    make_tensor(result, shape, DType::F16)
-}
-
-fn scalar_op_bhalf<Op>(mut tensor: EmberTensor, scalar: bf16, op: Op) -> EmberTensor
-where
-    Op: Fn(bf16, bf16) -> bf16,
-{
-    // In-place fast path: unique, contiguous at offset 0
-    if tensor.is_unique()
-        && let Some((0, end)) = tensor.layout().contiguous_offsets()
-    {
-        let storage: &mut [bf16] = tensor.storage_mut();
-        for x in storage[..end].iter_mut() {
-            *x = op(*x, scalar);
-        }
-        return tensor;
-    }
-
-    // Allocating path
-    let shape = tensor.layout().shape().clone();
-    let storage: &[bf16] = tensor.storage();
-
-    let result: Vec<bf16> = match tensor.layout().contiguous_offsets() {
-        Some((start, end)) => storage[start..end].iter().map(|&x| op(x, scalar)).collect(),
-        None => StridedIter::new(tensor.layout())
-            .map(|i| op(storage[i], scalar))
-            .collect(),
-    };
-
-    make_tensor(result, shape, DType::BF16)
 }
 
 /// Helper to construct a tensor from result data.

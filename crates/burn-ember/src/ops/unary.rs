@@ -18,8 +18,8 @@ where
     match dtype {
         DType::F32 => unary_op_typed(tensor, f32_op),
         DType::F64 => unary_op_typed(tensor, f64_op),
-        DType::F16 => unary_op_f16(tensor, |x| f16::from_f32(f32_op(x.to_f32()))),
-        DType::BF16 => unary_op_bf16(tensor, |x| bf16::from_f32(f32_op(x.to_f32()))),
+        DType::F16 => unary_op_typed(tensor, |x: f16| f16::from_f32(f32_op(x.to_f32()))),
+        DType::BF16 => unary_op_typed(tensor, |x: bf16| bf16::from_f32(f32_op(x.to_f32()))),
         _ => panic!("unary_op: unsupported dtype {:?}", dtype),
     }
 }
@@ -110,156 +110,6 @@ where
     )
 }
 
-/// Unary operation for f16.
-fn unary_op_f16<Op>(mut tensor: EmberTensor, op: Op) -> EmberTensor
-where
-    Op: Fn(f16) -> f16,
-{
-    let n = tensor.layout().num_elements();
-
-    // In-place fast path: unique, contiguous tensor at offset 0
-    if tensor.is_unique() && tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0
-    {
-        let storage: &mut [f16] = tensor.storage_mut();
-        for x in storage[..n].iter_mut() {
-            *x = op(*x);
-        }
-        return tensor;
-    }
-
-    // Allocating path
-    let layout = tensor.layout().clone();
-    let src: &[f16] = bytemuck::cast_slice(tensor.bytes());
-
-    // Check for negative strides (from flip operations)
-    let has_negative_strides = layout.strides().iter().any(|&s| s < 0);
-
-    // Fast path: storage exactly matches tensor view (only with positive strides)
-    if !has_negative_strides && layout.start_offset() == 0 && src.len() == n {
-        let result: Vec<f16> = src.iter().map(|&x| op(x)).collect();
-        let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(bytes, layout, DType::F16);
-    }
-
-    // Fallback for negative strides: use StridedIter for correct element order
-    if has_negative_strides {
-        let result: Vec<f16> = crate::strided_index::StridedIter::new(&layout)
-            .map(|idx| op(src[idx]))
-            .collect();
-        let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(
-            bytes,
-            Layout::contiguous(layout.shape().clone()),
-            DType::F16,
-        );
-    }
-
-    let result = match layout.strided_blocks() {
-        StridedBlocks::Single { start, len } => {
-            src[start..start + len].iter().map(|&x| op(x)).collect()
-        }
-        StridedBlocks::Multiple { block_len, .. } => {
-            let blocks = layout.strided_blocks();
-            let mut result = Vec::with_capacity(n);
-
-            if block_len == 1 {
-                for block_start in blocks.block_starts() {
-                    result.push(op(src[block_start]));
-                }
-            } else {
-                for block_start in blocks.block_starts() {
-                    for i in 0..block_len {
-                        result.push(op(src[block_start + i]));
-                    }
-                }
-            }
-            result
-        }
-    };
-
-    let bytes = Bytes::from_elems(result);
-    EmberTensor::new(
-        bytes,
-        Layout::contiguous(layout.shape().clone()),
-        DType::F16,
-    )
-}
-
-/// Unary operation for bf16.
-fn unary_op_bf16<Op>(mut tensor: EmberTensor, op: Op) -> EmberTensor
-where
-    Op: Fn(bf16) -> bf16,
-{
-    let n = tensor.layout().num_elements();
-
-    // In-place fast path: unique, contiguous tensor at offset 0
-    if tensor.is_unique() && tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0
-    {
-        let storage: &mut [bf16] = tensor.storage_mut();
-        for x in storage[..n].iter_mut() {
-            *x = op(*x);
-        }
-        return tensor;
-    }
-
-    // Allocating path
-    let layout = tensor.layout().clone();
-    let src: &[bf16] = bytemuck::cast_slice(tensor.bytes());
-
-    // Check for negative strides (from flip operations)
-    let has_negative_strides = layout.strides().iter().any(|&s| s < 0);
-
-    // Fast path: storage exactly matches tensor view (only with positive strides)
-    if !has_negative_strides && layout.start_offset() == 0 && src.len() == n {
-        let result: Vec<bf16> = src.iter().map(|&x| op(x)).collect();
-        let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(bytes, layout, DType::BF16);
-    }
-
-    // Fallback for negative strides: use StridedIter for correct element order
-    if has_negative_strides {
-        let result: Vec<bf16> = crate::strided_index::StridedIter::new(&layout)
-            .map(|idx| op(src[idx]))
-            .collect();
-        let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(
-            bytes,
-            Layout::contiguous(layout.shape().clone()),
-            DType::BF16,
-        );
-    }
-
-    let result = match layout.strided_blocks() {
-        StridedBlocks::Single { start, len } => {
-            src[start..start + len].iter().map(|&x| op(x)).collect()
-        }
-        StridedBlocks::Multiple { block_len, .. } => {
-            let blocks = layout.strided_blocks();
-            let mut result = Vec::with_capacity(n);
-
-            if block_len == 1 {
-                for block_start in blocks.block_starts() {
-                    result.push(op(src[block_start]));
-                }
-            } else {
-                for block_start in blocks.block_starts() {
-                    for i in 0..block_len {
-                        result.push(op(src[block_start + i]));
-                    }
-                }
-            }
-            result
-        }
-    };
-
-    let bytes = Bytes::from_elems(result);
-    EmberTensor::new(
-        bytes,
-        Layout::contiguous(layout.shape().clone()),
-        DType::BF16,
-    )
-}
-
 // ============================================================================
 // Specific unary operations
 // ============================================================================
@@ -293,58 +143,14 @@ pub fn abs(tensor: EmberTensor) -> EmberTensor {
 pub fn int_abs(tensor: EmberTensor) -> EmberTensor {
     let dtype = tensor.dtype();
     match dtype {
-        DType::I64 => int_unary_op_typed::<i64, _>(tensor, |x| x.abs()),
-        DType::I32 => int_unary_op_typed::<i32, _>(tensor, |x| x.abs()),
-        DType::I16 => int_unary_op_typed::<i16, _>(tensor, |x| x.abs()),
-        DType::I8 => int_unary_op_typed::<i8, _>(tensor, |x| x.abs()),
+        DType::I64 => unary_op_typed::<i64, _>(tensor, |x| x.abs()),
+        DType::I32 => unary_op_typed::<i32, _>(tensor, |x| x.abs()),
+        DType::I16 => unary_op_typed::<i16, _>(tensor, |x| x.abs()),
+        DType::I8 => unary_op_typed::<i8, _>(tensor, |x| x.abs()),
         // Unsigned integers: abs is identity
         DType::U64 | DType::U32 | DType::U16 | DType::U8 => tensor,
         _ => panic!("int_abs: unsupported dtype {:?}", dtype),
     }
-}
-
-/// Generic int unary operation for any element type.
-fn int_unary_op_typed<E, Op>(mut tensor: EmberTensor, op: Op) -> EmberTensor
-where
-    E: burn_backend::Element + bytemuck::Pod,
-    Op: Fn(E) -> E,
-{
-    let n = tensor.layout().num_elements();
-
-    // In-place fast path: unique, contiguous tensor at offset 0
-    if tensor.is_unique() && tensor.layout().is_contiguous() && tensor.layout().start_offset() == 0
-    {
-        let storage: &mut [E] = tensor.storage_mut();
-        for x in storage[..n].iter_mut() {
-            *x = op(*x);
-        }
-        return tensor;
-    }
-
-    // Allocating path for non-contiguous or offset tensors
-    let layout = tensor.layout().clone();
-    let src: &[E] = tensor.storage();
-
-    // Check for negative strides (from flip operations)
-    let has_negative_strides = layout.strides().iter().any(|&s| s < 0);
-
-    // Fast path: storage exactly matches tensor view
-    if !has_negative_strides && layout.start_offset() == 0 && src.len() == n {
-        let result: Vec<E> = src.iter().map(|&x| op(x)).collect();
-        let bytes = Bytes::from_elems(result);
-        return EmberTensor::new(bytes, layout, E::dtype());
-    }
-
-    // Fallback: use StridedIter for correct element order
-    let result: Vec<E> = crate::strided_index::StridedIter::new(&layout)
-        .map(|idx| op(src[idx]))
-        .collect();
-    let bytes = Bytes::from_elems(result);
-    EmberTensor::new(
-        bytes,
-        Layout::contiguous(layout.shape().clone()),
-        E::dtype(),
-    )
 }
 
 /// Reciprocal: 1/x

@@ -43,8 +43,10 @@ where
     match dtype {
         DType::F32 => compare_f32(lhs, &rhs, f32_cmp),
         DType::F64 => compare_typed(lhs, &rhs, f64_cmp),
-        DType::F16 => compare_f16(lhs, &rhs, |a, b| f32_cmp(a.to_f32(), b.to_f32())),
-        DType::BF16 => compare_bf16(lhs, &rhs, |a, b| f32_cmp(a.to_f32(), b.to_f32())),
+        DType::F16 => compare_typed(lhs, &rhs, |a: f16, b: f16| f32_cmp(a.to_f32(), b.to_f32())),
+        DType::BF16 => compare_typed(lhs, &rhs, |a: bf16, b: bf16| {
+            f32_cmp(a.to_f32(), b.to_f32())
+        }),
         _ => panic!("compare: unsupported dtype {:?}", dtype),
     }
 }
@@ -253,8 +255,18 @@ where
     match dtype {
         DType::F32 => compare_elem_f32(lhs, rhs as f32, f32_cmp),
         DType::F64 => compare_elem_typed(lhs, rhs, f64_cmp),
-        DType::F16 => compare_elem_f16(lhs, rhs as f32, |a, b| f32_cmp(a.to_f32(), b)),
-        DType::BF16 => compare_elem_bf16(lhs, rhs as f32, |a, b| f32_cmp(a.to_f32(), b)),
+        DType::F16 => {
+            let scalar = f16::from_f64(rhs);
+            compare_elem_typed(lhs, scalar, |a: f16, b: f16| {
+                f32_cmp(a.to_f32(), b.to_f32())
+            })
+        }
+        DType::BF16 => {
+            let scalar = bf16::from_f64(rhs);
+            compare_elem_typed(lhs, scalar, |a: bf16, b: bf16| {
+                f32_cmp(a.to_f32(), b.to_f32())
+            })
+        }
         _ => panic!("compare_elem: unsupported dtype {:?}", dtype),
     }
 }
@@ -315,110 +327,13 @@ where
                 .collect()
         }
         // Fast path for 2D non-contiguous (common for transpose)
-        _ if lhs.layout().num_dims() == 2 => {
-            compare_2d_strided(lhs_storage, rhs_storage, lhs.layout(), rhs.layout(), cmp)
-        }
-        _ => {
-            let lhs_iter = StridedIter::new(lhs.layout());
-            let rhs_iter = StridedIter::new(rhs.layout());
-            lhs_iter
-                .zip(rhs_iter)
-                .map(|(li, ri)| cmp(lhs_storage[li], rhs_storage[ri]) as u8)
-                .collect()
-        }
-    };
-
-    make_bool_tensor(result, shape)
-}
-
-/// Fast 2D strided comparison using row-based iteration.
-#[inline]
-fn compare_2d_strided<E, Cmp>(
-    lhs: &[E],
-    rhs: &[E],
-    lhs_layout: &Layout,
-    rhs_layout: &Layout,
-    cmp: Cmp,
-) -> Vec<u8>
-where
-    E: Copy,
-    Cmp: Fn(E, E) -> bool,
-{
-    let (rows, cols, l_row_stride, l_col_stride) = lhs_layout.as_2d_strides().unwrap();
-    let (_, _, r_row_stride, r_col_stride) = rhs_layout.as_2d_strides().unwrap();
-    let l_offset = lhs_layout.start_offset() as isize;
-    let r_offset = rhs_layout.start_offset() as isize;
-
-    let mut result = Vec::with_capacity(rows * cols);
-
-    for row in 0..rows {
-        let l_row_start = l_offset + row as isize * l_row_stride;
-        let r_row_start = r_offset + row as isize * r_row_stride;
-        for col in 0..cols {
-            let l_idx = (l_row_start + col as isize * l_col_stride) as usize;
-            let r_idx = (r_row_start + col as isize * r_col_stride) as usize;
-            result.push(cmp(lhs[l_idx], rhs[r_idx]) as u8);
-        }
-    }
-
-    result
-}
-
-fn compare_f16<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp) -> EmberTensor
-where
-    Cmp: Fn(f16, f16) -> bool,
-{
-    let shape = lhs.layout().shape().clone();
-    let lhs_storage: &[f16] = bytemuck::cast_slice(lhs.bytes());
-    let rhs_storage: &[f16] = bytemuck::cast_slice(rhs.bytes());
-
-    let result: Vec<u8> = match (
-        lhs.layout().contiguous_offsets(),
-        rhs.layout().contiguous_offsets(),
-    ) {
-        (Some((l_start, l_end)), Some((r_start, r_end))) => {
-            let l_slice = &lhs_storage[l_start..l_end];
-            let r_slice = &rhs_storage[r_start..r_end];
-            l_slice
-                .iter()
-                .zip(r_slice)
-                .map(|(&a, &b)| cmp(a, b) as u8)
-                .collect()
-        }
-        _ => {
-            let lhs_iter = StridedIter::new(lhs.layout());
-            let rhs_iter = StridedIter::new(rhs.layout());
-            lhs_iter
-                .zip(rhs_iter)
-                .map(|(li, ri)| cmp(lhs_storage[li], rhs_storage[ri]) as u8)
-                .collect()
-        }
-    };
-
-    make_bool_tensor(result, shape)
-}
-
-fn compare_bf16<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp) -> EmberTensor
-where
-    Cmp: Fn(bf16, bf16) -> bool,
-{
-    let shape = lhs.layout().shape().clone();
-    let lhs_storage: &[bf16] = bytemuck::cast_slice(lhs.bytes());
-    let rhs_storage: &[bf16] = bytemuck::cast_slice(rhs.bytes());
-
-    let result: Vec<u8> = match (
-        lhs.layout().contiguous_offsets(),
-        rhs.layout().contiguous_offsets(),
-    ) {
-        (Some((l_start, l_end)), Some((r_start, r_end))) => {
-            let l_slice = &lhs_storage[l_start..l_end];
-            let r_slice = &rhs_storage[r_start..r_end];
-            l_slice
-                .iter()
-                .zip(r_slice)
-                .map(|(&a, &b)| cmp(a, b) as u8)
-                .collect()
-        }
+        _ if lhs.layout().num_dims() == 2 => crate::ops::binary::apply_2d_strided(
+            lhs_storage,
+            rhs_storage,
+            lhs.layout(),
+            rhs.layout(),
+            |a, b| cmp(a, b) as u8,
+        ),
         _ => {
             let lhs_iter = StridedIter::new(lhs.layout());
             let rhs_iter = StridedIter::new(rhs.layout());
@@ -439,46 +354,6 @@ where
 {
     let shape = lhs.layout().shape().clone();
     let lhs_storage: &[E] = lhs.storage();
-
-    let result: Vec<u8> = match lhs.layout().contiguous_offsets() {
-        Some((start, end)) => lhs_storage[start..end]
-            .iter()
-            .map(|&a| cmp(a, rhs) as u8)
-            .collect(),
-        None => StridedIter::new(lhs.layout())
-            .map(|idx| cmp(lhs_storage[idx], rhs) as u8)
-            .collect(),
-    };
-
-    make_bool_tensor(result, shape)
-}
-
-fn compare_elem_f16<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp) -> EmberTensor
-where
-    Cmp: Fn(f16, f32) -> bool,
-{
-    let shape = lhs.layout().shape().clone();
-    let lhs_storage: &[f16] = bytemuck::cast_slice(lhs.bytes());
-
-    let result: Vec<u8> = match lhs.layout().contiguous_offsets() {
-        Some((start, end)) => lhs_storage[start..end]
-            .iter()
-            .map(|&a| cmp(a, rhs) as u8)
-            .collect(),
-        None => StridedIter::new(lhs.layout())
-            .map(|idx| cmp(lhs_storage[idx], rhs) as u8)
-            .collect(),
-    };
-
-    make_bool_tensor(result, shape)
-}
-
-fn compare_elem_bf16<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp) -> EmberTensor
-where
-    Cmp: Fn(bf16, f32) -> bool,
-{
-    let shape = lhs.layout().shape().clone();
-    let lhs_storage: &[bf16] = bytemuck::cast_slice(lhs.bytes());
 
     let result: Vec<u8> = match lhs.layout().contiguous_offsets() {
         Some((start, end)) => lhs_storage[start..end]
@@ -720,8 +595,8 @@ pub fn any_float(tensor: EmberTensor) -> EmberTensor {
     let has_any = match tensor.dtype() {
         DType::F32 => iter_elements::<f32>(&tensor).any(|x| x != 0.0),
         DType::F64 => iter_elements::<f64>(&tensor).any(|x| x != 0.0),
-        DType::F16 => iter_f16(&tensor).any(|x| x != 0.0),
-        DType::BF16 => iter_bf16(&tensor).any(|x| x != 0.0),
+        DType::F16 => iter_elements::<f16>(&tensor).any(|x| x.to_f32() != 0.0),
+        DType::BF16 => iter_elements::<bf16>(&tensor).any(|x| x.to_f32() != 0.0),
         _ => panic!("any_float: unsupported dtype {:?}", tensor.dtype()),
     };
     bool_scalar(has_any)
@@ -729,7 +604,7 @@ pub fn any_float(tensor: EmberTensor) -> EmberTensor {
 
 /// Check if any element along a dimension is non-zero (float tensors).
 pub fn any_float_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    reduce_bool_dim(&tensor, dim, false, |acc, x| acc || (x != 0.0))
+    reduce_bool_dim(&tensor, dim, false, |a, b| a || b)
 }
 
 /// Check if all elements are non-zero (float tensors).
@@ -737,8 +612,8 @@ pub fn all_float(tensor: EmberTensor) -> EmberTensor {
     let all = match tensor.dtype() {
         DType::F32 => iter_elements::<f32>(&tensor).all(|x| x != 0.0),
         DType::F64 => iter_elements::<f64>(&tensor).all(|x| x != 0.0),
-        DType::F16 => iter_f16(&tensor).all(|x| x != 0.0),
-        DType::BF16 => iter_bf16(&tensor).all(|x| x != 0.0),
+        DType::F16 => iter_elements::<f16>(&tensor).all(|x| x.to_f32() != 0.0),
+        DType::BF16 => iter_elements::<bf16>(&tensor).all(|x| x.to_f32() != 0.0),
         _ => panic!("all_float: unsupported dtype {:?}", tensor.dtype()),
     };
     bool_scalar(all)
@@ -746,7 +621,7 @@ pub fn all_float(tensor: EmberTensor) -> EmberTensor {
 
 /// Check if all elements along a dimension are non-zero (float tensors).
 pub fn all_float_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    reduce_bool_dim(&tensor, dim, true, |acc, x| acc && (x != 0.0))
+    reduce_bool_dim(&tensor, dim, true, |a, b| a && b)
 }
 
 /// Check if any element is non-zero (int tensors).
@@ -761,7 +636,7 @@ pub fn any_int(tensor: EmberTensor) -> EmberTensor {
 
 /// Check if any element along a dimension is non-zero (int tensors).
 pub fn any_int_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    reduce_bool_dim_int(&tensor, dim, false, |acc, x| acc || (x != 0))
+    reduce_bool_dim_int(&tensor, dim, false, |a, b| a || b)
 }
 
 /// Check if all elements are non-zero (int tensors).
@@ -776,7 +651,7 @@ pub fn all_int(tensor: EmberTensor) -> EmberTensor {
 
 /// Check if all elements along a dimension are non-zero (int tensors).
 pub fn all_int_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    reduce_bool_dim_int(&tensor, dim, true, |acc, x| acc && (x != 0))
+    reduce_bool_dim_int(&tensor, dim, true, |a, b| a && b)
 }
 
 /// Check if any bool element is true.
@@ -788,7 +663,7 @@ pub fn any_bool(tensor: EmberTensor) -> EmberTensor {
 
 /// Check if any bool element along a dimension is true.
 pub fn any_bool_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    reduce_bool_dim_raw(&tensor, dim, false, |acc, x| acc || (x != 0))
+    reduce_bool_dim_raw(&tensor, dim, false, |a, b| a || b)
 }
 
 /// Check if all bool elements are true.
@@ -800,7 +675,7 @@ pub fn all_bool(tensor: EmberTensor) -> EmberTensor {
 
 /// Check if all bool elements along a dimension are true.
 pub fn all_bool_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    reduce_bool_dim_raw(&tensor, dim, true, |acc, x| acc && (x != 0))
+    reduce_bool_dim_raw(&tensor, dim, true, |a, b| a && b)
 }
 
 // ============================================================================
@@ -826,171 +701,98 @@ fn iter_elements<'a, E: Element + Pod + 'a>(
     }
 }
 
-fn iter_f16(tensor: &EmberTensor) -> Box<dyn Iterator<Item = f32> + '_> {
-    let data: &[f16] = tensor.storage();
-    match tensor.layout().contiguous_offsets() {
-        Some((start, end)) => Box::new(data[start..end].iter().map(|x| x.to_f32())),
-        None => Box::new(StridedIter::new(tensor.layout()).map(move |idx| data[idx].to_f32())),
-    }
-}
+/// Reduce along a dimension producing a bool tensor.
+///
+/// The `is_nonzero` closure reads the data slice at a given index and returns
+/// whether the element is nonzero.
+fn reduce_bool_dim_with(
+    tensor: &EmberTensor,
+    dim: usize,
+    init: bool,
+    combine: fn(bool, bool) -> bool,
+    is_nonzero: impl Fn(usize) -> bool,
+) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+    assert!(dim < ndims);
 
-fn iter_bf16(tensor: &EmberTensor) -> Box<dyn Iterator<Item = f32> + '_> {
-    let data: &[bf16] = tensor.storage();
-    match tensor.layout().contiguous_offsets() {
-        Some((start, end)) => Box::new(data[start..end].iter().map(|x| x.to_f32())),
-        None => Box::new(StridedIter::new(tensor.layout()).map(move |idx| data[idx].to_f32())),
+    let dim_size = shape.dims[dim];
+    let mut out_shape: Vec<usize> = shape.dims.clone();
+    out_shape[dim] = 1;
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let start_offset = tensor.layout().start_offset();
+
+    let out_size = outer_size.max(1) * inner_size.max(1);
+    let mut result: Vec<u8> = Vec::with_capacity(out_size);
+
+    for outer in 0..outer_size.max(1) {
+        for inner in 0..inner_size.max(1) {
+            let mut acc = init;
+            for d in 0..dim_size {
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                acc = combine(acc, is_nonzero(idx));
+            }
+            result.push(if acc { 1 } else { 0 });
+        }
     }
+
+    EmberTensor::new(
+        Bytes::from_elems(result),
+        Layout::contiguous(Shape::from(out_shape)),
+        DType::Bool,
+    )
 }
 
 /// Reduce along a dimension producing a bool tensor (for float any/all_dim).
-fn reduce_bool_dim<F>(tensor: &EmberTensor, dim: usize, init: bool, reduce_fn: F) -> EmberTensor
-where
-    F: Fn(bool, f64) -> bool,
-{
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
-    let start_offset = tensor.layout().start_offset();
-
-    // Read values as f64 for generality
-    let out_size = outer_size.max(1) * inner_size.max(1);
-    let mut result: Vec<u8> = Vec::with_capacity(out_size);
-
+fn reduce_bool_dim(
+    tensor: &EmberTensor,
+    dim: usize,
+    init: bool,
+    combine: fn(bool, bool) -> bool,
+) -> EmberTensor {
     match tensor.dtype() {
         DType::F32 => {
             let data: &[f32] = tensor.storage();
-            for outer in 0..outer_size.max(1) {
-                for inner in 0..inner_size.max(1) {
-                    let mut acc = init;
-                    for d in 0..dim_size {
-                        let idx =
-                            start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                        acc = reduce_fn(acc, data[idx] as f64);
-                    }
-                    result.push(if acc { 1 } else { 0 });
-                }
-            }
+            reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx] != 0.0)
         }
         DType::F64 => {
             let data: &[f64] = tensor.storage();
-            for outer in 0..outer_size.max(1) {
-                for inner in 0..inner_size.max(1) {
-                    let mut acc = init;
-                    for d in 0..dim_size {
-                        let idx =
-                            start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                        acc = reduce_fn(acc, data[idx]);
-                    }
-                    result.push(if acc { 1 } else { 0 });
-                }
-            }
+            reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx] != 0.0)
         }
-        _ => {
+        DType::F16 => {
             let data: &[f16] = tensor.storage();
-            for outer in 0..outer_size.max(1) {
-                for inner in 0..inner_size.max(1) {
-                    let mut acc = init;
-                    for d in 0..dim_size {
-                        let idx =
-                            start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                        acc = reduce_fn(acc, data[idx].to_f32() as f64);
-                    }
-                    result.push(if acc { 1 } else { 0 });
-                }
-            }
+            reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx].to_f32() != 0.0)
         }
+        DType::BF16 => {
+            let data: &[bf16] = tensor.storage();
+            reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx].to_f32() != 0.0)
+        }
+        _ => panic!("reduce_bool_dim: unsupported dtype {:?}", tensor.dtype()),
     }
-
-    EmberTensor::new(
-        Bytes::from_elems(result),
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::Bool,
-    )
 }
 
 /// Reduce along a dimension producing a bool tensor (for int any/all_dim).
-fn reduce_bool_dim_int<F>(tensor: &EmberTensor, dim: usize, init: bool, reduce_fn: F) -> EmberTensor
-where
-    F: Fn(bool, i64) -> bool,
-{
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
-    let start_offset = tensor.layout().start_offset();
-
-    let out_size = outer_size.max(1) * inner_size.max(1);
-    let mut result: Vec<u8> = Vec::with_capacity(out_size);
-
+fn reduce_bool_dim_int(
+    tensor: &EmberTensor,
+    dim: usize,
+    init: bool,
+    combine: fn(bool, bool) -> bool,
+) -> EmberTensor {
     let data: &[i64] = tensor.storage();
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut acc = init;
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                acc = reduce_fn(acc, data[idx]);
-            }
-            result.push(if acc { 1 } else { 0 });
-        }
-    }
-
-    EmberTensor::new(
-        Bytes::from_elems(result),
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::Bool,
-    )
+    reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx] != 0)
 }
 
 /// Reduce along a dimension producing a bool tensor (for bool any/all_dim).
-fn reduce_bool_dim_raw<F>(tensor: &EmberTensor, dim: usize, init: bool, reduce_fn: F) -> EmberTensor
-where
-    F: Fn(bool, u8) -> bool,
-{
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
-    let start_offset = tensor.layout().start_offset();
-
-    let out_size = outer_size.max(1) * inner_size.max(1);
-    let mut result: Vec<u8> = Vec::with_capacity(out_size);
-
+fn reduce_bool_dim_raw(
+    tensor: &EmberTensor,
+    dim: usize,
+    init: bool,
+    combine: fn(bool, bool) -> bool,
+) -> EmberTensor {
     let data: &[u8] = tensor.bytes();
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut acc = init;
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                acc = reduce_fn(acc, data[idx]);
-            }
-            result.push(if acc { 1 } else { 0 });
-        }
-    }
-
-    EmberTensor::new(
-        Bytes::from_elems(result),
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::Bool,
-    )
+    reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx] != 0)
 }
 
 #[cfg(test)]
