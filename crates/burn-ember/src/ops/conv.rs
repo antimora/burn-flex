@@ -439,54 +439,34 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
                         // Build im2col for this tile and group
                         let mut col_tile = vec![zero; col_len * tile_size];
 
-                        for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
-                            // Convert linear index to 3D output coords
-                            let out_d_idx = global_idx / (out_h * out_w);
-                            let rem = global_idx % (out_h * out_w);
-                            let out_h_idx = rem / out_w;
-                            let out_w_idx = rem % out_w;
-
-                            // Extract im2col patch for this output position
-                            let mut col_offset = 0;
-                            for kd in 0..kernel_d {
-                                let id = (out_d_idx * stride_d + kd * dilation_d) as isize
-                                    - pad_d as isize;
-                                for kh in 0..kernel_h {
-                                    let ih = (out_h_idx * stride_h + kh * dilation_h) as isize
-                                        - pad_h as isize;
-                                    for kw in 0..kernel_w {
-                                        let iw = (out_w_idx * stride_w + kw * dilation_w) as isize
-                                            - pad_w as isize;
-
-                                        if id >= 0
-                                            && id < in_d as isize
-                                            && ih >= 0
-                                            && ih < in_h as isize
-                                            && iw >= 0
-                                            && iw < in_w as isize
-                                        {
-                                            let id = id as usize;
-                                            let ih = ih as usize;
-                                            let iw = iw as usize;
-                                            // NHWC access: x_nhwc[b, d, h, w, c]
-                                            let inp_base = b * nhwc_stride.0
-                                                + id * nhwc_stride.1
-                                                + ih * nhwc_stride.2
-                                                + iw * nhwc_stride.3
-                                                + in_c_start; // Offset to group's channels
-                                            for c in 0..channels_per_group {
-                                                col_tile[local_idx * col_len + col_offset] =
-                                                    x_nhwc[inp_base + c];
-                                                col_offset += 1;
-                                            }
-                                        } else {
-                                            // Padding: skip channels_per_group positions (already zero)
-                                            col_offset += channels_per_group;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        im2col_3d_tile(
+                            &mut col_tile,
+                            &x_nhwc,
+                            tile_start,
+                            tile_end,
+                            out_h,
+                            out_w,
+                            kernel_d,
+                            kernel_h,
+                            kernel_w,
+                            stride_d,
+                            stride_h,
+                            stride_w,
+                            dilation_d,
+                            dilation_h,
+                            dilation_w,
+                            pad_d,
+                            pad_h,
+                            pad_w,
+                            in_d,
+                            in_h,
+                            in_w,
+                            channels_per_group,
+                            col_len,
+                            b,
+                            in_c_start,
+                            nhwc_stride,
+                        );
 
                         // Get weight slice for this group
                         let w_start = out_c_start * col_len;
@@ -538,50 +518,34 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
 
                         let mut col_tile = vec![zero; col_len * tile_size];
 
-                        for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
-                            let out_d_idx = global_idx / (out_h * out_w);
-                            let rem = global_idx % (out_h * out_w);
-                            let out_h_idx = rem / out_w;
-                            let out_w_idx = rem % out_w;
-
-                            let mut col_offset = 0;
-                            for kd in 0..kernel_d {
-                                let id = (out_d_idx * stride_d + kd * dilation_d) as isize
-                                    - pad_d as isize;
-                                for kh in 0..kernel_h {
-                                    let ih = (out_h_idx * stride_h + kh * dilation_h) as isize
-                                        - pad_h as isize;
-                                    for kw in 0..kernel_w {
-                                        let iw = (out_w_idx * stride_w + kw * dilation_w) as isize
-                                            - pad_w as isize;
-
-                                        if id >= 0
-                                            && id < in_d as isize
-                                            && ih >= 0
-                                            && ih < in_h as isize
-                                            && iw >= 0
-                                            && iw < in_w as isize
-                                        {
-                                            let id = id as usize;
-                                            let ih = ih as usize;
-                                            let iw = iw as usize;
-                                            let inp_base = b * nhwc_stride.0
-                                                + id * nhwc_stride.1
-                                                + ih * nhwc_stride.2
-                                                + iw * nhwc_stride.3
-                                                + in_c_start; // Offset to group's channels
-                                            for c in 0..channels_per_group {
-                                                col_tile[local_idx * col_len + col_offset] =
-                                                    x_nhwc[inp_base + c];
-                                                col_offset += 1;
-                                            }
-                                        } else {
-                                            col_offset += channels_per_group;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        im2col_3d_tile(
+                            &mut col_tile,
+                            &x_nhwc,
+                            tile_start,
+                            tile_end,
+                            out_h,
+                            out_w,
+                            kernel_d,
+                            kernel_h,
+                            kernel_w,
+                            stride_d,
+                            stride_h,
+                            stride_w,
+                            dilation_d,
+                            dilation_h,
+                            dilation_w,
+                            pad_d,
+                            pad_h,
+                            pad_w,
+                            in_d,
+                            in_h,
+                            in_w,
+                            channels_per_group,
+                            col_len,
+                            b,
+                            in_c_start,
+                            nhwc_stride,
+                        );
 
                         // Get weight slice for this group
                         let w_start = out_c_start * col_len;
@@ -642,6 +606,82 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
     }
 }
 
+/// Build im2col tile for a range of output positions.
+///
+/// Fills `col_tile` with shape [tile_size, col_len] where each row is a flattened
+/// patch from the NHWC input for one output position.
+#[allow(clippy::too_many_arguments)]
+fn im2col_3d_tile<T: bytemuck::Pod + Copy>(
+    col_tile: &mut [T],
+    x_nhwc: &[T],
+    tile_start: usize,
+    tile_end: usize,
+    out_h: usize,
+    out_w: usize,
+    kernel_d: usize,
+    kernel_h: usize,
+    kernel_w: usize,
+    stride_d: usize,
+    stride_h: usize,
+    stride_w: usize,
+    dilation_d: usize,
+    dilation_h: usize,
+    dilation_w: usize,
+    pad_d: usize,
+    pad_h: usize,
+    pad_w: usize,
+    in_d: usize,
+    in_h: usize,
+    in_w: usize,
+    channels_per_group: usize,
+    col_len: usize,
+    b: usize,
+    in_c_start: usize,
+    nhwc_stride: (usize, usize, usize, usize, usize),
+) {
+    for (local_idx, global_idx) in (tile_start..tile_end).enumerate() {
+        let out_d_idx = global_idx / (out_h * out_w);
+        let rem = global_idx % (out_h * out_w);
+        let out_h_idx = rem / out_w;
+        let out_w_idx = rem % out_w;
+
+        let mut col_offset = 0;
+        for kd in 0..kernel_d {
+            let id = (out_d_idx * stride_d + kd * dilation_d) as isize - pad_d as isize;
+            for kh in 0..kernel_h {
+                let ih = (out_h_idx * stride_h + kh * dilation_h) as isize - pad_h as isize;
+                for kw in 0..kernel_w {
+                    let iw = (out_w_idx * stride_w + kw * dilation_w) as isize - pad_w as isize;
+
+                    if id >= 0
+                        && id < in_d as isize
+                        && ih >= 0
+                        && ih < in_h as isize
+                        && iw >= 0
+                        && iw < in_w as isize
+                    {
+                        let id = id as usize;
+                        let ih = ih as usize;
+                        let iw = iw as usize;
+                        let inp_base = b * nhwc_stride.0
+                            + id * nhwc_stride.1
+                            + ih * nhwc_stride.2
+                            + iw * nhwc_stride.3
+                            + in_c_start;
+                        for c in 0..channels_per_group {
+                            col_tile[local_idx * col_len + col_offset] = x_nhwc[inp_base + c];
+                            col_offset += 1;
+                        }
+                    } else {
+                        // Padding: skip channels_per_group positions (already zero)
+                        col_offset += channels_per_group;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Check if this is a 1x1 convolution that can use the fast path.
 fn is_1x1_conv(
     kernel_d: usize,
@@ -656,16 +696,21 @@ fn is_1x1_conv(
         && options.padding == [0, 0, 0]
 }
 
-/// Optimized 1x1 convolution for f32: skip im2col, use gemm directly.
+/// Optimized 1x1 convolution: skip im2col, use gemm directly.
 ///
 /// For 1x1 conv, im2col just transposes input to [spatial, channels] layout.
 /// We do the same transpose but avoid the full im2col kernel iteration overhead.
 #[cfg(feature = "gemm")]
-fn conv3d_1x1_f32(
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + Sync>(
     x: EmberTensor,
     weight: EmberTensor,
     bias: Option<EmberTensor>,
     options: &ConvOptions<3>,
+    dtype: DType,
+    zero: T,
+    gemm_fn: fn(&[T], &[T], usize, usize, usize) -> Vec<T>,
+    add_fn: fn(T, T) -> T,
 ) -> EmberTensor {
     let x = x.to_contiguous();
     let weight = weight.to_contiguous();
@@ -682,14 +727,14 @@ fn conv3d_1x1_f32(
     let groups = options.groups;
     let out_channels_per_group = channels_out / groups;
 
-    let x_data: &[f32] = x.storage();
-    let w_data: &[f32] = weight.storage();
+    let x_data: &[T] = x.storage();
+    let w_data: &[T] = weight.storage();
 
     let output = {
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
-            let dst = vec![0.0f32; batch_size * channels_out * spatial];
+            let dst = vec![zero; batch_size * channels_out * spatial];
 
             (0..batch_size).into_par_iter().for_each(|b| {
                 for g in 0..groups {
@@ -697,7 +742,7 @@ fn conv3d_1x1_f32(
                     let out_c_start = g * out_channels_per_group;
 
                     // Build X transposed: [spatial, channels_per_group]
-                    let mut x_t = vec![0.0f32; spatial * channels_per_group];
+                    let mut x_t = vec![zero; spatial * channels_per_group];
                     for c in 0..channels_per_group {
                         let src_offset = b * channels_in * spatial + (in_c_start + c) * spatial;
                         for s in 0..spatial {
@@ -709,7 +754,7 @@ fn conv3d_1x1_f32(
                     let w_offset = out_c_start * channels_per_group;
                     let w_slice =
                         &w_data[w_offset..w_offset + out_channels_per_group * channels_per_group];
-                    let result = gemm_f32(
+                    let result = gemm_fn(
                         w_slice,
                         &x_t,
                         out_channels_per_group,
@@ -720,7 +765,7 @@ fn conv3d_1x1_f32(
                     // Write result to output
                     let out_offset = b * channels_out * spatial + out_c_start * spatial;
                     unsafe {
-                        let ptr = dst.as_ptr().add(out_offset) as *mut f32;
+                        let ptr = dst.as_ptr().add(out_offset) as *mut T;
                         core::ptr::copy_nonoverlapping(
                             result.as_ptr(),
                             ptr,
@@ -733,13 +778,13 @@ fn conv3d_1x1_f32(
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let mut output = vec![0.0f32; batch_size * channels_out * spatial];
+            let mut output = vec![zero; batch_size * channels_out * spatial];
             for b in 0..batch_size {
                 for g in 0..groups {
                     let in_c_start = g * channels_per_group;
                     let out_c_start = g * out_channels_per_group;
 
-                    let mut x_t = vec![0.0f32; spatial * channels_per_group];
+                    let mut x_t = vec![zero; spatial * channels_per_group];
                     for c in 0..channels_per_group {
                         let src_offset = b * channels_in * spatial + (in_c_start + c) * spatial;
                         for s in 0..spatial {
@@ -750,7 +795,7 @@ fn conv3d_1x1_f32(
                     let w_offset = out_c_start * channels_per_group;
                     let w_slice =
                         &w_data[w_offset..w_offset + out_channels_per_group * channels_per_group];
-                    let result = gemm_f32(
+                    let result = gemm_fn(
                         w_slice,
                         &x_t,
                         out_channels_per_group,
@@ -770,14 +815,14 @@ fn conv3d_1x1_f32(
     if let Some(bias) = bias {
         let mut output = output;
         let bias = bias.to_contiguous();
-        let bias_data: &[f32] = bias.storage();
+        let bias_data: &[T] = bias.storage();
         add_bias(
             &mut output,
             bias_data,
             batch_size,
             channels_out,
             spatial,
-            |a, b| a + b,
+            add_fn,
         );
         let out_shape = Shape::from(vec![
             batch_size,
@@ -789,7 +834,7 @@ fn conv3d_1x1_f32(
         EmberTensor::new(
             Bytes::from_elems(output),
             Layout::contiguous(out_shape),
-            DType::F32,
+            dtype,
         )
     } else {
         let out_shape = Shape::from(vec![
@@ -802,9 +847,28 @@ fn conv3d_1x1_f32(
         EmberTensor::new(
             Bytes::from_elems(output),
             Layout::contiguous(out_shape),
-            DType::F32,
+            dtype,
         )
     }
+}
+
+#[cfg(feature = "gemm")]
+fn conv3d_1x1_f32(
+    x: EmberTensor,
+    weight: EmberTensor,
+    bias: Option<EmberTensor>,
+    options: &ConvOptions<3>,
+) -> EmberTensor {
+    conv3d_1x1_impl::<f32>(
+        x,
+        weight,
+        bias,
+        options,
+        DType::F32,
+        0.0f32,
+        gemm_f32,
+        |a, b| a + b,
+    )
 }
 
 #[cfg(not(feature = "gemm"))]
@@ -826,7 +890,6 @@ fn conv3d_1x1_f32(
     )
 }
 
-/// Optimized 1x1 convolution for f64.
 #[cfg(feature = "gemm")]
 fn conv3d_1x1_f64(
     x: EmberTensor,
@@ -834,141 +897,16 @@ fn conv3d_1x1_f64(
     bias: Option<EmberTensor>,
     options: &ConvOptions<3>,
 ) -> EmberTensor {
-    let x = x.to_contiguous();
-    let weight = weight.to_contiguous();
-
-    let x_shape = x.layout().shape();
-    let w_shape = weight.layout().shape();
-
-    let batch_size = x_shape.dims[0];
-    let channels_in = x_shape.dims[1];
-    let spatial = x_shape.dims[2] * x_shape.dims[3] * x_shape.dims[4];
-
-    let channels_out = w_shape.dims[0];
-    let channels_per_group = w_shape.dims[1];
-    let groups = options.groups;
-    let out_channels_per_group = channels_out / groups;
-
-    let x_data: &[f64] = x.storage();
-    let w_data: &[f64] = weight.storage();
-
-    let output = {
-        #[cfg(feature = "rayon")]
-        {
-            use rayon::prelude::*;
-            let dst = vec![0.0f64; batch_size * channels_out * spatial];
-
-            (0..batch_size).into_par_iter().for_each(|b| {
-                for g in 0..groups {
-                    let in_c_start = g * channels_per_group;
-                    let out_c_start = g * out_channels_per_group;
-
-                    let mut x_t = vec![0.0f64; spatial * channels_per_group];
-                    for c in 0..channels_per_group {
-                        let src_offset = b * channels_in * spatial + (in_c_start + c) * spatial;
-                        for s in 0..spatial {
-                            x_t[s * channels_per_group + c] = x_data[src_offset + s];
-                        }
-                    }
-
-                    let w_offset = out_c_start * channels_per_group;
-                    let w_slice =
-                        &w_data[w_offset..w_offset + out_channels_per_group * channels_per_group];
-                    let result = gemm_f64(
-                        w_slice,
-                        &x_t,
-                        out_channels_per_group,
-                        channels_per_group,
-                        spatial,
-                    );
-
-                    let out_offset = b * channels_out * spatial + out_c_start * spatial;
-                    unsafe {
-                        let ptr = dst.as_ptr().add(out_offset) as *mut f64;
-                        core::ptr::copy_nonoverlapping(
-                            result.as_ptr(),
-                            ptr,
-                            out_channels_per_group * spatial,
-                        );
-                    }
-                }
-            });
-            dst
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let mut output = vec![0.0f64; batch_size * channels_out * spatial];
-            for b in 0..batch_size {
-                for g in 0..groups {
-                    let in_c_start = g * channels_per_group;
-                    let out_c_start = g * out_channels_per_group;
-
-                    let mut x_t = vec![0.0f64; spatial * channels_per_group];
-                    for c in 0..channels_per_group {
-                        let src_offset = b * channels_in * spatial + (in_c_start + c) * spatial;
-                        for s in 0..spatial {
-                            x_t[s * channels_per_group + c] = x_data[src_offset + s];
-                        }
-                    }
-
-                    let w_offset = out_c_start * channels_per_group;
-                    let w_slice =
-                        &w_data[w_offset..w_offset + out_channels_per_group * channels_per_group];
-                    let result = gemm_f64(
-                        w_slice,
-                        &x_t,
-                        out_channels_per_group,
-                        channels_per_group,
-                        spatial,
-                    );
-
-                    let out_offset = b * channels_out * spatial + out_c_start * spatial;
-                    output[out_offset..out_offset + out_channels_per_group * spatial]
-                        .copy_from_slice(&result);
-                }
-            }
-            output
-        }
-    };
-
-    if let Some(bias) = bias {
-        let mut output = output;
-        let bias = bias.to_contiguous();
-        let bias_data: &[f64] = bias.storage();
-        add_bias(
-            &mut output,
-            bias_data,
-            batch_size,
-            channels_out,
-            spatial,
-            |a, b| a + b,
-        );
-        let out_shape = Shape::from(vec![
-            batch_size,
-            channels_out,
-            x_shape.dims[2],
-            x_shape.dims[3],
-            x_shape.dims[4],
-        ]);
-        EmberTensor::new(
-            Bytes::from_elems(output),
-            Layout::contiguous(out_shape),
-            DType::F64,
-        )
-    } else {
-        let out_shape = Shape::from(vec![
-            batch_size,
-            channels_out,
-            x_shape.dims[2],
-            x_shape.dims[3],
-            x_shape.dims[4],
-        ]);
-        EmberTensor::new(
-            Bytes::from_elems(output),
-            Layout::contiguous(out_shape),
-            DType::F64,
-        )
-    }
+    conv3d_1x1_impl::<f64>(
+        x,
+        weight,
+        bias,
+        options,
+        DType::F64,
+        0.0f64,
+        gemm_f64,
+        |a, b| a + b,
+    )
 }
 
 #[cfg(not(feature = "gemm"))]
@@ -990,7 +928,6 @@ fn conv3d_1x1_f64(
     )
 }
 
-/// Optimized 1x1 convolution for f16.
 #[cfg(feature = "gemm")]
 fn conv3d_1x1_f16(
     x: EmberTensor,
@@ -998,141 +935,16 @@ fn conv3d_1x1_f16(
     bias: Option<EmberTensor>,
     options: &ConvOptions<3>,
 ) -> EmberTensor {
-    let x = x.to_contiguous();
-    let weight = weight.to_contiguous();
-
-    let x_shape = x.layout().shape();
-    let w_shape = weight.layout().shape();
-
-    let batch_size = x_shape.dims[0];
-    let channels_in = x_shape.dims[1];
-    let spatial = x_shape.dims[2] * x_shape.dims[3] * x_shape.dims[4];
-
-    let channels_out = w_shape.dims[0];
-    let channels_per_group = w_shape.dims[1];
-    let groups = options.groups;
-    let out_channels_per_group = channels_out / groups;
-
-    let x_data: &[f16] = x.storage();
-    let w_data: &[f16] = weight.storage();
-
-    let output = {
-        #[cfg(feature = "rayon")]
-        {
-            use rayon::prelude::*;
-            let dst = vec![f16::from_f32(0.0); batch_size * channels_out * spatial];
-
-            (0..batch_size).into_par_iter().for_each(|b| {
-                for g in 0..groups {
-                    let in_c_start = g * channels_per_group;
-                    let out_c_start = g * out_channels_per_group;
-
-                    let mut x_t = vec![f16::from_f32(0.0); spatial * channels_per_group];
-                    for c in 0..channels_per_group {
-                        let src_offset = b * channels_in * spatial + (in_c_start + c) * spatial;
-                        for s in 0..spatial {
-                            x_t[s * channels_per_group + c] = x_data[src_offset + s];
-                        }
-                    }
-
-                    let w_offset = out_c_start * channels_per_group;
-                    let w_slice =
-                        &w_data[w_offset..w_offset + out_channels_per_group * channels_per_group];
-                    let result = gemm_f16(
-                        w_slice,
-                        &x_t,
-                        out_channels_per_group,
-                        channels_per_group,
-                        spatial,
-                    );
-
-                    let out_offset = b * channels_out * spatial + out_c_start * spatial;
-                    unsafe {
-                        let ptr = dst.as_ptr().add(out_offset) as *mut f16;
-                        core::ptr::copy_nonoverlapping(
-                            result.as_ptr(),
-                            ptr,
-                            out_channels_per_group * spatial,
-                        );
-                    }
-                }
-            });
-            dst
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let mut output = vec![f16::from_f32(0.0); batch_size * channels_out * spatial];
-            for b in 0..batch_size {
-                for g in 0..groups {
-                    let in_c_start = g * channels_per_group;
-                    let out_c_start = g * out_channels_per_group;
-
-                    let mut x_t = vec![f16::from_f32(0.0); spatial * channels_per_group];
-                    for c in 0..channels_per_group {
-                        let src_offset = b * channels_in * spatial + (in_c_start + c) * spatial;
-                        for s in 0..spatial {
-                            x_t[s * channels_per_group + c] = x_data[src_offset + s];
-                        }
-                    }
-
-                    let w_offset = out_c_start * channels_per_group;
-                    let w_slice =
-                        &w_data[w_offset..w_offset + out_channels_per_group * channels_per_group];
-                    let result = gemm_f16(
-                        w_slice,
-                        &x_t,
-                        out_channels_per_group,
-                        channels_per_group,
-                        spatial,
-                    );
-
-                    let out_offset = b * channels_out * spatial + out_c_start * spatial;
-                    output[out_offset..out_offset + out_channels_per_group * spatial]
-                        .copy_from_slice(&result);
-                }
-            }
-            output
-        }
-    };
-
-    if let Some(bias) = bias {
-        let mut output = output;
-        let bias = bias.to_contiguous();
-        let bias_data: &[f16] = bias.storage();
-        add_bias(
-            &mut output,
-            bias_data,
-            batch_size,
-            channels_out,
-            spatial,
-            |a, b| f16::from_f32(a.to_f32() + b.to_f32()),
-        );
-        let out_shape = Shape::from(vec![
-            batch_size,
-            channels_out,
-            x_shape.dims[2],
-            x_shape.dims[3],
-            x_shape.dims[4],
-        ]);
-        EmberTensor::new(
-            Bytes::from_elems(output),
-            Layout::contiguous(out_shape),
-            DType::F16,
-        )
-    } else {
-        let out_shape = Shape::from(vec![
-            batch_size,
-            channels_out,
-            x_shape.dims[2],
-            x_shape.dims[3],
-            x_shape.dims[4],
-        ]);
-        EmberTensor::new(
-            Bytes::from_elems(output),
-            Layout::contiguous(out_shape),
-            DType::F16,
-        )
-    }
+    conv3d_1x1_impl::<f16>(
+        x,
+        weight,
+        bias,
+        options,
+        DType::F16,
+        f16::from_f32(0.0),
+        gemm_f16,
+        |a, b| f16::from_f32(a.to_f32() + b.to_f32()),
+    )
 }
 
 #[cfg(not(feature = "gemm"))]
@@ -1414,6 +1226,108 @@ pub fn conv_transpose3d_bf16(
     convert_f32_to_bf16(&result_f32)
 }
 
+/// Sequential scatter loop for transposed convolution.
+///
+/// Iterates over (batch, output_channel) pairs and accumulates each input*weight
+/// product into the output at the appropriate scattered position.
+#[allow(clippy::too_many_arguments)]
+fn conv_transpose3d_scatter<T: bytemuck::Pod + Copy>(
+    output: &mut [T],
+    x_data: &[T],
+    w_data: &[T],
+    batch_size: usize,
+    in_channels: usize,
+    in_d: usize,
+    in_h: usize,
+    in_w: usize,
+    out_channels: usize,
+    out_channels_per_group: usize,
+    in_channels_per_group: usize,
+    kernel_d: usize,
+    kernel_h: usize,
+    kernel_w: usize,
+    stride_d: usize,
+    stride_h: usize,
+    stride_w: usize,
+    pad_d: usize,
+    pad_h: usize,
+    pad_w: usize,
+    dilation_d: usize,
+    dilation_h: usize,
+    dilation_w: usize,
+    out_d: usize,
+    out_h: usize,
+    out_w: usize,
+    add_fn: fn(T, T) -> T,
+) {
+    for b in 0..batch_size {
+        for oc in 0..out_channels {
+            let g = oc / out_channels_per_group;
+            let oc_local = oc % out_channels_per_group;
+
+            let ic_start = g * in_channels_per_group;
+            let ic_end = ic_start + in_channels_per_group;
+
+            for ic in ic_start..ic_end {
+                for id in 0..in_d {
+                    for ih in 0..in_h {
+                        for iw in 0..in_w {
+                            let x_val = x_data[b * in_channels * in_d * in_h * in_w
+                                + ic * in_d * in_h * in_w
+                                + id * in_h * in_w
+                                + ih * in_w
+                                + iw];
+
+                            for kd in 0..kernel_d {
+                                for kh in 0..kernel_h {
+                                    for kw in 0..kernel_w {
+                                        let od_raw = id * stride_d + kd * dilation_d;
+                                        let oh_raw = ih * stride_h + kh * dilation_h;
+                                        let ow_raw = iw * stride_w + kw * dilation_w;
+
+                                        if od_raw < pad_d || oh_raw < pad_h || ow_raw < pad_w {
+                                            continue;
+                                        }
+
+                                        let od = od_raw - pad_d;
+                                        let oh = oh_raw - pad_h;
+                                        let ow = ow_raw - pad_w;
+
+                                        if od >= out_d || oh >= out_h || ow >= out_w {
+                                            continue;
+                                        }
+
+                                        let w_idx = ic
+                                            * out_channels_per_group
+                                            * kernel_d
+                                            * kernel_h
+                                            * kernel_w
+                                            + oc_local * kernel_d * kernel_h * kernel_w
+                                            + kd * kernel_h * kernel_w
+                                            + kh * kernel_w
+                                            + kw;
+
+                                        let w_val = w_data[w_idx];
+
+                                        let out_idx = b * out_channels * out_d * out_h * out_w
+                                            + oc * out_d * out_h * out_w
+                                            + od * out_h * out_w
+                                            + oh * out_w
+                                            + ow;
+
+                                        output[out_idx] =
+                                            add_fn(output[out_idx], mul_generic(x_val, w_val));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Generic 3D transposed convolution implementation.
 ///
 /// Transposed convolution "scatters" input values to output positions:
@@ -1596,83 +1510,37 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
                     })
                     .collect::<Vec<T>>()
             } else {
-                // Non-f32: use per-output-channel approach (no atomics needed)
+                // Non-f32: sequential scatter (no atomics needed)
                 let mut output = vec![zero; output_size];
-
-                // Process in parallel over (batch, out_channel) pairs
-                // Each pair writes to non-overlapping output locations
-                for b in 0..batch_size {
-                    for oc in 0..out_channels {
-                        let g = oc / out_channels_per_group;
-                        let oc_local = oc % out_channels_per_group;
-
-                        let ic_start = g * in_channels_per_group;
-                        let ic_end = ic_start + in_channels_per_group;
-
-                        for ic in ic_start..ic_end {
-                            for id in 0..in_d {
-                                for ih in 0..in_h {
-                                    for iw in 0..in_w {
-                                        let x_val = x_data[b * in_channels * in_d * in_h * in_w
-                                            + ic * in_d * in_h * in_w
-                                            + id * in_h * in_w
-                                            + ih * in_w
-                                            + iw];
-
-                                        for kd in 0..kernel_d {
-                                            for kh in 0..kernel_h {
-                                                for kw in 0..kernel_w {
-                                                    let od_raw = id * stride_d + kd * dilation_d;
-                                                    let oh_raw = ih * stride_h + kh * dilation_h;
-                                                    let ow_raw = iw * stride_w + kw * dilation_w;
-
-                                                    if od_raw < pad_d
-                                                        || oh_raw < pad_h
-                                                        || ow_raw < pad_w
-                                                    {
-                                                        continue;
-                                                    }
-
-                                                    let od = od_raw - pad_d;
-                                                    let oh = oh_raw - pad_h;
-                                                    let ow = ow_raw - pad_w;
-
-                                                    if od >= out_d || oh >= out_h || ow >= out_w {
-                                                        continue;
-                                                    }
-
-                                                    let w_idx = ic
-                                                        * out_channels_per_group
-                                                        * kernel_d
-                                                        * kernel_h
-                                                        * kernel_w
-                                                        + oc_local * kernel_d * kernel_h * kernel_w
-                                                        + kd * kernel_h * kernel_w
-                                                        + kh * kernel_w
-                                                        + kw;
-
-                                                    let w_val = w_data[w_idx];
-
-                                                    let out_idx =
-                                                        b * out_channels * out_d * out_h * out_w
-                                                            + oc * out_d * out_h * out_w
-                                                            + od * out_h * out_w
-                                                            + oh * out_w
-                                                            + ow;
-
-                                                    output[out_idx] = add_fn(
-                                                        output[out_idx],
-                                                        mul_generic(x_val, w_val),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                conv_transpose3d_scatter(
+                    &mut output,
+                    x_data,
+                    w_data,
+                    batch_size,
+                    in_channels,
+                    in_d,
+                    in_h,
+                    in_w,
+                    out_channels,
+                    out_channels_per_group,
+                    in_channels_per_group,
+                    kernel_d,
+                    kernel_h,
+                    kernel_w,
+                    stride_d,
+                    stride_h,
+                    stride_w,
+                    pad_d,
+                    pad_h,
+                    pad_w,
+                    dilation_d,
+                    dilation_h,
+                    dilation_w,
+                    out_d,
+                    out_h,
+                    out_w,
+                    add_fn,
+                );
                 output
             }
         }
@@ -1680,79 +1548,35 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
         #[cfg(not(feature = "rayon"))]
         {
             let mut output = vec![zero; output_size];
-
-            for b in 0..batch_size {
-                for oc in 0..out_channels {
-                    let g = oc / out_channels_per_group;
-                    let oc_local = oc % out_channels_per_group;
-
-                    let ic_start = g * in_channels_per_group;
-                    let ic_end = ic_start + in_channels_per_group;
-
-                    for ic in ic_start..ic_end {
-                        for id in 0..in_d {
-                            for ih in 0..in_h {
-                                for iw in 0..in_w {
-                                    let x_val = x_data[b * in_channels * in_d * in_h * in_w
-                                        + ic * in_d * in_h * in_w
-                                        + id * in_h * in_w
-                                        + ih * in_w
-                                        + iw];
-
-                                    for kd in 0..kernel_d {
-                                        for kh in 0..kernel_h {
-                                            for kw in 0..kernel_w {
-                                                let od_raw = id * stride_d + kd * dilation_d;
-                                                let oh_raw = ih * stride_h + kh * dilation_h;
-                                                let ow_raw = iw * stride_w + kw * dilation_w;
-
-                                                if od_raw < pad_d
-                                                    || oh_raw < pad_h
-                                                    || ow_raw < pad_w
-                                                {
-                                                    continue;
-                                                }
-
-                                                let od = od_raw - pad_d;
-                                                let oh = oh_raw - pad_h;
-                                                let ow = ow_raw - pad_w;
-
-                                                if od >= out_d || oh >= out_h || ow >= out_w {
-                                                    continue;
-                                                }
-
-                                                let w_idx = ic
-                                                    * out_channels_per_group
-                                                    * kernel_d
-                                                    * kernel_h
-                                                    * kernel_w
-                                                    + oc_local * kernel_d * kernel_h * kernel_w
-                                                    + kd * kernel_h * kernel_w
-                                                    + kh * kernel_w
-                                                    + kw;
-
-                                                let w_val = w_data[w_idx];
-
-                                                let out_idx =
-                                                    b * out_channels * out_d * out_h * out_w
-                                                        + oc * out_d * out_h * out_w
-                                                        + od * out_h * out_w
-                                                        + oh * out_w
-                                                        + ow;
-
-                                                output[out_idx] = add_fn(
-                                                    output[out_idx],
-                                                    mul_generic(x_val, w_val),
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            conv_transpose3d_scatter(
+                &mut output,
+                x_data,
+                w_data,
+                batch_size,
+                in_channels,
+                in_d,
+                in_h,
+                in_w,
+                out_channels,
+                out_channels_per_group,
+                in_channels_per_group,
+                kernel_d,
+                kernel_h,
+                kernel_w,
+                stride_d,
+                stride_h,
+                stride_w,
+                pad_d,
+                pad_h,
+                pad_w,
+                dilation_d,
+                dilation_h,
+                dilation_w,
+                out_d,
+                out_h,
+                out_w,
+                add_fn,
+            );
             output
         }
     };

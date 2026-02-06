@@ -14,6 +14,94 @@ use burn_std::{Bytes, Shape};
 
 use crate::{EmberTensor, Layout};
 
+/// Build deformable im2col matrix for one batch sample and weight group.
+///
+/// Fills `col` with shape [col_len, spatial_out] where each column holds
+/// bilinear-interpolated and optionally masked samples for one output position.
+#[allow(clippy::too_many_arguments)]
+fn deform_im2col_f32(
+    col: &mut [f32],
+    x_data: &[f32],
+    offset_data: &[f32],
+    mask_data: Option<&[f32]>,
+    b: usize,
+    ic_start: usize,
+    channels_per_weight_group: usize,
+    channels_per_offset_group: usize,
+    channels_in: usize,
+    offset_groups: usize,
+    offset_channels: usize,
+    kernel_h: usize,
+    kernel_w: usize,
+    out_h: usize,
+    out_w: usize,
+    in_h: usize,
+    in_w: usize,
+    stride: [usize; 2],
+    padding: [usize; 2],
+    dilation: [usize; 2],
+    spatial_out: usize,
+) {
+    for oh in 0..out_h {
+        for ow in 0..out_w {
+            let spatial_idx = oh * out_w + ow;
+
+            for kh in 0..kernel_h {
+                for kw in 0..kernel_w {
+                    let base_h = (oh * stride[0] + kh * dilation[0]) as f32 - padding[0] as f32;
+                    let base_w = (ow * stride[1] + kw * dilation[1]) as f32 - padding[1] as f32;
+
+                    for ic in 0..channels_per_weight_group {
+                        let global_ic = ic_start + ic;
+                        let offset_group = global_ic / channels_per_offset_group;
+
+                        let kernel_idx = kh * kernel_w + kw;
+                        let offset_idx_h = offset_group * kernel_h * kernel_w * 2 + kernel_idx * 2;
+                        let offset_idx_w = offset_idx_h + 1;
+
+                        let offset_h_flat = b * offset_channels * spatial_out
+                            + offset_idx_h * spatial_out
+                            + spatial_idx;
+                        let offset_w_flat = b * offset_channels * spatial_out
+                            + offset_idx_w * spatial_out
+                            + spatial_idx;
+
+                        let offset_h = offset_data[offset_h_flat];
+                        let offset_w = offset_data[offset_w_flat];
+
+                        let sample_h = base_h + offset_h;
+                        let sample_w = base_w + offset_w;
+
+                        let mut val = bilinear_interpolate(
+                            x_data,
+                            b,
+                            global_ic,
+                            in_h,
+                            in_w,
+                            channels_in,
+                            sample_h,
+                            sample_w,
+                        );
+
+                        if let Some(md) = mask_data {
+                            let mask_idx_base = offset_group * kernel_h * kernel_w + kernel_idx;
+                            let mask_idx = b * (offset_groups * kernel_h * kernel_w) * spatial_out
+                                + mask_idx_base * spatial_out
+                                + spatial_idx;
+                            val *= md[mask_idx];
+                        }
+
+                        let col_row = kh * kernel_w * channels_per_weight_group
+                            + kw * channels_per_weight_group
+                            + ic;
+                        col[col_row * spatial_out + spatial_idx] = val;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Deformable 2D convolution using im2col + GEMM.
 ///
 /// # Arguments
@@ -73,6 +161,7 @@ pub fn deform_conv2d_f32(
     let out_channels_per_weight_group = channels_out / weight_groups;
     let spatial_out = out_h * out_w;
     let col_len = channels_per_weight_group * kernel_h * kernel_w;
+    let offset_channels = offset_shape.dims[1];
 
     // Flatten weights to [channels_out, col_len] for GEMM
     // Layout: [oc, ic, kh, kw] -> [oc, kh * kw * ic]
@@ -110,80 +199,31 @@ pub fn deform_conv2d_f32(
                     let oc_start = g * out_channels_per_weight_group;
 
                     // Build deformable im2col for this batch and group
-                    // Shape: [col_len, spatial_out] = [C_in/wg * Kh * Kw, out_h * out_w]
                     let mut col = vec![0.0f32; col_len * spatial_out];
 
-                    for oh in 0..out_h {
-                        for ow in 0..out_w {
-                            let spatial_idx = oh * out_w + ow;
-
-                            for kh in 0..kernel_h {
-                                for kw in 0..kernel_w {
-                                    // Compute base sampling position
-                                    let base_h = (oh * stride[0] + kh * dilation[0]) as f32
-                                        - padding[0] as f32;
-                                    let base_w = (ow * stride[1] + kw * dilation[1]) as f32
-                                        - padding[1] as f32;
-
-                                    for ic in 0..channels_per_weight_group {
-                                        let global_ic = ic_start + ic;
-                                        let offset_group = global_ic / channels_per_offset_group;
-
-                                        // Get offset for this kernel position
-                                        let kernel_idx = kh * kernel_w + kw;
-                                        let offset_idx_h =
-                                            offset_group * kernel_h * kernel_w * 2 + kernel_idx * 2;
-                                        let offset_idx_w = offset_idx_h + 1;
-
-                                        let offset_h_flat = b * offset_shape.dims[1] * spatial_out
-                                            + offset_idx_h * spatial_out
-                                            + spatial_idx;
-                                        let offset_w_flat = b * offset_shape.dims[1] * spatial_out
-                                            + offset_idx_w * spatial_out
-                                            + spatial_idx;
-
-                                        let offset_h = offset_data[offset_h_flat];
-                                        let offset_w = offset_data[offset_w_flat];
-
-                                        // Deformed sampling position
-                                        let sample_h = base_h + offset_h;
-                                        let sample_w = base_w + offset_w;
-
-                                        // Bilinear interpolation
-                                        let mut val = bilinear_interpolate(
-                                            x_data,
-                                            b,
-                                            global_ic,
-                                            in_h,
-                                            in_w,
-                                            channels_in,
-                                            sample_h,
-                                            sample_w,
-                                        );
-
-                                        // Apply mask if present
-                                        if let Some(md) = mask_data {
-                                            let mask_idx_base =
-                                                offset_group * kernel_h * kernel_w + kernel_idx;
-                                            let mask_idx = b
-                                                * (offset_groups * kernel_h * kernel_w)
-                                                * spatial_out
-                                                + mask_idx_base * spatial_out
-                                                + spatial_idx;
-                                            val *= md[mask_idx];
-                                        }
-
-                                        // Store in im2col matrix
-                                        // col layout: [kh * kw * ic, spatial]
-                                        let col_row = kh * kernel_w * channels_per_weight_group
-                                            + kw * channels_per_weight_group
-                                            + ic;
-                                        col[col_row * spatial_out + spatial_idx] = val;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    deform_im2col_f32(
+                        &mut col,
+                        x_data,
+                        offset_data,
+                        mask_data,
+                        b,
+                        ic_start,
+                        channels_per_weight_group,
+                        channels_per_offset_group,
+                        channels_in,
+                        offset_groups,
+                        offset_channels,
+                        kernel_h,
+                        kernel_w,
+                        out_h,
+                        out_w,
+                        in_h,
+                        in_w,
+                        stride,
+                        padding,
+                        dilation,
+                        spatial_out,
+                    );
 
                     // GEMM: w_group[out_c_per_wg, col_len] @ col[col_len, spatial_out]
                     // Result: [out_c_per_wg, spatial_out]
@@ -243,69 +283,29 @@ pub fn deform_conv2d_f32(
                 // Build deformable im2col for this batch and group
                 let mut col = vec![0.0f32; col_len * spatial_out];
 
-                for oh in 0..out_h {
-                    for ow in 0..out_w {
-                        let spatial_idx = oh * out_w + ow;
-
-                        for kh in 0..kernel_h {
-                            for kw in 0..kernel_w {
-                                let base_h =
-                                    (oh * stride[0] + kh * dilation[0]) as f32 - padding[0] as f32;
-                                let base_w =
-                                    (ow * stride[1] + kw * dilation[1]) as f32 - padding[1] as f32;
-
-                                for ic in 0..channels_per_weight_group {
-                                    let global_ic = ic_start + ic;
-                                    let offset_group = global_ic / channels_per_offset_group;
-
-                                    let kernel_idx = kh * kernel_w + kw;
-                                    let offset_idx_h =
-                                        offset_group * kernel_h * kernel_w * 2 + kernel_idx * 2;
-                                    let offset_idx_w = offset_idx_h + 1;
-
-                                    let offset_h_flat = b * offset_shape.dims[1] * spatial_out
-                                        + offset_idx_h * spatial_out
-                                        + spatial_idx;
-                                    let offset_w_flat = b * offset_shape.dims[1] * spatial_out
-                                        + offset_idx_w * spatial_out
-                                        + spatial_idx;
-
-                                    let offset_h = offset_data[offset_h_flat];
-                                    let offset_w = offset_data[offset_w_flat];
-
-                                    let sample_h = base_h + offset_h;
-                                    let sample_w = base_w + offset_w;
-
-                                    let mut val = bilinear_interpolate(
-                                        x_data,
-                                        b,
-                                        global_ic,
-                                        in_h,
-                                        in_w,
-                                        channels_in,
-                                        sample_h,
-                                        sample_w,
-                                    );
-
-                                    if let Some(md) = mask_data {
-                                        let mask_idx_base =
-                                            offset_group * kernel_h * kernel_w + kernel_idx;
-                                        let mask_idx =
-                                            b * (offset_groups * kernel_h * kernel_w) * spatial_out
-                                                + mask_idx_base * spatial_out
-                                                + spatial_idx;
-                                        val *= md[mask_idx];
-                                    }
-
-                                    let col_row = kh * kernel_w * channels_per_weight_group
-                                        + kw * channels_per_weight_group
-                                        + ic;
-                                    col[col_row * spatial_out + spatial_idx] = val;
-                                }
-                            }
-                        }
-                    }
-                }
+                deform_im2col_f32(
+                    &mut col,
+                    x_data,
+                    offset_data,
+                    mask_data,
+                    b,
+                    ic_start,
+                    channels_per_weight_group,
+                    channels_per_offset_group,
+                    channels_in,
+                    offset_groups,
+                    offset_channels,
+                    kernel_h,
+                    kernel_w,
+                    out_h,
+                    out_w,
+                    in_h,
+                    in_w,
+                    stride,
+                    padding,
+                    dilation,
+                    spatial_out,
+                );
 
                 // GEMM
                 let w_start = oc_start * col_len;
