@@ -23,58 +23,108 @@ use burn_std::{Bytes, Shape, bf16, f16};
 use crate::{EmberTensor, Layout};
 
 // ============================================================================
+// Macros for dtype wrappers
+// ============================================================================
+
+/// Generates a convNd function that delegates to a conv3d function via expand/squeeze.
+macro_rules! conv_nd_via_3d {
+    ($fn_name:ident, $conv3d_fn:ident, $expand_fn:ident, $squeeze_fn:ident, $dim:literal, $Options:ident) => {
+        pub fn $fn_name(
+            x: EmberTensor,
+            weight: EmberTensor,
+            bias: Option<EmberTensor>,
+            options: &$Options<$dim>,
+        ) -> EmberTensor {
+            let (x_3d, weight_3d, options_3d) = $expand_fn(&x, &weight, options);
+            let result_3d = $conv3d_fn(x_3d, weight_3d, bias, &options_3d);
+            $squeeze_fn(result_3d)
+        }
+    };
+}
+
+/// Generates a bf16 function that converts to f32, calls the f32 variant, converts back.
+macro_rules! bf16_via_f32 {
+    ($bf16_fn:ident, $f32_fn:ident, $dim:literal, $Options:ident) => {
+        pub fn $bf16_fn(
+            x: EmberTensor,
+            weight: EmberTensor,
+            bias: Option<EmberTensor>,
+            options: &$Options<$dim>,
+        ) -> EmberTensor {
+            let x_f32 = convert_bf16_to_f32(&x);
+            let weight_f32 = convert_bf16_to_f32(&weight);
+            let bias_f32 = bias.map(|b| convert_bf16_to_f32(&b));
+            let result_f32 = $f32_fn(x_f32, weight_f32, bias_f32, options);
+            convert_f32_to_bf16(&result_f32)
+        }
+    };
+}
+
+/// Generates a conv3d_1x1 function with cfg-gated gemm fast path.
+macro_rules! conv3d_1x1_typed {
+    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr) => {
+        #[cfg(feature = "gemm")]
+        fn $fn_name(
+            x: EmberTensor,
+            weight: EmberTensor,
+            bias: Option<EmberTensor>,
+            options: &ConvOptions<3>,
+        ) -> EmberTensor {
+            conv3d_1x1_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
+        }
+
+        #[cfg(not(feature = "gemm"))]
+        fn $fn_name(
+            x: EmberTensor,
+            weight: EmberTensor,
+            bias: Option<EmberTensor>,
+            options: &ConvOptions<3>,
+        ) -> EmberTensor {
+            conv3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
+        }
+    };
+}
+
+/// Generates a conv3d typed function with 1x1 fast-path check.
+macro_rules! conv3d_typed {
+    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr, $fn_1x1:ident) => {
+        pub fn $fn_name(
+            x: EmberTensor,
+            weight: EmberTensor,
+            bias: Option<EmberTensor>,
+            options: &ConvOptions<3>,
+        ) -> EmberTensor {
+            let w_shape = weight.layout().shape();
+            if is_1x1_conv(w_shape.dims[2], w_shape.dims[3], w_shape.dims[4], options) {
+                return $fn_1x1(x, weight, bias, options);
+            }
+            conv3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
+        }
+    };
+}
+
+/// Generates a conv_transpose3d typed function.
+macro_rules! conv_transpose3d_typed {
+    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $add_fn:expr) => {
+        pub fn $fn_name(
+            x: EmberTensor,
+            weight: EmberTensor,
+            bias: Option<EmberTensor>,
+            options: &ConvTransposeOptions<3>,
+        ) -> EmberTensor {
+            conv_transpose3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $add_fn)
+        }
+    };
+}
+
+// ============================================================================
 // Conv1d - delegates to conv3d
 // ============================================================================
 
-/// 1D convolution for f32 via conv3d.
-pub fn conv1d_f32(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<1>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_1d_to_3d(&x, &weight, options);
-    let result_3d = conv3d_f32(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_1d(result_3d)
-}
-
-/// 1D convolution for f64 via conv3d.
-pub fn conv1d_f64(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<1>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_1d_to_3d(&x, &weight, options);
-    let result_3d = conv3d_f64(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_1d(result_3d)
-}
-
-/// 1D convolution for f16 via conv3d.
-pub fn conv1d_f16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<1>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_1d_to_3d(&x, &weight, options);
-    let result_3d = conv3d_f16(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_1d(result_3d)
-}
-
-/// 1D convolution for bf16 via f32 conversion.
-pub fn conv1d_bf16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<1>,
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let weight_f32 = convert_bf16_to_f32(&weight);
-    let bias_f32 = bias.map(|b| convert_bf16_to_f32(&b));
-    let result_f32 = conv1d_f32(x_f32, weight_f32, bias_f32, options);
-    convert_f32_to_bf16(&result_f32)
-}
+conv_nd_via_3d!(conv1d_f32, conv3d_f32, expand_1d_to_3d, squeeze_3d_to_1d, 1, ConvOptions);
+conv_nd_via_3d!(conv1d_f64, conv3d_f64, expand_1d_to_3d, squeeze_3d_to_1d, 1, ConvOptions);
+conv_nd_via_3d!(conv1d_f16, conv3d_f16, expand_1d_to_3d, squeeze_3d_to_1d, 1, ConvOptions);
+bf16_via_f32!(conv1d_bf16, conv1d_f32, 1, ConvOptions);
 
 fn expand_1d_to_3d(
     x: &EmberTensor,
@@ -122,55 +172,10 @@ fn squeeze_3d_to_1d(tensor: EmberTensor) -> EmberTensor {
 // Conv2d - delegates to conv3d
 // ============================================================================
 
-/// 2D convolution for f32 via conv3d.
-pub fn conv2d_f32(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<2>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_2d_to_3d(&x, &weight, options);
-    let result_3d = conv3d_f32(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_2d(result_3d)
-}
-
-/// 2D convolution for f64 via conv3d.
-pub fn conv2d_f64(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<2>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_2d_to_3d(&x, &weight, options);
-    let result_3d = conv3d_f64(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_2d(result_3d)
-}
-
-/// 2D convolution for f16 via conv3d.
-pub fn conv2d_f16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<2>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_2d_to_3d(&x, &weight, options);
-    let result_3d = conv3d_f16(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_2d(result_3d)
-}
-
-/// 2D convolution for bf16 via f32 conversion.
-pub fn conv2d_bf16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<2>,
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let weight_f32 = convert_bf16_to_f32(&weight);
-    let bias_f32 = bias.map(|b| convert_bf16_to_f32(&b));
-    let result_f32 = conv2d_f32(x_f32, weight_f32, bias_f32, options);
-    convert_f32_to_bf16(&result_f32)
-}
+conv_nd_via_3d!(conv2d_f32, conv3d_f32, expand_2d_to_3d, squeeze_3d_to_2d, 2, ConvOptions);
+conv_nd_via_3d!(conv2d_f64, conv3d_f64, expand_2d_to_3d, squeeze_3d_to_2d, 2, ConvOptions);
+conv_nd_via_3d!(conv2d_f16, conv3d_f16, expand_2d_to_3d, squeeze_3d_to_2d, 2, ConvOptions);
+bf16_via_f32!(conv2d_bf16, conv2d_f32, 2, ConvOptions);
 
 fn expand_2d_to_3d(
     x: &EmberTensor,
@@ -219,89 +224,10 @@ fn squeeze_3d_to_2d(tensor: EmberTensor) -> EmberTensor {
 // Conv3d - native implementations
 // ============================================================================
 
-/// 3D convolution for f32 using im2col + gemm.
-pub fn conv3d_f32(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    // Fast path for 1x1x1 convolution
-    let w_shape = weight.layout().shape();
-    if is_1x1_conv(w_shape.dims[2], w_shape.dims[3], w_shape.dims[4], options) {
-        return conv3d_1x1_f32(x, weight, bias, options);
-    }
-    conv3d_impl::<f32>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F32,
-        0.0f32,
-        gemm_f32,
-        |a, b| a + b,
-    )
-}
-
-/// 3D convolution for f64 using im2col + gemm.
-pub fn conv3d_f64(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    let w_shape = weight.layout().shape();
-    if is_1x1_conv(w_shape.dims[2], w_shape.dims[3], w_shape.dims[4], options) {
-        return conv3d_1x1_f64(x, weight, bias, options);
-    }
-    conv3d_impl::<f64>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F64,
-        0.0f64,
-        gemm_f64,
-        |a, b| a + b,
-    )
-}
-
-/// 3D convolution for f16 using im2col + gemm.
-pub fn conv3d_f16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    let w_shape = weight.layout().shape();
-    if is_1x1_conv(w_shape.dims[2], w_shape.dims[3], w_shape.dims[4], options) {
-        return conv3d_1x1_f16(x, weight, bias, options);
-    }
-    conv3d_impl::<f16>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F16,
-        f16::from_f32(0.0),
-        gemm_f16,
-        |a, b| f16::from_f32(a.to_f32() + b.to_f32()),
-    )
-}
-
-/// 3D convolution for bf16 via f32 conversion.
-pub fn conv3d_bf16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let weight_f32 = convert_bf16_to_f32(&weight);
-    let bias_f32 = bias.map(|b| convert_bf16_to_f32(&b));
-    let result_f32 = conv3d_f32(x_f32, weight_f32, bias_f32, options);
-    convert_f32_to_bf16(&result_f32)
-}
+conv3d_typed!(conv3d_f32, f32, DType::F32, 0.0f32, gemm_f32, |a, b| a + b, conv3d_1x1_f32);
+conv3d_typed!(conv3d_f64, f64, DType::F64, 0.0f64, gemm_f64, |a, b| a + b, conv3d_1x1_f64);
+conv3d_typed!(conv3d_f16, f16, DType::F16, f16::from_f32(0.0), gemm_f16, |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()), conv3d_1x1_f16);
+bf16_via_f32!(conv3d_bf16, conv3d_f32, 3, ConvOptions);
 
 /// Generic 3D convolution implementation using tiled im2col.
 ///
@@ -852,119 +778,9 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
     }
 }
 
-#[cfg(feature = "gemm")]
-fn conv3d_1x1_f32(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    conv3d_1x1_impl::<f32>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F32,
-        0.0f32,
-        gemm_f32,
-        |a, b| a + b,
-    )
-}
-
-#[cfg(not(feature = "gemm"))]
-fn conv3d_1x1_f32(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    conv3d_impl::<f32>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F32,
-        0.0f32,
-        gemm_f32,
-        |a, b| a + b,
-    )
-}
-
-#[cfg(feature = "gemm")]
-fn conv3d_1x1_f64(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    conv3d_1x1_impl::<f64>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F64,
-        0.0f64,
-        gemm_f64,
-        |a, b| a + b,
-    )
-}
-
-#[cfg(not(feature = "gemm"))]
-fn conv3d_1x1_f64(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    conv3d_impl::<f64>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F64,
-        0.0f64,
-        gemm_f64,
-        |a, b| a + b,
-    )
-}
-
-#[cfg(feature = "gemm")]
-fn conv3d_1x1_f16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    conv3d_1x1_impl::<f16>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F16,
-        f16::from_f32(0.0),
-        gemm_f16,
-        |a, b| f16::from_f32(a.to_f32() + b.to_f32()),
-    )
-}
-
-#[cfg(not(feature = "gemm"))]
-fn conv3d_1x1_f16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvOptions<3>,
-) -> EmberTensor {
-    conv3d_impl::<f16>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F16,
-        f16::from_f32(0.0),
-        gemm_f16,
-        |a, b| f16::from_f32(a.to_f32() + b.to_f32()),
-    )
-}
+conv3d_1x1_typed!(conv3d_1x1_f32, f32, DType::F32, 0.0f32, gemm_f32, |a, b| a + b);
+conv3d_1x1_typed!(conv3d_1x1_f64, f64, DType::F64, 0.0f64, gemm_f64, |a, b| a + b);
+conv3d_1x1_typed!(conv3d_1x1_f16, f16, DType::F16, f16::from_f32(0.0), gemm_f16, |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()));
 
 // ============================================================================
 // Bias addition
@@ -994,55 +810,10 @@ fn add_bias<T: Copy>(
 // Conv Transpose 1d - delegates to conv_transpose3d
 // ============================================================================
 
-/// 1D transposed convolution for f32 via conv_transpose3d.
-pub fn conv_transpose1d_f32(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<1>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_transpose_1d_to_3d(&x, &weight, options);
-    let result_3d = conv_transpose3d_f32(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_1d(result_3d)
-}
-
-/// 1D transposed convolution for f64 via conv_transpose3d.
-pub fn conv_transpose1d_f64(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<1>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_transpose_1d_to_3d(&x, &weight, options);
-    let result_3d = conv_transpose3d_f64(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_1d(result_3d)
-}
-
-/// 1D transposed convolution for f16 via conv_transpose3d.
-pub fn conv_transpose1d_f16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<1>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_transpose_1d_to_3d(&x, &weight, options);
-    let result_3d = conv_transpose3d_f16(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_1d(result_3d)
-}
-
-/// 1D transposed convolution for bf16 via f32 conversion.
-pub fn conv_transpose1d_bf16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<1>,
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let weight_f32 = convert_bf16_to_f32(&weight);
-    let bias_f32 = bias.map(|b| convert_bf16_to_f32(&b));
-    let result_f32 = conv_transpose1d_f32(x_f32, weight_f32, bias_f32, options);
-    convert_f32_to_bf16(&result_f32)
-}
+conv_nd_via_3d!(conv_transpose1d_f32, conv_transpose3d_f32, expand_transpose_1d_to_3d, squeeze_3d_to_1d, 1, ConvTransposeOptions);
+conv_nd_via_3d!(conv_transpose1d_f64, conv_transpose3d_f64, expand_transpose_1d_to_3d, squeeze_3d_to_1d, 1, ConvTransposeOptions);
+conv_nd_via_3d!(conv_transpose1d_f16, conv_transpose3d_f16, expand_transpose_1d_to_3d, squeeze_3d_to_1d, 1, ConvTransposeOptions);
+bf16_via_f32!(conv_transpose1d_bf16, conv_transpose1d_f32, 1, ConvTransposeOptions);
 
 fn expand_transpose_1d_to_3d(
     x: &EmberTensor,
@@ -1084,55 +855,10 @@ fn expand_transpose_1d_to_3d(
 // Conv Transpose 2d - delegates to conv_transpose3d
 // ============================================================================
 
-/// 2D transposed convolution for f32 via conv_transpose3d.
-pub fn conv_transpose2d_f32(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<2>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_transpose_2d_to_3d(&x, &weight, options);
-    let result_3d = conv_transpose3d_f32(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_2d(result_3d)
-}
-
-/// 2D transposed convolution for f64 via conv_transpose3d.
-pub fn conv_transpose2d_f64(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<2>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_transpose_2d_to_3d(&x, &weight, options);
-    let result_3d = conv_transpose3d_f64(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_2d(result_3d)
-}
-
-/// 2D transposed convolution for f16 via conv_transpose3d.
-pub fn conv_transpose2d_f16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<2>,
-) -> EmberTensor {
-    let (x_3d, weight_3d, options_3d) = expand_transpose_2d_to_3d(&x, &weight, options);
-    let result_3d = conv_transpose3d_f16(x_3d, weight_3d, bias, &options_3d);
-    squeeze_3d_to_2d(result_3d)
-}
-
-/// 2D transposed convolution for bf16 via f32 conversion.
-pub fn conv_transpose2d_bf16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<2>,
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let weight_f32 = convert_bf16_to_f32(&weight);
-    let bias_f32 = bias.map(|b| convert_bf16_to_f32(&b));
-    let result_f32 = conv_transpose2d_f32(x_f32, weight_f32, bias_f32, options);
-    convert_f32_to_bf16(&result_f32)
-}
+conv_nd_via_3d!(conv_transpose2d_f32, conv_transpose3d_f32, expand_transpose_2d_to_3d, squeeze_3d_to_2d, 2, ConvTransposeOptions);
+conv_nd_via_3d!(conv_transpose2d_f64, conv_transpose3d_f64, expand_transpose_2d_to_3d, squeeze_3d_to_2d, 2, ConvTransposeOptions);
+conv_nd_via_3d!(conv_transpose2d_f16, conv_transpose3d_f16, expand_transpose_2d_to_3d, squeeze_3d_to_2d, 2, ConvTransposeOptions);
+bf16_via_f32!(conv_transpose2d_bf16, conv_transpose2d_f32, 2, ConvTransposeOptions);
 
 fn expand_transpose_2d_to_3d(
     x: &EmberTensor,
@@ -1174,57 +900,10 @@ fn expand_transpose_2d_to_3d(
 // Conv Transpose 3d - core implementation
 // ============================================================================
 
-/// 3D transposed convolution for f32.
-pub fn conv_transpose3d_f32(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<3>,
-) -> EmberTensor {
-    conv_transpose3d_impl::<f32>(x, weight, bias, options, DType::F32, 0.0f32, |a, b| a + b)
-}
-
-/// 3D transposed convolution for f64.
-pub fn conv_transpose3d_f64(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<3>,
-) -> EmberTensor {
-    conv_transpose3d_impl::<f64>(x, weight, bias, options, DType::F64, 0.0f64, |a, b| a + b)
-}
-
-/// 3D transposed convolution for f16.
-pub fn conv_transpose3d_f16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<3>,
-) -> EmberTensor {
-    conv_transpose3d_impl::<f16>(
-        x,
-        weight,
-        bias,
-        options,
-        DType::F16,
-        f16::from_f32(0.0),
-        |a, b| f16::from_f32(a.to_f32() + b.to_f32()),
-    )
-}
-
-/// 3D transposed convolution for bf16 via f32 conversion.
-pub fn conv_transpose3d_bf16(
-    x: EmberTensor,
-    weight: EmberTensor,
-    bias: Option<EmberTensor>,
-    options: &ConvTransposeOptions<3>,
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let weight_f32 = convert_bf16_to_f32(&weight);
-    let bias_f32 = bias.map(|b| convert_bf16_to_f32(&b));
-    let result_f32 = conv_transpose3d_f32(x_f32, weight_f32, bias_f32, options);
-    convert_f32_to_bf16(&result_f32)
-}
+conv_transpose3d_typed!(conv_transpose3d_f32, f32, DType::F32, 0.0f32, |a, b| a + b);
+conv_transpose3d_typed!(conv_transpose3d_f64, f64, DType::F64, 0.0f64, |a, b| a + b);
+conv_transpose3d_typed!(conv_transpose3d_f16, f16, DType::F16, f16::from_f32(0.0), |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()));
+bf16_via_f32!(conv_transpose3d_bf16, conv_transpose3d_f32, 3, ConvTransposeOptions);
 
 /// Sequential scatter loop for transposed convolution.
 ///

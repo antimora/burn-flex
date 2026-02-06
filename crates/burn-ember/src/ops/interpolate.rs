@@ -20,195 +20,95 @@ use num_traits::Float;
 use crate::{EmberTensor, Layout};
 
 // ============================================================================
+// Macros for dtype wrappers
+// ============================================================================
+
+/// Generates an interpolation forward typed dispatcher.
+macro_rules! interpolate_typed {
+    ($fn_name:ident, $impl_fn:ident, $T:ty) => {
+        pub fn $fn_name(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
+            $impl_fn::<$T>(x, output_size)
+        }
+    };
+}
+
+/// Generates an interpolation bf16 forward wrapper via f32 conversion.
+macro_rules! interpolate_bf16 {
+    ($bf16_fn:ident, $f32_fn:ident) => {
+        pub fn $bf16_fn(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
+            let x_f32 = convert_bf16_to_f32(&x);
+            let result_f32 = $f32_fn(x_f32, output_size);
+            convert_f32_to_bf16(&result_f32)
+        }
+    };
+}
+
+/// Generates an interpolation backward typed dispatcher.
+macro_rules! interpolate_backward_typed {
+    ($fn_name:ident, $impl_fn:ident, $T:ty) => {
+        pub fn $fn_name(
+            x: EmberTensor,
+            grad: EmberTensor,
+            output_size: [usize; 2],
+        ) -> EmberTensor {
+            $impl_fn::<$T>(x, grad, output_size)
+        }
+    };
+}
+
+/// Generates an interpolation bf16 backward wrapper via f32 conversion.
+macro_rules! interpolate_backward_bf16 {
+    ($bf16_fn:ident, $f32_fn:ident) => {
+        pub fn $bf16_fn(
+            x: EmberTensor,
+            grad: EmberTensor,
+            output_size: [usize; 2],
+        ) -> EmberTensor {
+            let x_f32 = convert_bf16_to_f32(&x);
+            let grad_f32 = convert_bf16_to_f32(&grad);
+            let result_f32 = $f32_fn(x_f32, grad_f32, output_size);
+            convert_f32_to_bf16(&result_f32)
+        }
+    };
+}
+
+// ============================================================================
 // Public API - dtype dispatch
 // ============================================================================
 
-/// Nearest neighbor interpolation for f32.
-pub fn interpolate_nearest_f32(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_nearest_impl::<f32>(x, output_size)
-}
+interpolate_typed!(interpolate_nearest_f32, interpolate_nearest_impl, f32);
+interpolate_typed!(interpolate_nearest_f64, interpolate_nearest_impl, f64);
+interpolate_typed!(interpolate_nearest_f16, interpolate_nearest_impl, f16);
+interpolate_bf16!(interpolate_nearest_bf16, interpolate_nearest_f32);
 
-/// Nearest neighbor interpolation for f64.
-pub fn interpolate_nearest_f64(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_nearest_impl::<f64>(x, output_size)
-}
+interpolate_typed!(interpolate_bilinear_f32, interpolate_bilinear_impl, f32);
+interpolate_typed!(interpolate_bilinear_f64, interpolate_bilinear_impl, f64);
+interpolate_typed!(interpolate_bilinear_f16, interpolate_bilinear_impl, f16);
+interpolate_bf16!(interpolate_bilinear_bf16, interpolate_bilinear_f32);
 
-/// Nearest neighbor interpolation for f16.
-pub fn interpolate_nearest_f16(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_nearest_impl::<f16>(x, output_size)
-}
-
-/// Nearest neighbor interpolation for bf16 via f32 conversion.
-pub fn interpolate_nearest_bf16(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let result_f32 = interpolate_nearest_f32(x_f32, output_size);
-    convert_f32_to_bf16(&result_f32)
-}
-
-/// Bilinear interpolation for f32.
-pub fn interpolate_bilinear_f32(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_bilinear_impl::<f32>(x, output_size)
-}
-
-/// Bilinear interpolation for f64.
-pub fn interpolate_bilinear_f64(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_bilinear_impl::<f64>(x, output_size)
-}
-
-/// Bilinear interpolation for f16.
-pub fn interpolate_bilinear_f16(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_bilinear_impl::<f16>(x, output_size)
-}
-
-/// Bilinear interpolation for bf16 via f32 conversion.
-pub fn interpolate_bilinear_bf16(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let result_f32 = interpolate_bilinear_f32(x_f32, output_size);
-    convert_f32_to_bf16(&result_f32)
-}
-
-/// Bicubic interpolation for f32.
-pub fn interpolate_bicubic_f32(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_bicubic_impl::<f32>(x, output_size)
-}
-
-/// Bicubic interpolation for f64.
-pub fn interpolate_bicubic_f64(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_bicubic_impl::<f64>(x, output_size)
-}
-
-/// Bicubic interpolation for f16.
-pub fn interpolate_bicubic_f16(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    interpolate_bicubic_impl::<f16>(x, output_size)
-}
-
-/// Bicubic interpolation for bf16 via f32 conversion.
-pub fn interpolate_bicubic_bf16(x: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let result_f32 = interpolate_bicubic_f32(x_f32, output_size);
-    convert_f32_to_bf16(&result_f32)
-}
+interpolate_typed!(interpolate_bicubic_f32, interpolate_bicubic_impl, f32);
+interpolate_typed!(interpolate_bicubic_f64, interpolate_bicubic_impl, f64);
+interpolate_typed!(interpolate_bicubic_f16, interpolate_bicubic_impl, f16);
+interpolate_bf16!(interpolate_bicubic_bf16, interpolate_bicubic_f32);
 
 // ============================================================================
 // Backward pass - dtype dispatch
 // ============================================================================
 
-/// Nearest neighbor backward for f32.
-pub fn interpolate_nearest_backward_f32(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_nearest_backward_impl::<f32>(x, grad, output_size)
-}
+interpolate_backward_typed!(interpolate_nearest_backward_f32, interpolate_nearest_backward_impl, f32);
+interpolate_backward_typed!(interpolate_nearest_backward_f64, interpolate_nearest_backward_impl, f64);
+interpolate_backward_typed!(interpolate_nearest_backward_f16, interpolate_nearest_backward_impl, f16);
+interpolate_backward_bf16!(interpolate_nearest_backward_bf16, interpolate_nearest_backward_f32);
 
-/// Nearest neighbor backward for f64.
-pub fn interpolate_nearest_backward_f64(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_nearest_backward_impl::<f64>(x, grad, output_size)
-}
+interpolate_backward_typed!(interpolate_bilinear_backward_f32, interpolate_bilinear_backward_impl, f32);
+interpolate_backward_typed!(interpolate_bilinear_backward_f64, interpolate_bilinear_backward_impl, f64);
+interpolate_backward_typed!(interpolate_bilinear_backward_f16, interpolate_bilinear_backward_impl, f16);
+interpolate_backward_bf16!(interpolate_bilinear_backward_bf16, interpolate_bilinear_backward_f32);
 
-/// Nearest neighbor backward for f16.
-pub fn interpolate_nearest_backward_f16(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_nearest_backward_impl::<f16>(x, grad, output_size)
-}
-
-/// Nearest neighbor backward for bf16 via f32 conversion.
-pub fn interpolate_nearest_backward_bf16(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let grad_f32 = convert_bf16_to_f32(&grad);
-    let result_f32 = interpolate_nearest_backward_f32(x_f32, grad_f32, output_size);
-    convert_f32_to_bf16(&result_f32)
-}
-
-/// Bilinear backward for f32.
-pub fn interpolate_bilinear_backward_f32(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_bilinear_backward_impl::<f32>(x, grad, output_size)
-}
-
-/// Bilinear backward for f64.
-pub fn interpolate_bilinear_backward_f64(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_bilinear_backward_impl::<f64>(x, grad, output_size)
-}
-
-/// Bilinear backward for f16.
-pub fn interpolate_bilinear_backward_f16(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_bilinear_backward_impl::<f16>(x, grad, output_size)
-}
-
-/// Bilinear backward for bf16 via f32 conversion.
-pub fn interpolate_bilinear_backward_bf16(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let grad_f32 = convert_bf16_to_f32(&grad);
-    let result_f32 = interpolate_bilinear_backward_f32(x_f32, grad_f32, output_size);
-    convert_f32_to_bf16(&result_f32)
-}
-
-/// Bicubic backward for f32.
-pub fn interpolate_bicubic_backward_f32(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_bicubic_backward_impl::<f32>(x, grad, output_size)
-}
-
-/// Bicubic backward for f64.
-pub fn interpolate_bicubic_backward_f64(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_bicubic_backward_impl::<f64>(x, grad, output_size)
-}
-
-/// Bicubic backward for f16.
-pub fn interpolate_bicubic_backward_f16(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    interpolate_bicubic_backward_impl::<f16>(x, grad, output_size)
-}
-
-/// Bicubic backward for bf16 via f32 conversion.
-pub fn interpolate_bicubic_backward_bf16(
-    x: EmberTensor,
-    grad: EmberTensor,
-    output_size: [usize; 2],
-) -> EmberTensor {
-    let x_f32 = convert_bf16_to_f32(&x);
-    let grad_f32 = convert_bf16_to_f32(&grad);
-    let result_f32 = interpolate_bicubic_backward_f32(x_f32, grad_f32, output_size);
-    convert_f32_to_bf16(&result_f32)
-}
+interpolate_backward_typed!(interpolate_bicubic_backward_f32, interpolate_bicubic_backward_impl, f32);
+interpolate_backward_typed!(interpolate_bicubic_backward_f64, interpolate_bicubic_backward_impl, f64);
+interpolate_backward_typed!(interpolate_bicubic_backward_f16, interpolate_bicubic_backward_impl, f16);
+interpolate_backward_bf16!(interpolate_bicubic_backward_bf16, interpolate_bicubic_backward_f32);
 
 // ============================================================================
 // Generic implementations with rayon parallelism
