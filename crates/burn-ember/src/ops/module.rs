@@ -2,8 +2,8 @@
 //!
 //! These operations power neural network modules like convolutions and pooling.
 
-use crate::{Ember, EmberTensor, Layout};
 use crate::ops::{conv, deform_conv, interpolate, pool};
+use crate::{Ember, EmberTensor, Layout};
 use burn_backend::{
     DType, Element,
     ops::{
@@ -26,7 +26,10 @@ fn cast_to_f32<E: Element + Pod + Copy>(tensor: EmberTensor, to_f32: fn(E) -> f3
 }
 
 /// Cast a tensor from f32 back to half-precision type E.
-fn cast_from_f32<E: Element + Pod + Copy>(tensor: EmberTensor, from_f32: fn(f32) -> E) -> EmberTensor {
+fn cast_from_f32<E: Element + Pod + Copy>(
+    tensor: EmberTensor,
+    from_f32: fn(f32) -> E,
+) -> EmberTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
     let data: &[f32] = tensor.storage();
