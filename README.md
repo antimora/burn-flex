@@ -47,7 +47,7 @@ memory:
 | Conv1d            | **4.3-9.6x**       |                                         |
 | Pooling           | **1.2-3.1x**       |                                         |
 | Interpolation     | **1.2-3.6x**       | All modes: nearest, bilinear, bicubic   |
-| Reductions        | **2.2-4.3x**       | Near-zero allocation for scalar results |
+| Reductions        | **1.6-3.9x**       | Near-zero allocation for scalar results |
 | Cumulative ops    | **3.1-93x**        | 1D cumsum: 93x faster                   |
 | Gather/scatter    | **1.9-9.7x**       |                                         |
 | Unary (tanh, sin) | **1.3-2.7x**       |                                         |
