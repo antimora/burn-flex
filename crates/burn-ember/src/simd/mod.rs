@@ -1,6 +1,6 @@
 //! SIMD-optimized kernels for tensor operations.
 //!
-//! Provides portable SIMD implementations via `pulp` with automatic
+//! Provides portable SIMD implementations via `macerator` with automatic
 //! dispatch to the best available instruction set:
 //! - aarch64: NEON
 //! - x86_64: AVX2, AVX512, SSE
@@ -12,7 +12,7 @@
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
 
-// Portable SIMD kernels using pulp
+// Portable SIMD kernels using macerator
 #[cfg(feature = "simd")]
 pub mod kernels;
 

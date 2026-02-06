@@ -1,17 +1,17 @@
-//! Portable SIMD kernels using pulp.
+//! Portable SIMD kernels using macerator.
 //!
-//! These kernels work across all architectures supported by pulp:
+//! These kernels work across all architectures supported by macerator:
 //! - aarch64 (NEON)
 //! - x86_64 (AVX2, AVX512, SSE)
 //! - wasm32 (SIMD128)
 //! - Scalar fallback for embedded/other platforms
 
-use pulp::{Arch, Simd, WithSimd};
+use macerator::{Arch, Simd, WithSimd, vload_unaligned, vstore_unaligned};
 
 /// Get the architecture-specific SIMD dispatcher.
 /// This detects CPU features at runtime.
 #[inline]
-pub fn arch() -> Arch {
+fn arch() -> Arch {
     Arch::new()
 }
 
@@ -22,7 +22,7 @@ pub fn arch() -> Arch {
 /// Sum all elements in a f32 slice.
 ///
 /// Uses 8-fold unrolled loop that LLVM auto-vectorizes.
-/// This matches ndarray's approach and is faster than explicit pulp dispatch
+/// This matches ndarray's approach and is faster than explicit SIMD dispatch
 /// due to lower overhead.
 #[inline]
 pub fn sum_f32(data: &[f32]) -> f32 {
@@ -100,7 +100,7 @@ impl WithSimd for ScatterAddF32<'_> {
     type Output = ();
 
     #[inline(always)]
-    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
+    fn with_simd<S: Simd>(self) -> Self::Output {
         let Self {
             src,
             dst,
@@ -109,23 +109,28 @@ impl WithSimd for ScatterAddF32<'_> {
             src_row_stride,
         } = self;
 
-        // Process each row (sequential memory access)
+        let lanes = S::lanes32();
+
         for row in 0..num_rows {
             let row_start = row * src_row_stride;
             let row_data = &src[row_start..row_start + row_len];
 
-            // Split into SIMD chunks
-            let (src_head, src_tail) = S::as_simd_f32s(row_data);
-            let (dst_head, dst_tail) = S::as_mut_simd_f32s(dst);
+            let simd_len = row_len / lanes * lanes;
 
             // SIMD accumulate
-            for (d, s) in dst_head.iter_mut().zip(src_head.iter()) {
-                *d = simd.add_f32s(*d, *s);
+            let mut i = 0;
+            while i < simd_len {
+                unsafe {
+                    let s = vload_unaligned::<S, f32>(row_data.as_ptr().add(i));
+                    let d = vload_unaligned::<S, f32>(dst.as_ptr().add(i));
+                    vstore_unaligned::<S, f32>(dst.as_mut_ptr().add(i), d + s);
+                }
+                i += lanes;
             }
 
             // Scalar tail
-            for (d, s) in dst_tail.iter_mut().zip(src_tail.iter()) {
-                *d += *s;
+            for j in simd_len..row_len {
+                dst[j] += row_data[j];
             }
         }
     }
@@ -168,7 +173,7 @@ impl WithSimd for ScatterAddBatchedF32<'_> {
     type Output = ();
 
     #[inline(always)]
-    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
+    fn with_simd<S: Simd>(self) -> Self::Output {
         let Self {
             src,
             dst,
@@ -179,6 +184,8 @@ impl WithSimd for ScatterAddBatchedF32<'_> {
             row_stride,
         } = self;
 
+        let lanes = S::lanes32();
+
         for batch in 0..num_batches {
             let batch_src_start = batch * batch_stride;
             let batch_dst_start = batch * row_len;
@@ -188,15 +195,20 @@ impl WithSimd for ScatterAddBatchedF32<'_> {
                 let row_start = batch_src_start + row * row_stride;
                 let row_data = &src[row_start..row_start + row_len];
 
-                let (src_head, src_tail) = S::as_simd_f32s(row_data);
-                let (dst_head, dst_tail) = S::as_mut_simd_f32s(batch_dst);
+                let simd_len = row_len / lanes * lanes;
 
-                for (d, s) in dst_head.iter_mut().zip(src_head.iter()) {
-                    *d = simd.add_f32s(*d, *s);
+                let mut i = 0;
+                while i < simd_len {
+                    unsafe {
+                        let s = vload_unaligned::<S, f32>(row_data.as_ptr().add(i));
+                        let d = vload_unaligned::<S, f32>(batch_dst.as_ptr().add(i));
+                        vstore_unaligned::<S, f32>(batch_dst.as_mut_ptr().add(i), d + s);
+                    }
+                    i += lanes;
                 }
 
-                for (d, s) in dst_tail.iter_mut().zip(src_tail.iter()) {
-                    *d += *s;
+                for j in simd_len..row_len {
+                    batch_dst[j] += row_data[j];
                 }
             }
         }

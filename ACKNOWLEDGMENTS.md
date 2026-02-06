@@ -18,13 +18,13 @@ burn-ember draws on ideas and techniques from several open-source projects.
   (TILE_SIZE=512) inspired by Candle, processing output in fixed-size tiles for better L2 cache
   utilization and enabling tile-level parallelism.
 
-## gemm / pulp
+## gemm / macerator
 
-[gemm](https://github.com/sarah-ek/gemm) and [pulp](https://github.com/sarah-ek/pulp) by Sarah
-(sarah-ek), part of the [faer](https://github.com/sarah-ek/faer-rs) ecosystem.
+[gemm](https://github.com/sarah-ek/gemm) and [macerator](https://github.com/wingertge/macerator),
+part of the [faer](https://github.com/sarah-ek/faer-rs) ecosystem.
 
 - **gemm**: Powers all matrix multiplication and convolution GEMM calls (matmul, conv im2col,
   deformable conv). Provides strided memory access so we can multiply transposed tensors without
   copying, and native f16 support.
-- **pulp**: Provides portable SIMD dispatch for scatter-add reductions across NEON, AVX2, and WASM
-  SIMD128 with a scalar fallback.
+- **macerator**: Provides portable SIMD dispatch for scatter-add reductions across NEON, AVX2, and
+  WASM SIMD128 with a scalar fallback.

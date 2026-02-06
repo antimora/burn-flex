@@ -44,7 +44,7 @@ default = ["std", "simd", "rayon"]
 | Feature | Default | Description                                            |
 | ------- | ------- | ------------------------------------------------------ |
 | `std`   | Yes     | Standard library support                               |
-| `simd`  | Yes     | Portable SIMD via pulp (enables `pulp`, `aligned-vec`) |
+| `simd`  | Yes     | Portable SIMD via macerator (enables `macerator`, `aligned-vec`) |
 | `rayon` | Yes     | Parallel execution for large tensors                   |
 
 `gemm` is an always-on required dependency (not behind a feature flag).
@@ -343,20 +343,19 @@ where
 
 ### SIMD Kernels
 
-Portable SIMD via pulp, with automatic dispatch per architecture (NEON, AVX2, SSE, WASM SIMD128) and
+Portable SIMD via macerator, with automatic dispatch per architecture (NEON, AVX2, SSE, WASM SIMD128) and
 a scalar fallback module for unsupported platforms:
 
 ```rust
-use pulp::{Arch, Simd, WithSimd};
+use macerator::{Arch, Simd, WithSimd, vload_unaligned, vstore_unaligned};
 
 struct MyKernel<'a> { src: &'a [f32], dst: &'a mut [f32] }
 
 impl WithSimd for MyKernel<'_> {
     type Output = ();
-    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
-        // pulp provides platform-optimal splat, mul_add, etc.
-        let (head, tail) = S::f32s_as_simd(self.src);
-        // process SIMD lanes...
+    fn with_simd<S: Simd>(self) -> Self::Output {
+        let lanes = S::lanes32();
+        // load/store vectors, use operator overloading for arithmetic
     }
 }
 
@@ -367,7 +366,7 @@ Arch::new().dispatch(MyKernel { src, dst });
 The `simd/` module is organized as:
 
 - `neon.rs`: aarch64-specific NEON intrinsics for binary/comparison ops
-- `kernels.rs`: portable pulp-based kernels (reductions, scatter-add)
+- `kernels.rs`: portable macerator-based kernels (reductions, scatter-add)
 - `scalar.rs`: fallback for platforms without NEON
 - `aligned.rs`: SIMD-aligned memory allocation
 

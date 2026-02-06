@@ -20,7 +20,7 @@ is thread-safe by design.
   Supports groups, dilation, padding.
 - **Pooling**: Max pool, avg pool, adaptive avg pool. All via unified 3D with backward pass support.
 - **Conv Transpose**: Scatter-based transposed convolutions for upsampling.
-- **Portable SIMD**: Uses [pulp](https://crates.io/crates/pulp) for automatic dispatch:
+- **Portable SIMD**: Uses [macerator](https://crates.io/crates/macerator) for automatic dispatch:
   - aarch64: NEON
   - x86_64: AVX2, AVX512, SSE
   - wasm32: SIMD128

@@ -2,7 +2,7 @@
 //!
 //! Optimized with:
 //! - Strided iteration (no copy for non-contiguous tensors)
-//! - Portable SIMD via pulp (NEON, AVX2, SIMD128, scalar fallback)
+//! - Portable SIMD via macerator (NEON, AVX2, SIMD128, scalar fallback)
 //! - Rayon parallelism for large tensors
 
 use alloc::vec;
