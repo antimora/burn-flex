@@ -31,7 +31,6 @@ mod tensor;
 
 pub mod ops;
 
-#[cfg(feature = "simd")]
 pub mod simd;
 
 pub use backend::{Ember, EmberDevice};

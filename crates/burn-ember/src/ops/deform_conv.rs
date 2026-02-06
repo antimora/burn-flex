@@ -355,49 +355,31 @@ pub fn deform_conv2d_f32(
 /// GEMM: C = A @ B where A is [m, k], B is [k, n], result C is [m, n]
 #[inline]
 fn gemm_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    #[cfg(feature = "gemm")]
-    {
-        let mut c = vec![0.0f32; m * n];
-        unsafe {
-            gemm::gemm(
-                m,
-                n,
-                k,
-                c.as_mut_ptr(),
-                1,          // dst_cs: column stride = 1 (row-major)
-                n as isize, // dst_rs: row stride = n (row-major)
-                false,
-                a.as_ptr(),
-                1,          // lhs_cs: column stride = 1 (row-major)
-                k as isize, // lhs_rs: row stride = k (row-major)
-                b.as_ptr(),
-                1,          // rhs_cs: column stride = 1 (row-major)
-                n as isize, // rhs_rs: row stride = n (row-major)
-                0.0,        // alpha: dst = alpha*dst + beta*lhs*rhs
-                1.0,        // beta
-                false,
-                false,
-                false,
-                gemm::Parallelism::None,
-            );
-        }
-        c
+    let mut c = vec![0.0f32; m * n];
+    unsafe {
+        gemm::gemm(
+            m,
+            n,
+            k,
+            c.as_mut_ptr(),
+            1,          // dst_cs: column stride = 1 (row-major)
+            n as isize, // dst_rs: row stride = n (row-major)
+            false,
+            a.as_ptr(),
+            1,          // lhs_cs: column stride = 1 (row-major)
+            k as isize, // lhs_rs: row stride = k (row-major)
+            b.as_ptr(),
+            1,          // rhs_cs: column stride = 1 (row-major)
+            n as isize, // rhs_rs: row stride = n (row-major)
+            0.0,        // alpha: dst = alpha*dst + beta*lhs*rhs
+            1.0,        // beta
+            false,
+            false,
+            false,
+            gemm::Parallelism::None,
+        );
     }
-
-    #[cfg(not(feature = "gemm"))]
-    {
-        let mut c = vec![0.0f32; m * n];
-        for i in 0..m {
-            for j in 0..n {
-                let mut sum = 0.0f32;
-                for l in 0..k {
-                    sum += a[i * k + l] * b[l * n + j];
-                }
-                c[i * n + j] = sum;
-            }
-        }
-        c
-    }
+    c
 }
 
 /// Bilinear interpolation for sampling at fractional coordinates.
@@ -953,49 +935,31 @@ pub fn deform_conv2d_f64(
 
 #[inline]
 fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
-    #[cfg(feature = "gemm")]
-    {
-        let mut c = vec![0.0f64; m * n];
-        unsafe {
-            gemm::gemm(
-                m,
-                n,
-                k,
-                c.as_mut_ptr(),
-                1,
-                n as isize,
-                false,
-                a.as_ptr(),
-                1,
-                k as isize,
-                b.as_ptr(),
-                1,
-                n as isize,
-                0.0,
-                1.0,
-                false,
-                false,
-                false,
-                gemm::Parallelism::None,
-            );
-        }
-        c
+    let mut c = vec![0.0f64; m * n];
+    unsafe {
+        gemm::gemm(
+            m,
+            n,
+            k,
+            c.as_mut_ptr(),
+            1,
+            n as isize,
+            false,
+            a.as_ptr(),
+            1,
+            k as isize,
+            b.as_ptr(),
+            1,
+            n as isize,
+            0.0,
+            1.0,
+            false,
+            false,
+            false,
+            gemm::Parallelism::None,
+        );
     }
-
-    #[cfg(not(feature = "gemm"))]
-    {
-        let mut c = vec![0.0f64; m * n];
-        for i in 0..m {
-            for j in 0..n {
-                let mut sum = 0.0f64;
-                for l in 0..k {
-                    sum += a[i * k + l] * b[l * n + j];
-                }
-                c[i * n + j] = sum;
-            }
-        }
-        c
-    }
+    c
 }
 
 #[allow(clippy::too_many_arguments)]

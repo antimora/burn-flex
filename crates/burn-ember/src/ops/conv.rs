@@ -60,10 +60,9 @@ macro_rules! bf16_via_f32 {
     };
 }
 
-/// Generates a conv3d_1x1 function with cfg-gated gemm fast path.
+/// Generates a conv3d_1x1 function that uses the optimized gemm fast path.
 macro_rules! conv3d_1x1_typed {
     ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr) => {
-        #[cfg(feature = "gemm")]
         fn $fn_name(
             x: EmberTensor,
             weight: EmberTensor,
@@ -71,16 +70,6 @@ macro_rules! conv3d_1x1_typed {
             options: &ConvOptions<3>,
         ) -> EmberTensor {
             conv3d_1x1_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
-        }
-
-        #[cfg(not(feature = "gemm"))]
-        fn $fn_name(
-            x: EmberTensor,
-            weight: EmberTensor,
-            bias: Option<EmberTensor>,
-            options: &ConvOptions<3>,
-        ) -> EmberTensor {
-            conv3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
         }
     };
 }
@@ -626,7 +615,6 @@ fn is_1x1_conv(
 ///
 /// For 1x1 conv, im2col just transposes input to [spatial, channels] layout.
 /// We do the same transpose but avoid the full im2col kernel iteration overhead.
-#[cfg(feature = "gemm")]
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + Sync>(
     x: EmberTensor,
@@ -1350,7 +1338,6 @@ fn convert_f32_to_bf16(tensor: &EmberTensor) -> EmberTensor {
 // gemm implementations
 // ============================================================================
 
-#[cfg(feature = "gemm")]
 fn gemm_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     let mut c = vec![0.0f32; m * n];
     #[cfg(feature = "rayon")]
@@ -1387,22 +1374,6 @@ fn gemm_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     c
 }
 
-#[cfg(not(feature = "gemm"))]
-fn gemm_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    let mut c = vec![0.0f32; m * n];
-    for i in 0..m {
-        for j in 0..n {
-            let mut sum = 0.0f32;
-            for l in 0..k {
-                sum += a[i * k + l] * b[j * k + l];
-            }
-            c[i * n + j] = sum;
-        }
-    }
-    c
-}
-
-#[cfg(feature = "gemm")]
 fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
     let mut c = vec![0.0f64; m * n];
     #[cfg(feature = "rayon")]
@@ -1439,22 +1410,6 @@ fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
     c
 }
 
-#[cfg(not(feature = "gemm"))]
-fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
-    let mut c = vec![0.0f64; m * n];
-    for i in 0..m {
-        for j in 0..n {
-            let mut sum = 0.0f64;
-            for l in 0..k {
-                sum += a[i * k + l] * b[j * k + l];
-            }
-            c[i * n + j] = sum;
-        }
-    }
-    c
-}
-
-#[cfg(feature = "gemm")]
 fn gemm_f16(a: &[f16], b: &[f16], m: usize, k: usize, n: usize) -> Vec<f16> {
     let mut c = vec![f16::from_f32(0.0); m * n];
     #[cfg(feature = "rayon")]
@@ -1487,21 +1442,6 @@ fn gemm_f16(a: &[f16], b: &[f16], m: usize, k: usize, n: usize) -> Vec<f16> {
             false,
             parallelism,
         );
-    }
-    c
-}
-
-#[cfg(not(feature = "gemm"))]
-fn gemm_f16(a: &[f16], b: &[f16], m: usize, k: usize, n: usize) -> Vec<f16> {
-    let mut c = vec![f16::from_f32(0.0); m * n];
-    for i in 0..m {
-        for j in 0..n {
-            let mut sum = 0.0f32;
-            for l in 0..k {
-                sum += a[i * k + l].to_f32() * b[j * k + l].to_f32();
-            }
-            c[i * n + j] = f16::from_f32(sum);
-        }
     }
     c
 }
