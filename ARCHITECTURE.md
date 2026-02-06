@@ -365,9 +365,9 @@ Arch::new().dispatch(MyKernel { src, dst });
 
 The `simd/` module is organized as:
 
-- `neon.rs`: aarch64-specific NEON intrinsics for binary/comparison ops
-- `kernels.rs`: portable macerator-based kernels (reductions, scatter-add)
-- `scalar.rs`: fallback for platforms without NEON
+- `portable.rs`: macerator-based binary, comparison, and boolean ops (auto-dispatches to NEON/AVX2/SSE/SIMD128/scalar)
+- `kernels.rs`: macerator-based reduction kernels (sum, scatter-add)
+- `scalar.rs`: fallback for builds without the `simd` feature (bool ops only)
 - `aligned.rs`: SIMD-aligned memory allocation
 
 ### Parallel Execution
@@ -655,7 +655,7 @@ directly on strided tensors via `StridedIter`.
 | Optimization               | Benefit                             | Notes                                        |
 | -------------------------- | ----------------------------------- | -------------------------------------------- |
 | **Arc-based COW**          | O(1) clone, 2.6-4.2x faster ops     | `is_unique()` enables true in-place mutation |
-| **SIMD (NEON)**            | ~1.5-1.7x for contiguous ops        | In-place mutation avoids allocation overhead |
+| **Portable SIMD (macerator)** | ~1.5-1.7x for contiguous ops     | Auto-dispatches to NEON/AVX2/SSE/SIMD128    |
 | **Rayon parallelism**      | Scales with cores for large tensors | Threshold: 4M elements (memory-bound ops)    |
 | **Row-based 2D iteration** | 5.9x faster for transposed tensors  | Replaces per-element StridedIter             |
 | **In-place mutation**      | Eliminates allocation               | When tensor is unique and contiguous         |
@@ -667,7 +667,7 @@ directly on strided tensors via `StridedIter`.
 | **Cache blocking / loop tiling** | Requires architecture-specific tile sizes. M3 has 128KB L1, but optimal tile size varies by operation, data type, and cache hierarchy. Adds complexity without portable benefit.              |
 | **Software prefetching**         | ARM64 `_prefetch` intrinsic is unstable (requires nightly Rust). Apple Silicon has excellent hardware prefetchers that detect strided access patterns automatically. Benefit likely marginal. |
 | **Kernel fusion**                | Outside burn-ember scope. Fusion is handled at the Burn framework level via `burn-fusion`. This backend focuses on single-operation efficiency.                                               |
-| **AVX2/AVX-512 (x86_64)**        | Not yet implemented. NEON is primary target; x86 support uses scalar fallback for now.                                                                                                        |
+| **Hand-tuned intrinsics**        | Portable SIMD via macerator covers NEON/AVX2/SSE/SIMD128 with a single implementation. Hand-tuned per-arch intrinsics add maintenance burden with marginal benefit for memory-bound ops.      |
 
 ### Why Element-wise Ops are Memory-Bound
 
