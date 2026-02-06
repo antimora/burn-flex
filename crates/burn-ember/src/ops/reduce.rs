@@ -356,13 +356,10 @@ fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor
         ndims
     );
 
-    // The optimized branches use strides[dim-1] and strides[dim+1] as flat strides
-    // to iterate the outer/inner regions. This only works when each region spans at
-    // most one dimension or when the tensor is contiguous (so strides are products
-    // of trailing dimensions). For non-contiguous tensors where these assumptions
-    // break, copy to contiguous first.
-    let outer_dims = dim; // number of dimensions before `dim`
-    let inner_dims = ndims - dim - 1; // number of dimensions after `dim`
+    // Copy to contiguous only when the flattened stride assumption breaks:
+    // non-contiguous tensor with 2+ outer dims or 2+ inner dims.
+    let outer_dims = dim;
+    let inner_dims = ndims - dim - 1;
     let needs_copy = !tensor.is_contiguous() && (outer_dims > 1 || inner_dims > 1);
     let tensor = if needs_copy {
         tensor.to_contiguous()
@@ -458,8 +455,22 @@ fn reduce_dim_f32(tensor: &EmberTensor, dim: usize, op: ReduceOp) -> EmberTensor
             }
         }
         result
+    } else if tensor.is_contiguous() {
+        // Contiguous: use flat index arithmetic (safe for any ndims)
+        let mut result = Vec::with_capacity(out_size);
+        for outer in 0..outer_size.max(1) {
+            for inner in 0..inner_size.max(1) {
+                let mut acc = init;
+                for d in 0..dim_size {
+                    let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                    acc = reduce_fn(acc, data[idx]);
+                }
+                result.push(acc);
+            }
+        }
+        result
     } else {
-        // General strided case
+        // Non-contiguous with at most 1 outer + 1 inner dim (e.g., flipped 2D)
         let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
         let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
 
@@ -631,7 +642,7 @@ where
         ndims
     );
 
-    // Only copy when the flattened outer/inner stride assumption breaks:
+    // Copy to contiguous only when the flattened stride assumption breaks:
     // non-contiguous tensor with 2+ outer dims or 2+ inner dims.
     let outer_dims = dim;
     let inner_dims = ndims - dim - 1;
@@ -653,22 +664,40 @@ where
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<E> = Vec::with_capacity(out_size);
 
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
-            let mut acc = init;
-            for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
-                acc = reduce_fn(acc, data[idx]);
+    if tensor.is_contiguous() {
+        // Contiguous: use flat index arithmetic (safe for any ndims)
+        for outer in 0..outer_size.max(1) {
+            for inner in 0..inner_size.max(1) {
+                let mut acc = init;
+                for d in 0..dim_size {
+                    let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                    acc = reduce_fn(acc, data[idx]);
+                }
+                result.push(acc);
             }
-            result.push(acc);
+        }
+    } else {
+        // Non-contiguous with at most 1 outer + 1 inner dim
+        let dim_stride = strides[dim];
+        let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
+        let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+
+        for outer in 0..outer_size.max(1) {
+            for inner in 0..inner_size.max(1) {
+                let base = start_offset as isize
+                    + outer as isize * outer_stride
+                    + inner as isize * inner_stride;
+                let mut acc = init;
+                for d in 0..dim_size {
+                    let idx = (base + d as isize * dim_stride) as usize;
+                    acc = reduce_fn(acc, data[idx]);
+                }
+                result.push(acc);
+            }
         }
     }
 
@@ -687,7 +716,6 @@ where
 {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
 
     assert!(
@@ -706,19 +734,15 @@ where
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[f16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<f16> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
             let mut acc = init;
             for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 acc = reduce_fn(acc, data[idx].to_f32());
             }
             result.push(f16::from_f32(acc));
@@ -740,7 +764,6 @@ where
 {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
 
     assert!(
@@ -759,19 +782,15 @@ where
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[bf16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<bf16> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
             let mut acc = init;
             for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 acc = reduce_fn(acc, data[idx].to_f32());
             }
             result.push(bf16::from_f32(acc));
@@ -838,7 +857,6 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
 ) -> EmberTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
 
     assert!(
@@ -857,21 +875,17 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<i64> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
             let mut max_idx: i64 = 0;
             let mut max_val: Option<E> = None;
 
             for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
                 if max_val.is_none() || val > max_val.unwrap() {
                     max_val = Some(val);
@@ -893,7 +907,6 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
 fn argmax_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
 
     assert!(dim < ndims);
@@ -907,21 +920,17 @@ fn argmax_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[f16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<i64> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
             let mut max_idx: i64 = 0;
             let mut max_val: Option<f32> = None;
 
             for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx].to_f32();
                 if max_val.is_none() || val > max_val.unwrap() {
                     max_val = Some(val);
@@ -943,7 +952,6 @@ fn argmax_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
 fn argmax_bf16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
 
     assert!(dim < ndims);
@@ -957,21 +965,17 @@ fn argmax_bf16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[bf16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<i64> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
             let mut max_idx: i64 = 0;
             let mut max_val: Option<f32> = None;
 
             for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx].to_f32();
                 if max_val.is_none() || val > max_val.unwrap() {
                     max_val = Some(val);
@@ -996,7 +1000,6 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
 ) -> EmberTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
 
     assert!(
@@ -1015,21 +1018,17 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<i64> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
             let mut min_idx: i64 = 0;
             let mut min_val: Option<E> = None;
 
             for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
                 if min_val.is_none() || val < min_val.unwrap() {
                     min_val = Some(val);
@@ -1051,7 +1050,6 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
 fn argmin_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
 
     assert!(dim < ndims);
@@ -1065,21 +1063,17 @@ fn argmin_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[f16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<i64> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
             let mut min_idx: i64 = 0;
             let mut min_val: Option<f32> = None;
 
             for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx].to_f32();
                 if min_val.is_none() || val < min_val.unwrap() {
                     min_val = Some(val);
@@ -1101,7 +1095,6 @@ fn argmin_f16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
 fn argmin_bf16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
-    let strides = tensor.layout().strides();
     let ndims = shape.num_dims();
 
     assert!(dim < ndims);
@@ -1115,21 +1108,17 @@ fn argmin_bf16(tensor: &EmberTensor, dim: usize) -> EmberTensor {
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
 
     let data: &[bf16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset() as isize;
-    let dim_stride = strides[dim];
-    let outer_stride: isize = if dim > 0 { strides[dim - 1] } else { 0 };
-    let inner_stride: isize = if dim + 1 < ndims { strides[dim + 1] } else { 1 };
+    let start_offset = tensor.layout().start_offset();
 
     let mut result: Vec<i64> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let base = start_offset + outer as isize * outer_stride + inner as isize * inner_stride;
             let mut min_idx: i64 = 0;
             let mut min_val: Option<f32> = None;
 
             for d in 0..dim_size {
-                let idx = (base + d as isize * dim_stride) as usize;
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx].to_f32();
                 if min_val.is_none() || val < min_val.unwrap() {
                     min_val = Some(val);
@@ -1528,6 +1517,47 @@ mod tests {
         let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
         for &v in &values {
             assert!(v >= 0 && v < 5, "argmin index out of range: {v}");
+        }
+    }
+
+    // Regression: 4D tensor reducing a middle dim (YOLOv8n crash)
+    #[test]
+    fn test_argmax_4d_middle_dim() {
+        // Shape [1, 84, 80, 80], argmax dim=1
+        // inner_size = 80*80 = 6400, old code used strides[2]=80 causing OOB
+        let n = 1 * 84 * 80 * 80;
+        let data: Vec<f32> = (0..n).map(|i| (i % 84) as f32).collect();
+        let tensor = EmberTensor::from_data(TensorData::new(data, [1, 84, 80, 80]));
+
+        let result = argmax(tensor, 1);
+        assert_eq!(result.layout().shape().dims, vec![1, 1, 80, 80]);
+
+        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert_eq!(values.len(), 6400);
+        for &v in &values {
+            assert!(v >= 0 && v < 84, "argmax index out of range: {v}");
+        }
+    }
+
+    #[test]
+    fn test_sum_dim_4d_middle_dim() {
+        // Shape [1, 84, 80, 80], sum_dim dim=1
+        // Fill with 1.0 so every output position should sum to 84.0
+        let shape = [1, 84, 80, 80];
+        let n: usize = shape.iter().product();
+        let data: Vec<f32> = vec![1.0; n];
+        let tensor = EmberTensor::from_data(TensorData::new(data, shape));
+
+        let result = sum_dim(tensor, 1);
+        assert_eq!(result.layout().shape().dims, vec![1, 1, 80, 80]);
+
+        let values: Vec<f32> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert_eq!(values.len(), 6400);
+        for (i, &v) in values.iter().enumerate() {
+            assert!(
+                (v - 84.0).abs() < 1e-4,
+                "sum_dim mismatch at position {i}: got {v}, expected 84.0"
+            );
         }
     }
 
