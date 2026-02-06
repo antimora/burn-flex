@@ -233,10 +233,18 @@ impl FloatTensorOps<Ember> for Ember {
         value: FloatTensor<Ember>,
     ) -> FloatTensor<Ember> {
         match tensor.dtype() {
-            DType::F32 => crate::ops::gather_scatter::scatter_add::<f32>(tensor, dim, indices, value),
-            DType::F64 => crate::ops::gather_scatter::scatter_add::<f64>(tensor, dim, indices, value),
-            DType::F16 => crate::ops::gather_scatter::scatter_add::<f16>(tensor, dim, indices, value),
-            DType::BF16 => crate::ops::gather_scatter::scatter_add::<bf16>(tensor, dim, indices, value),
+            DType::F32 => {
+                crate::ops::gather_scatter::scatter_add::<f32>(tensor, dim, indices, value)
+            }
+            DType::F64 => {
+                crate::ops::gather_scatter::scatter_add::<f64>(tensor, dim, indices, value)
+            }
+            DType::F16 => {
+                crate::ops::gather_scatter::scatter_add::<f16>(tensor, dim, indices, value)
+            }
+            DType::BF16 => {
+                crate::ops::gather_scatter::scatter_add::<bf16>(tensor, dim, indices, value)
+            }
             _ => panic!("float_scatter_add: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -262,10 +270,18 @@ impl FloatTensorOps<Ember> for Ember {
         value: FloatTensor<Ember>,
     ) -> FloatTensor<Ember> {
         match tensor.dtype() {
-            DType::F32 => crate::ops::gather_scatter::select_add::<f32>(tensor, dim, indices, value),
-            DType::F64 => crate::ops::gather_scatter::select_add::<f64>(tensor, dim, indices, value),
-            DType::F16 => crate::ops::gather_scatter::select_add::<f16>(tensor, dim, indices, value),
-            DType::BF16 => crate::ops::gather_scatter::select_add::<bf16>(tensor, dim, indices, value),
+            DType::F32 => {
+                crate::ops::gather_scatter::select_add::<f32>(tensor, dim, indices, value)
+            }
+            DType::F64 => {
+                crate::ops::gather_scatter::select_add::<f64>(tensor, dim, indices, value)
+            }
+            DType::F16 => {
+                crate::ops::gather_scatter::select_add::<f16>(tensor, dim, indices, value)
+            }
+            DType::BF16 => {
+                crate::ops::gather_scatter::select_add::<bf16>(tensor, dim, indices, value)
+            }
             _ => panic!("float_select_add: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -492,8 +508,12 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::cumulative::cumsum_f32(tensor, dim),
             DType::F64 => crate::ops::cumulative::cumsum_f64(tensor, dim),
-            DType::F16 => crate::ops::cumulative::cumsum_half(tensor, dim, f16::to_f32, f16::from_f32),
-            DType::BF16 => crate::ops::cumulative::cumsum_half(tensor, dim, bf16::to_f32, bf16::from_f32),
+            DType::F16 => {
+                crate::ops::cumulative::cumsum_half(tensor, dim, f16::to_f32, f16::from_f32)
+            }
+            DType::BF16 => {
+                crate::ops::cumulative::cumsum_half(tensor, dim, bf16::to_f32, bf16::from_f32)
+            }
             _ => panic!("float_cumsum: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -502,8 +522,12 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::cumulative::cumprod_f32(tensor, dim),
             DType::F64 => crate::ops::cumulative::cumprod_f64(tensor, dim),
-            DType::F16 => crate::ops::cumulative::cumprod_half(tensor, dim, f16::to_f32, f16::from_f32),
-            DType::BF16 => crate::ops::cumulative::cumprod_half(tensor, dim, bf16::to_f32, bf16::from_f32),
+            DType::F16 => {
+                crate::ops::cumulative::cumprod_half(tensor, dim, f16::to_f32, f16::from_f32)
+            }
+            DType::BF16 => {
+                crate::ops::cumulative::cumprod_half(tensor, dim, bf16::to_f32, bf16::from_f32)
+            }
             _ => panic!("float_cumprod: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -512,8 +536,12 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::cumulative::cummin_f32(tensor, dim),
             DType::F64 => crate::ops::cumulative::cummin_f64(tensor, dim),
-            DType::F16 => crate::ops::cumulative::cummin_half(tensor, dim, f16::to_f32, f16::from_f32),
-            DType::BF16 => crate::ops::cumulative::cummin_half(tensor, dim, bf16::to_f32, bf16::from_f32),
+            DType::F16 => {
+                crate::ops::cumulative::cummin_half(tensor, dim, f16::to_f32, f16::from_f32)
+            }
+            DType::BF16 => {
+                crate::ops::cumulative::cummin_half(tensor, dim, bf16::to_f32, bf16::from_f32)
+            }
             _ => panic!("float_cummin: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -522,8 +550,12 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::cumulative::cummax_f32(tensor, dim),
             DType::F64 => crate::ops::cumulative::cummax_f64(tensor, dim),
-            DType::F16 => crate::ops::cumulative::cummax_half(tensor, dim, f16::to_f32, f16::from_f32),
-            DType::BF16 => crate::ops::cumulative::cummax_half(tensor, dim, bf16::to_f32, bf16::from_f32),
+            DType::F16 => {
+                crate::ops::cumulative::cummax_half(tensor, dim, f16::to_f32, f16::from_f32)
+            }
+            DType::BF16 => {
+                crate::ops::cumulative::cummax_half(tensor, dim, bf16::to_f32, bf16::from_f32)
+            }
             _ => panic!("float_cummax: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -715,6 +747,7 @@ impl FloatTensorOps<Ember> for Ember {
 
 #[cfg(test)]
 mod tests {
+    use burn_backend::Tolerance;
     use burn_tensor::{Tensor, TensorData};
 
     use crate::Ember;
@@ -783,22 +816,13 @@ mod tests {
         assert_eq!(data, TensorData::from([3.0f32, 6.0, 9.0]));
     }
 
-    fn assert_approx(result: TensorData, expected: &[f32], tol: f32) {
-        let actual: Vec<f32> = result.to_vec().unwrap();
-        assert_eq!(actual.len(), expected.len());
-        for (a, e) in actual.iter().zip(expected) {
-            assert!((a - e).abs() < tol, "got {}, expected {}", a, e);
-        }
-    }
-
     #[test]
     fn test_exp_tensor_api() {
+        let e = std::f32::consts::E;
         let t: Tensor<Ember, 1> = Tensor::from_data([0.0f32, 1.0, 2.0], &Default::default());
-        let result = t.exp().into_data();
-        assert_approx(
-            result,
-            &[1.0, std::f32::consts::E, std::f32::consts::E.powi(2)],
-            1e-5,
+        t.exp().into_data().assert_approx_eq::<f32>(
+            &TensorData::from([1.0, e, e.powi(2)]),
+            Tolerance::absolute(1e-5),
         );
     }
 
@@ -806,57 +830,75 @@ mod tests {
     fn test_log_tensor_api() {
         let t: Tensor<Ember, 1> =
             Tensor::from_data([1.0f32, std::f32::consts::E], &Default::default());
-        let result = t.log().into_data();
-        assert_approx(result, &[0.0, 1.0], 1e-5);
+        t.log()
+            .into_data()
+            .assert_approx_eq::<f32>(&TensorData::from([0.0, 1.0]), Tolerance::absolute(1e-5));
     }
 
     #[test]
     fn test_sqrt_tensor_api() {
         let t: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 4.0, 9.0], &Default::default());
-        let result = t.sqrt().into_data();
-        assert_approx(result, &[1.0, 2.0, 3.0], 1e-5);
+        t.sqrt().into_data().assert_approx_eq::<f32>(
+            &TensorData::from([1.0, 2.0, 3.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_abs_tensor_api() {
         let t: Tensor<Ember, 1> = Tensor::from_data([-3.0f32, -1.0, 0.0, 1.0], &Default::default());
-        let result = t.abs().into_data();
-        assert_approx(result, &[3.0, 1.0, 0.0, 1.0], 1e-5);
+        t.abs().into_data().assert_approx_eq::<f32>(
+            &TensorData::from([3.0, 1.0, 0.0, 1.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_sin_cos_tensor_api() {
         let t: Tensor<Ember, 1> =
             Tensor::from_data([0.0f32, std::f32::consts::FRAC_PI_2], &Default::default());
-        let sin_result = t.clone().sin().into_data();
-        let cos_result = t.cos().into_data();
-        assert_approx(sin_result, &[0.0, 1.0], 1e-5);
-        assert_approx(cos_result, &[1.0, 0.0], 1e-5);
+        t.clone()
+            .sin()
+            .into_data()
+            .assert_approx_eq::<f32>(&TensorData::from([0.0, 1.0]), Tolerance::absolute(1e-5));
+        t.cos()
+            .into_data()
+            .assert_approx_eq::<f32>(&TensorData::from([1.0, 0.0]), Tolerance::absolute(1e-5));
     }
 
     #[test]
     fn test_tanh_tensor_api() {
         let t: Tensor<Ember, 1> = Tensor::from_data([0.0f32, 1.0], &Default::default());
-        let result = t.tanh().into_data();
-        assert_approx(result, &[0.0, 1.0f32.tanh()], 1e-5);
+        t.tanh().into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.0, 1.0f32.tanh()]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_recip_tensor_api() {
         let t: Tensor<Ember, 1> = Tensor::from_data([1.0f32, 2.0, 4.0], &Default::default());
-        let result = t.recip().into_data();
-        assert_approx(result, &[1.0, 0.5, 0.25], 1e-5);
+        t.recip().into_data().assert_approx_eq::<f32>(
+            &TensorData::from([1.0, 0.5, 0.25]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_floor_ceil_round_tensor_api() {
         let t: Tensor<Ember, 1> = Tensor::from_data([1.3f32, 1.7, -1.3, -1.7], &Default::default());
-        let floor_result = t.clone().floor().into_data();
-        let ceil_result = t.clone().ceil().into_data();
-        let round_result = t.round().into_data();
-        assert_approx(floor_result, &[1.0, 1.0, -2.0, -2.0], 1e-5);
-        assert_approx(ceil_result, &[2.0, 2.0, -1.0, -1.0], 1e-5);
-        assert_approx(round_result, &[1.0, 2.0, -1.0, -2.0], 1e-5);
+        t.clone().floor().into_data().assert_approx_eq::<f32>(
+            &TensorData::from([1.0, 1.0, -2.0, -2.0]),
+            Tolerance::absolute(1e-5),
+        );
+        t.clone().ceil().into_data().assert_approx_eq::<f32>(
+            &TensorData::from([2.0, 2.0, -1.0, -1.0]),
+            Tolerance::absolute(1e-5),
+        );
+        t.round().into_data().assert_approx_eq::<f32>(
+            &TensorData::from([1.0, 2.0, -1.0, -2.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]

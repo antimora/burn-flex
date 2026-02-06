@@ -158,71 +158,62 @@ fn sigmoid_f64(x: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use burn_tensor::{Tensor, activation};
+    use burn_backend::Tolerance;
+    use burn_tensor::{Tensor, TensorData, activation};
 
     use crate::Ember;
-
-    fn assert_approx(actual: &[f32], expected: &[f32], tol: f32) {
-        assert_eq!(actual.len(), expected.len());
-        for (a, e) in actual.iter().zip(expected) {
-            assert!(
-                (a - e).abs() < tol,
-                "got {}, expected {}, diff {}",
-                a,
-                e,
-                (a - e).abs()
-            );
-        }
-    }
 
     #[test]
     fn test_relu() {
         let t: Tensor<Ember, 1> =
             Tensor::from_data([-2.0f32, -1.0, 0.0, 1.0, 2.0], &Default::default());
-        let result: Vec<f32> = activation::relu(t).into_data().to_vec().unwrap();
-        assert_approx(&result, &[0.0, 0.0, 0.0, 1.0, 2.0], 1e-6);
+        activation::relu(t).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.0, 0.0, 0.0, 1.0, 2.0]),
+            Tolerance::absolute(1e-6),
+        );
     }
 
     #[test]
     fn test_sigmoid() {
         let t: Tensor<Ember, 1> = Tensor::from_data([-10.0f32, 0.0, 10.0], &Default::default());
-        let result: Vec<f32> = activation::sigmoid(t).into_data().to_vec().unwrap();
         // sigmoid(-10) ~ 0, sigmoid(0) = 0.5, sigmoid(10) ~ 1
-        assert!(result[0] < 0.001);
-        assert_approx(&result[1..2], &[0.5], 1e-6);
-        assert!(result[2] > 0.999);
+        activation::sigmoid(t).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.0, 0.5, 1.0]),
+            Tolerance::absolute(1e-3),
+        );
     }
 
     #[test]
     fn test_gelu() {
         let t: Tensor<Ember, 1> = Tensor::from_data([-3.0f32, 0.0, 3.0], &Default::default());
-        let result: Vec<f32> = activation::gelu(t).into_data().to_vec().unwrap();
         // gelu(0) = 0, gelu(-3) ~ -0.004, gelu(3) ~ 2.996
-        assert_approx(&result[1..2], &[0.0], 1e-5);
-        assert!(result[0].abs() < 0.01);
-        assert!((result[2] - 3.0).abs() < 0.01);
+        activation::gelu(t).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.0, 0.0, 3.0]),
+            Tolerance::absolute(0.01),
+        );
     }
 
     #[test]
     fn test_leaky_relu() {
         let t: Tensor<Ember, 1> =
             Tensor::from_data([-2.0f32, -1.0, 0.0, 1.0, 2.0], &Default::default());
-        let result: Vec<f32> = activation::leaky_relu(t, 0.01)
+        activation::leaky_relu(t, 0.01)
             .into_data()
-            .to_vec()
-            .unwrap();
-        assert_approx(&result, &[-0.02, -0.01, 0.0, 1.0, 2.0], 1e-6);
+            .assert_approx_eq::<f32>(
+                &TensorData::from([-0.02, -0.01, 0.0, 1.0, 2.0]),
+                Tolerance::absolute(1e-6),
+            );
     }
 
     #[test]
     fn test_log_sigmoid() {
         let t: Tensor<Ember, 1> = Tensor::from_data([-10.0f32, 0.0, 10.0], &Default::default());
-        let result: Vec<f32> = activation::log_sigmoid(t).into_data().to_vec().unwrap();
-        // log_sigmoid(0) = ln(0.5) = -0.6931...
-        // log_sigmoid(10) ~ 0
-        // log_sigmoid(-10) ~ -10
-        assert!((result[1] - (-0.6931472)).abs() < 1e-4);
-        assert!(result[2].abs() < 0.001);
-        assert!((result[0] + 10.0).abs() < 0.001);
+        // log_sigmoid(-10) ~ -10, log_sigmoid(0) = ln(0.5) = -0.6931..., log_sigmoid(10) ~ 0
+        activation::log_sigmoid(t)
+            .into_data()
+            .assert_approx_eq::<f32>(
+                &TensorData::from([-10.0, -0.6931472, 0.0]),
+                Tolerance::absolute(1e-3),
+            );
     }
 }

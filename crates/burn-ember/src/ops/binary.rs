@@ -352,7 +352,7 @@ where
 mod tests {
     use super::*;
     use alloc::vec;
-    use burn_backend::TensorData;
+    use burn_backend::{TensorData, Tolerance};
 
     // ===================
     // Binary ops: f32
@@ -650,16 +650,14 @@ mod tests {
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
 
         let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
-        let data = result.into_data();
-        let result_slice = data.as_slice::<f16>().unwrap();
-
         let expected: Vec<f16> = vec![6.0, 8.0, 10.0, 12.0]
             .into_iter()
             .map(f16::from_f32)
             .collect();
-        for (r, e) in result_slice.iter().zip(expected.iter()) {
-            assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
-        }
+        result.into_data().assert_approx_eq::<f16>(
+            &TensorData::new(expected, vec![2, 2]),
+            Tolerance::absolute(f16::from_f32(0.01)),
+        );
     }
 
     #[test]
@@ -677,16 +675,14 @@ mod tests {
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
 
         let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
-        let data = result.into_data();
-        let result_slice = data.as_slice::<f16>().unwrap();
-
         let expected: Vec<f16> = vec![2.0, 6.0, 12.0, 20.0]
             .into_iter()
             .map(f16::from_f32)
             .collect();
-        for (r, e) in result_slice.iter().zip(expected.iter()) {
-            assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
-        }
+        result.into_data().assert_approx_eq::<f16>(
+            &TensorData::new(expected, vec![2, 2]),
+            Tolerance::absolute(f16::from_f32(0.01)),
+        );
     }
 
     #[test]
@@ -703,19 +699,17 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2])).transpose(0, 1);
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2])).transpose(0, 1);
 
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
-        let data = result.into_data();
-        let result_slice = data.as_slice::<f16>().unwrap();
-
         // a_t = [[1,3], [2,4]], b_t = [[10,30], [20,40]]
         // result = [[11,33], [22,44]]
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
         let expected: Vec<f16> = vec![11.0, 33.0, 22.0, 44.0]
             .into_iter()
             .map(f16::from_f32)
             .collect();
-        for (r, e) in result_slice.iter().zip(expected.iter()) {
-            assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
-        }
+        result.into_data().assert_approx_eq::<f16>(
+            &TensorData::new(expected, vec![2, 2]),
+            Tolerance::absolute(f16::from_f32(0.1)),
+        );
     }
 
     #[test]
@@ -724,16 +718,14 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![3]));
 
         let result = scalar_op(a, 10.0, |x, y| x + y, |x, y| x + y);
-        let data = result.into_data();
-        let result_slice = data.as_slice::<f16>().unwrap();
-
         let expected: Vec<f16> = vec![11.0, 12.0, 13.0]
             .into_iter()
             .map(f16::from_f32)
             .collect();
-        for (r, e) in result_slice.iter().zip(expected.iter()) {
-            assert!((r.to_f32() - e.to_f32()).abs() < 0.01);
-        }
+        result.into_data().assert_approx_eq::<f16>(
+            &TensorData::new(expected, vec![3]),
+            Tolerance::absolute(f16::from_f32(0.01)),
+        );
     }
 
     // ===================
@@ -755,16 +747,14 @@ mod tests {
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
 
         let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
-        let data = result.into_data();
-        let result_slice = data.as_slice::<bf16>().unwrap();
-
         let expected: Vec<bf16> = vec![6.0, 8.0, 10.0, 12.0]
             .into_iter()
             .map(bf16::from_f32)
             .collect();
-        for (r, e) in result_slice.iter().zip(expected.iter()) {
-            assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
-        }
+        result.into_data().assert_approx_eq::<bf16>(
+            &TensorData::new(expected, vec![2, 2]),
+            Tolerance::absolute(bf16::from_f32(0.1)),
+        );
     }
 
     #[test]
@@ -782,16 +772,14 @@ mod tests {
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
 
         let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
-        let data = result.into_data();
-        let result_slice = data.as_slice::<bf16>().unwrap();
-
         let expected: Vec<bf16> = vec![2.0, 6.0, 12.0, 20.0]
             .into_iter()
             .map(bf16::from_f32)
             .collect();
-        for (r, e) in result_slice.iter().zip(expected.iter()) {
-            assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
-        }
+        result.into_data().assert_approx_eq::<bf16>(
+            &TensorData::new(expected, vec![2, 2]),
+            Tolerance::absolute(bf16::from_f32(0.1)),
+        );
     }
 
     #[test]
@@ -808,17 +796,17 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2])).transpose(0, 1);
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2])).transpose(0, 1);
 
+        // a_t = [[1,3], [2,4]], b_t = [[10,30], [20,40]]
+        // result = [[11,33], [22,44]]
         let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
-        let data = result.into_data();
-        let result_slice = data.as_slice::<bf16>().unwrap();
-
         let expected: Vec<bf16> = vec![11.0, 33.0, 22.0, 44.0]
             .into_iter()
             .map(bf16::from_f32)
             .collect();
-        for (r, e) in result_slice.iter().zip(expected.iter()) {
-            assert!((r.to_f32() - e.to_f32()).abs() < 0.5);
-        }
+        result.into_data().assert_approx_eq::<bf16>(
+            &TensorData::new(expected, vec![2, 2]),
+            Tolerance::absolute(bf16::from_f32(0.5)),
+        );
     }
 
     #[test]
@@ -830,15 +818,13 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![3]));
 
         let result = scalar_op(a, 10.0, |x, y| x + y, |x, y| x + y);
-        let data = result.into_data();
-        let result_slice = data.as_slice::<bf16>().unwrap();
-
         let expected: Vec<bf16> = vec![11.0, 12.0, 13.0]
             .into_iter()
             .map(bf16::from_f32)
             .collect();
-        for (r, e) in result_slice.iter().zip(expected.iter()) {
-            assert!((r.to_f32() - e.to_f32()).abs() < 0.1);
-        }
+        result.into_data().assert_approx_eq::<bf16>(
+            &TensorData::new(expected, vec![3]),
+            Tolerance::absolute(bf16::from_f32(0.1)),
+        );
     }
 }

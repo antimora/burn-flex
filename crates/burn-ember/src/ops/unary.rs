@@ -313,35 +313,21 @@ pub fn erf_f64(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_backend::TensorData;
+    use burn_backend::{TensorData, Tolerance};
 
     fn tensor_from_vec(data: Vec<f32>) -> EmberTensor {
         let shape = burn_std::Shape::from(vec![data.len()]);
         EmberTensor::from_data(TensorData::new(data, shape.dims.clone()))
     }
 
-    fn assert_approx_eq(result: &[f32], expected: &[f32], tol: f32) {
-        assert_eq!(result.len(), expected.len());
-        for (r, e) in result.iter().zip(expected.iter()) {
-            assert!(
-                (r - e).abs() < tol,
-                "got {}, expected {}, diff {}",
-                r,
-                e,
-                (r - e).abs()
-            );
-        }
-    }
-
     #[test]
     fn test_exp() {
         let tensor = tensor_from_vec(vec![0.0, 1.0, 2.0]);
         let result = exp(tensor);
-        let data: &[f32] = result.storage();
-        assert_approx_eq(
-            data,
-            &[1.0, std::f32::consts::E, std::f32::consts::E.powi(2)],
-            1e-5,
+        let e = std::f32::consts::E;
+        result.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([1.0, e, e.powi(2)]),
+            Tolerance::absolute(1e-5),
         );
     }
 
@@ -349,46 +335,55 @@ mod tests {
     fn test_log() {
         let tensor = tensor_from_vec(vec![1.0, std::f32::consts::E, std::f32::consts::E.powi(2)]);
         let result = log(tensor);
-        let data: &[f32] = result.storage();
-        assert_approx_eq(data, &[0.0, 1.0, 2.0], 1e-5);
+        result.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.0, 1.0, 2.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_sqrt() {
         let tensor = tensor_from_vec(vec![0.0, 1.0, 4.0, 9.0]);
         let result = sqrt(tensor);
-        let data: &[f32] = result.storage();
-        assert_approx_eq(data, &[0.0, 1.0, 2.0, 3.0], 1e-5);
+        result.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.0, 1.0, 2.0, 3.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_abs() {
         let tensor = tensor_from_vec(vec![-3.0, -1.0, 0.0, 1.0, 3.0]);
         let result = abs(tensor);
-        let data: &[f32] = result.storage();
-        assert_approx_eq(data, &[3.0, 1.0, 0.0, 1.0, 3.0], 1e-5);
+        result.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([3.0, 1.0, 0.0, 1.0, 3.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_sin_cos() {
         let tensor = tensor_from_vec(vec![0.0, std::f32::consts::FRAC_PI_2, std::f32::consts::PI]);
 
-        let sin_result = sin(tensor.clone());
-        let sin_data: &[f32] = sin_result.storage();
-        assert_approx_eq(sin_data, &[0.0, 1.0, 0.0], 1e-5);
+        sin(tensor.clone()).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.0, 1.0, 0.0]),
+            Tolerance::absolute(1e-5),
+        );
 
-        let cos_result = cos(tensor);
-        let cos_data: &[f32] = cos_result.storage();
-        assert_approx_eq(cos_data, &[1.0, 0.0, -1.0], 1e-5);
+        cos(tensor).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([1.0, 0.0, -1.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_tanh() {
         let tensor = tensor_from_vec(vec![-2.0, 0.0, 2.0]);
         let result = tanh(tensor);
-        let data: &[f32] = result.storage();
-        let expected: Vec<f32> = vec![-2.0f32.tanh(), 0.0, 2.0f32.tanh()];
-        assert_approx_eq(data, &expected, 1e-5);
+        result.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([(-2.0f32).tanh(), 0.0, 2.0f32.tanh()]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
@@ -396,26 +391,31 @@ mod tests {
         let tensor = tensor_from_vec(vec![-1.5, -0.5, 0.5, 1.5]);
 
         // Banker's rounding (ties to even): -0.5 -> 0, 0.5 -> 0, -1.5 -> -2, 1.5 -> 2
-        let round_result = round(tensor.clone());
-        let round_data: &[f32] = round_result.storage();
-        assert_approx_eq(round_data, &[-2.0, 0.0, 0.0, 2.0], 1e-5);
+        round(tensor.clone()).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([-2.0, 0.0, 0.0, 2.0]),
+            Tolerance::absolute(1e-5),
+        );
 
-        let floor_result = floor(tensor.clone());
-        let floor_data: &[f32] = floor_result.storage();
-        assert_approx_eq(floor_data, &[-2.0, -1.0, 0.0, 1.0], 1e-5);
+        floor(tensor.clone()).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([-2.0, -1.0, 0.0, 1.0]),
+            Tolerance::absolute(1e-5),
+        );
 
-        let ceil_result = ceil(tensor);
-        let ceil_data: &[f32] = ceil_result.storage();
-        assert_approx_eq(ceil_data, &[-1.0, 0.0, 1.0, 2.0], 1e-5);
+        ceil(tensor).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([-1.0, 0.0, 1.0, 2.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
     fn test_erf() {
         let tensor = tensor_from_vec(vec![0.0, 0.5, 1.0, 2.0]);
         let result = erf(tensor);
-        let data: &[f32] = result.storage();
         // Expected values from standard erf tables
-        assert_approx_eq(data, &[0.0, 0.5205, 0.8427, 0.9953], 1e-3);
+        result.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.0, 0.5205, 0.8427, 0.9953]),
+            Tolerance::absolute(1e-3),
+        );
     }
 
     // === Non-contiguous tensor tests ===
@@ -432,11 +432,12 @@ mod tests {
         let transposed = tensor.transpose(0, 1);
         assert!(!transposed.is_contiguous());
 
-        let result = exp(transposed);
-        let data: Vec<f32> = result.into_data().to_vec().unwrap();
-        // exp([0, 2, 1, 3]) = [1.0, e^2, e, e^3]
         let e = std::f32::consts::E;
-        assert_approx_eq(&data, &[1.0, e * e, e, e * e * e], 1e-5);
+        // exp([0, 2, 1, 3]) = [1.0, e^2, e, e^3]
+        exp(transposed).into_data().assert_approx_eq::<f32>(
+            &TensorData::new(vec![1.0, e * e, e, e * e * e], vec![2, 2]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
@@ -447,9 +448,10 @@ mod tests {
         let narrowed = tensor.narrow(0, 1, 4);
         assert!(!narrowed.is_contiguous() || narrowed.layout().start_offset() != 0);
 
-        let result = sqrt(narrowed);
-        let data: Vec<f32> = result.into_data().to_vec().unwrap();
-        assert_approx_eq(&data, &[2.0, 3.0, 4.0, 5.0], 1e-5);
+        sqrt(narrowed).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([2.0, 3.0, 4.0, 5.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
@@ -462,10 +464,11 @@ mod tests {
         // Verify it's using negative strides (zero-copy)
         assert!(flipped.layout().strides()[0] < 0);
 
-        let result = abs(flipped);
-        let data: Vec<f32> = result.into_data().to_vec().unwrap();
         // abs([-4, 3, -2, 1]) = [4, 3, 2, 1]
-        assert_approx_eq(&data, &[4.0, 3.0, 2.0, 1.0], 1e-5);
+        abs(flipped).into_data().assert_approx_eq::<f32>(
+            &TensorData::from([4.0, 3.0, 2.0, 1.0]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
@@ -478,10 +481,11 @@ mod tests {
         // Axis 0 stride should be negative
         assert!(flipped.layout().strides()[0] < 0);
 
-        let result = sqrt(flipped);
-        let data: Vec<f32> = result.into_data().to_vec().unwrap();
         // sqrt([[9, 16], [1, 4]]) = [[3, 4], [1, 2]]
-        assert_approx_eq(&data, &[3.0, 4.0, 1.0, 2.0], 1e-5);
+        sqrt(flipped).into_data().assert_approx_eq::<f32>(
+            &TensorData::new(vec![3.0, 4.0, 1.0, 2.0], vec![2, 2]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
@@ -495,10 +499,11 @@ mod tests {
         // Axis 1 stride should be negative
         assert!(flipped.layout().strides()[1] < 0);
 
-        let result = cos(flipped);
-        let data: Vec<f32> = result.into_data().to_vec().unwrap();
         // cos([[pi, 0], [3pi/2, pi/2]]) = [[-1, 1], [0, 0]]
-        assert_approx_eq(&data, &[-1.0, 1.0, 0.0, 0.0], 1e-5);
+        cos(flipped).into_data().assert_approx_eq::<f32>(
+            &TensorData::new(vec![-1.0, 1.0, 0.0, 0.0], vec![2, 2]),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]
@@ -533,17 +538,17 @@ mod tests {
         assert_eq!(sliced.layout().strides()[1], 2); // stride=2 on last dim
 
         // Verify the sliced data is correct before applying sin
-        let sliced_data: Vec<f32> = sliced.clone().into_data().to_vec().unwrap();
-        assert_approx_eq(&sliced_data, &[0.0, 2.0, 4.0, 6.0], 1e-6);
+        sliced.clone().into_data().assert_approx_eq::<f32>(
+            &TensorData::new(vec![0.0, 2.0, 4.0, 6.0], vec![1, 4]),
+            Tolerance::absolute(1e-6),
+        );
 
         // Apply sin to the step-sliced tensor
-        let result = sin(sliced);
-        let data: Vec<f32> = result.into_data().to_vec().unwrap();
-        let expected: Vec<f32> = vec![0.0f32, 2.0, 4.0, 6.0]
-            .iter()
-            .map(|x| x.sin())
-            .collect();
-        assert_approx_eq(&data, &expected, 1e-6);
+        let expected: Vec<f32> = [0.0f32, 2.0, 4.0, 6.0].iter().map(|x| x.sin()).collect();
+        sin(sliced).into_data().assert_approx_eq::<f32>(
+            &TensorData::new(expected, vec![1, 4]),
+            Tolerance::absolute(1e-6),
+        );
     }
 
     #[test]
@@ -575,20 +580,20 @@ mod tests {
         );
         assert_eq!(sliced.layout().shape().dims, &[1, 2, 3]);
 
-        let sliced_data: Vec<f32> = sliced.clone().into_data().to_vec().unwrap();
-        // Even indices: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0] -> [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
-        // Wait, original is [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5]
-        // shape [1, 2, 6]: row0 = [0, 0.5, 1.0, 1.5, 2.0, 2.5], row1 = [3.0, 3.5, 4.0, 4.5, 5.0, 5.5]
-        // step-2 on last: row0 = [0, 1.0, 2.0], row1 = [3.0, 4.0, 5.0]
-        assert_approx_eq(&sliced_data, &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0], 1e-6);
+        // Even indices from each row: row0 = [0, 1.0, 2.0], row1 = [3.0, 4.0, 5.0]
+        sliced.clone().into_data().assert_approx_eq::<f32>(
+            &TensorData::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0], vec![1, 2, 3]),
+            Tolerance::absolute(1e-6),
+        );
 
-        let result = cos(sliced);
-        let data: Vec<f32> = result.into_data().to_vec().unwrap();
         let expected: Vec<f32> = [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0]
             .iter()
             .map(|x| x.cos())
             .collect();
-        assert_approx_eq(&data, &expected, 1e-6);
+        cos(sliced).into_data().assert_approx_eq::<f32>(
+            &TensorData::new(expected, vec![1, 2, 3]),
+            Tolerance::absolute(1e-6),
+        );
     }
 
     #[test]
