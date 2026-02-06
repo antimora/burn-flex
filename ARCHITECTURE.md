@@ -7,7 +7,7 @@ A pure-Rust CPU backend for [Burn](https://github.com/tracel-ai/burn).
 From README:
 
 - Fast, memory-efficient CPU backend
-- Multi-threading, SIMD, gemm acceleration
+- Multi-threading, SIMD, optimized matrix multiplication
 - Runs on std, no_std, and WebAssembly
 - Supports f16/bf16
 - Zero-copy data loading
@@ -29,9 +29,25 @@ From README:
 
 1. **Leverage Burn** - Use `burn-backend` types and `burn-std` utilities wherever possible
 2. **Portability first** - No platform-specific dependencies; std, no_std, WASM
-3. **Zero C dependencies** - Pure Rust only (gemm for matmul)
+3. **Zero C dependencies** - Pure Rust only (gemm crate for matrix multiplication)
 4. **Simple and direct** - Eager execution, no lazy graphs, no fusion (use `burn-fusion` if needed)
 5. **Memory reuse** - Minimize allocations through in-place ops and buffer reuse
+
+---
+
+## Feature Flags
+
+```toml
+default = ["std", "simd", "rayon"]
+```
+
+| Feature | Default | Description                                            |
+| ------- | ------- | ------------------------------------------------------ |
+| `std`   | Yes     | Standard library support                               |
+| `simd`  | Yes     | Portable SIMD via pulp (enables `pulp`, `aligned-vec`) |
+| `rayon` | Yes     | Parallel execution for large tensors                   |
+
+`gemm` is an always-on required dependency (not behind a feature flag).
 
 ---
 
@@ -134,6 +150,7 @@ fn add_inplace(mut lhs: EmberTensor, rhs: &EmberTensor) -> EmberTensor {
 ```
 
 Performance impact (vs previous non-Arc implementation):
+
 - Binary ops: **2.6-4.2x faster** than NdArray (was 1.4-1.8x)
 - Scalar ops: **2.6x faster** (was 1.8x)
 - Memory: 3x less allocation for binary ops (4.2 MB vs 12.6 MB for 1M elements)
@@ -177,7 +194,8 @@ pub struct Layout {
 
 **Signed Strides**
 
-Strides are `isize` (signed) to enable zero-copy flip operations. A negative stride means we iterate backward through that dimension:
+Strides are `isize` (signed) to enable zero-copy flip operations. A negative stride means we iterate
+backward through that dimension:
 
 ```rust
 // Original tensor [1, 2, 3, 4] with shape [4], stride [1], offset 0
@@ -294,109 +312,12 @@ impl Backend for Ember {
 
 ---
 
-## FusionBackend: Possible but Not Beneficial
+## FusionBackend
 
-burn-ember does **not** implement `FusionBackend`. The traits could technically be implemented, but without JIT compilation there would be no performance benefit - only added overhead.
-
-### Understanding Burn's Fusion Architecture
-
-The `Fusion<B>` decorator wraps backends implementing `FusionBackend`:
-
-```rust
-pub trait FusionBackend: BackendIr<Handle = FusionHandle<Self::FusionRuntime>, ...> {
-    type FusionRuntime: FusionRuntime;
-    type FullPrecisionBackend: FusionBackend;
-    fn cast_float(tensor: FloatTensor<Self>, dtype: DType) -> Self::Handle;
-}
-
-pub trait FusionRuntime: Send + Sync + 'static {
-    type OptimizationState: Serialize + DeserializeOwned;
-    type Optimization: Optimization<Self>;
-    type FusionHandle: Clone + Send;
-    type FusionDevice: DeviceOps;
-    fn fusers(device: Self::FusionDevice) -> Vec<Box<dyn OperationFuser<Self::Optimization>>>;
-}
-```
-
-The key insight is that `FusionRuntime::fusers()` returns `OperationFuser` implementations that:
-1. Accumulate operations into an optimization graph
-2. Generate fused kernels via JIT compilation
-3. Execute the fused kernel in a single dispatch
-
-### Technically Possible, But Not Beneficial
-
-The FusionBackend traits are generic - we *could* implement them for burn-ember:
-
-```rust
-// Technically possible
-pub struct EmberFusionRuntime;
-impl FusionRuntime for EmberFusionRuntime {
-    type Optimization = EmberOptimization;
-    type FusionHandle = EmberFusionHandle;
-    // ...
-}
-```
-
-However, this would provide **no performance benefit** without JIT:
-
-| Step | With JIT (burn-cpu) | Without JIT (burn-ember) |
-|------|---------------------|--------------------------|
-| 1. Collect ops | `add`, `mul`, `relu` | `add`, `mul`, `relu` |
-| 2. Optimize | Generate fused kernel | No code generation possible |
-| 3. Execute | 1 kernel, data in registers | 3 separate ops, data to RAM between each |
-
-Fusion's value comes from combining `relu(mul(add(x, y), z))` into a **single memory pass**. Without JIT, our "optimization" would just:
-1. Defer operations into a list (added overhead)
-2. Execute them one-by-one when triggered (no fusion benefit)
-3. Still require intermediate memory allocations
-
-This is actually **worse** than eager execution due to the tracking overhead.
-
-### burn-cpu: The JIT-Based CPU Backend
-
-For users who need CPU fusion, Burn provides `burn-cpu`:
-
-```rust
-// From burn-cpu/src/lib.rs
-#[cfg(feature = "fusion")]
-pub type Cpu<F = f32, I = i32> = burn_fusion::Fusion<CubeBackend<CpuRuntime, F, I, u8>>;
-```
-
-`burn-cpu` uses cubecl's MLIR-based CPU runtime, which CAN JIT-compile fused kernels for CPU execution. It implements `FusionBackend` via `CubeBackend<CpuRuntime, ...>`.
-
-### burn-ember's Design Goals
-
-burn-ember intentionally avoids JIT in favor of:
-
-| Goal | Why it matters |
-|------|----------------|
-| **Pure Rust** | No LLVM/MLIR dependencies, simple builds |
-| **no_std support** | Embedded systems, bare metal |
-| **WASM compatibility** | Browser execution without heavy toolchains |
-| **Predictable performance** | No JIT warmup, no compilation pauses |
-| **Small binary size** | No bundled compiler infrastructure |
-
-These goals are incompatible with the JIT-based fusion model.
-
-### burn-ember's Optimization Strategies
-
-Instead of kernel fusion, burn-ember optimizes at the operation level:
-
-1. **In-place mutation** - Reuse buffers when tensor is uniquely owned (avoids write-allocate traffic)
-2. **SIMD kernels** - NEON intrinsics for ARM64, auto-vectorization for x86
-3. **Rayon parallelism** - Scale with available cores for large tensors
-4. **Row-based iteration** - 5.9x faster for transposed 2D tensors vs naive StridedIter
-
-These optimizations work without operation graphs or deferred execution.
-
-### When to Use Which Backend
-
-| Use case | Recommended backend |
-|----------|---------------------|
-| GPU acceleration | burn-wgpu, burn-cuda |
-| CPU with fusion/JIT | burn-cpu |
-| Pure Rust, no_std, WASM | burn-ember |
-| Lightweight, familiar API | burn-ndarray |
+burn-ember does not implement `FusionBackend`. Without JIT compilation, fusion adds tracking
+overhead with no performance benefit. Deferred operations would still execute one-by-one with
+intermediate allocations. For CPU with fusion, use `burn-cpu` (which has cubecl's MLIR-based JIT
+runtime).
 
 ---
 
@@ -422,31 +343,33 @@ where
 
 ### SIMD Kernels
 
-NEON for ARM64, with scalar fallback:
+Portable SIMD via pulp, with automatic dispatch per architecture (NEON, AVX2, SSE, WASM SIMD128) and
+a scalar fallback module for unsupported platforms:
 
 ```rust
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::*;
+use pulp::{Arch, Simd, WithSimd};
 
-#[inline]
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-pub unsafe fn add_f32(a: &[f32], b: &[f32], out: &mut [f32]) {
-    const LANES: usize = 4;
-    let chunks = a.len() / LANES;
+struct MyKernel<'a> { src: &'a [f32], dst: &'a mut [f32] }
 
-    for i in 0..chunks {
-        let off = i * LANES;
-        let va = vld1q_f32(a.as_ptr().add(off));
-        let vb = vld1q_f32(b.as_ptr().add(off));
-        vst1q_f32(out.as_mut_ptr().add(off), vaddq_f32(va, vb));
-    }
-
-    for i in (chunks * LANES)..a.len() {
-        out[i] = a[i] + b[i];
+impl WithSimd for MyKernel<'_> {
+    type Output = ();
+    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
+        // pulp provides platform-optimal splat, mul_add, etc.
+        let (head, tail) = S::f32s_as_simd(self.src);
+        // process SIMD lanes...
     }
 }
+
+// Dispatch: detects CPU features at runtime
+Arch::new().dispatch(MyKernel { src, dst });
 ```
+
+The `simd/` module is organized as:
+
+- `neon.rs`: aarch64-specific NEON intrinsics for binary/comparison ops
+- `kernels.rs`: portable pulp-based kernels (reductions, scatter-add)
+- `scalar.rs`: fallback for platforms without NEON
+- `aligned.rs`: SIMD-aligned memory allocation
 
 ### Parallel Execution
 
@@ -497,6 +420,7 @@ Performance: 1.3-3.4x faster than NdArray (which uses matrixmultiply crate).
 ### Convolutions (im2col + gemm)
 
 All convolutions use the im2col transformation followed by matrix multiplication. This approach:
+
 - Converts convolution to a well-optimized GEMM operation
 - Leverages the same gemm crate used for matmul
 - Supports arbitrary strides, padding, dilation, and groups
@@ -534,26 +458,24 @@ GEMM: W[C_out/groups, col_len] × col[col_len, spatial_out]
 
 **Dtype Support**
 
-| Dtype | Implementation |
-|-------|----------------|
-| f32 | Native gemm |
-| f64 | Native gemm |
-| f16 | Native gemm (since gemm v0.15) |
-| bf16 | Convert to f32, compute, convert back |
+| Dtype | Implementation                        |
+| ----- | ------------------------------------- |
+| f32   | Native gemm                           |
+| f64   | Native gemm                           |
+| f16   | Native gemm (since gemm v0.15)        |
+| bf16  | Convert to f32, compute, convert back |
 
 bf16 requires conversion because gemm doesn't have native bf16 support.
 
-**Optimization Opportunities**
+**Current Optimizations**
 
-Current implementation is baseline (correct but unoptimized):
+- **Rayon parallelism**: Batches and groups are parallelized via rayon
+- **Tiled im2col**: Column buffer is tiled for better cache locality
 
-1. **Parallel im2col**: Current im2col is single-threaded. Large spatial dimensions could parallelize over output positions.
+**Remaining Optimization Opportunities**
 
-2. **Parallel batch/groups**: Loop over batches and groups is sequential. rayon can parallelize when batch*groups is large.
-
-3. **Memory layout**: im2col allocates O(spatial_out × kernel_volume × channels) per batch×group. Could reuse buffers or tile for cache efficiency.
-
-4. **Direct convolution**: For small kernels (3×3), direct convolution without im2col can be faster due to less memory movement.
+1. **Direct convolution**: For small kernels (3x3), direct convolution without im2col can be faster
+   due to less memory movement
 
 ### Pooling (Unified 3D)
 
@@ -571,19 +493,19 @@ pool2d([B, C, H, W])
 
 **Supported Operations**
 
-| Operation | Forward | Backward |
-|-----------|---------|----------|
-| max_pool  | Yes     | Yes (via indices) |
-| avg_pool  | Yes     | Yes |
-| adaptive_avg_pool | Yes | Yes |
+| Operation         | Forward | Backward          |
+| ----------------- | ------- | ----------------- |
+| max_pool          | Yes     | Yes (via indices) |
+| avg_pool          | Yes     | Yes               |
+| adaptive_avg_pool | Yes     | Yes               |
 
 **Dtype Support**
 
-| Dtype | Implementation |
-|-------|----------------|
-| f32   | Native |
-| f64   | Native |
-| f16   | Native |
+| Dtype | Implementation                        |
+| ----- | ------------------------------------- |
+| f32   | Native                                |
+| f64   | Native                                |
+| f16   | Native                                |
 | bf16  | Convert to f32, compute, convert back |
 
 **Parallelization**
@@ -603,6 +525,7 @@ Each (b, c) slice is independent with good cache locality.
 **Max Pool Indices**
 
 Max pool stores flat indices into input spatial dimensions (as i64):
+
 - Used by backward pass to route gradients to correct input positions
 - Matches Burn's IntElem type for compatibility
 
@@ -637,6 +560,7 @@ for each input position (id, ih, iw):
 **Weight Shape**
 
 Conv transpose weight shape is opposite of regular conv:
+
 - Regular conv: `[out_channels, in_channels_per_group, kd, kh, kw]`
 - Transpose conv: `[in_channels, out_channels_per_group, kd, kh, kw]`
 
@@ -648,7 +572,8 @@ output_size = (input - 1) * stride + dilation * (kernel - 1) + 1 + padding_out -
 
 **Parallelization**
 
-Uses rayon over (batch, output_channel) pairs. For f32, uses atomic adds for thread-safe accumulation:
+Uses rayon over (batch, output_channel) pairs. For f32, uses atomic adds for thread-safe
+accumulation:
 
 ```rust
 (0..batch_size * out_channels).into_par_iter().for_each(|k| {
@@ -658,20 +583,22 @@ Uses rayon over (batch, output_channel) pairs. For f32, uses atomic adds for thr
 
 **Dtype Support**
 
-| Dtype | Implementation |
-|-------|----------------|
-| f32   | Native with atomic adds |
+| Dtype | Implementation                         |
+| ----- | -------------------------------------- |
+| f32   | Native with atomic adds                |
 | f64   | Native (sequential per output channel) |
-| f16   | Native (sequential) |
-| bf16  | Convert to f32, compute, convert back |
+| f16   | Native (sequential)                    |
+| bf16  | Convert to f32, compute, convert back  |
 
 ### Unfold (Zero-Copy Strided View)
 
-Unfold extracts sliding windows from a tensor along a dimension. Unlike most backends that copy data, Ember implements unfold as a **zero-copy strided view**.
+Unfold extracts sliding windows from a tensor along a dimension. Unlike most backends that copy
+data, Ember implements unfold as a **zero-copy strided view**.
 
 **Output Shape**
 
 Given input with shape `[pre..., dim_size, post...]`, unfold along dimension `dim` produces:
+
 - Output shape: `[pre..., windows, post..., window_size]`
 - Windows count: `(dim_size - window_size + step) / step`
 
@@ -708,15 +635,17 @@ Logical view:
 
 **Performance**
 
-| Metric | Ember | NdArray |
-|--------|-------|---------|
-| Time complexity | O(1) | O(output_elements) |
-| Memory | 56-136 bytes (metadata only) | Megabytes (copies all windows) |
-| Speedup | **1,300-156,000x faster** | - |
+| Metric          | Ember                        | NdArray                        |
+| --------------- | ---------------------------- | ------------------------------ |
+| Time complexity | O(1)                         | O(output_elements)             |
+| Memory          | 56-136 bytes (metadata only) | Megabytes (copies all windows) |
+| Speedup         | **1,300-156,000x faster**    | -                              |
 
 **Non-Contiguous Output**
 
-The returned tensor is non-contiguous (overlapping windows share storage). Operations that require contiguous data call `to_contiguous()` internally. Many operations (reduce, matmul, conv) work directly on strided tensors via `StridedIter`.
+The returned tensor is non-contiguous (overlapping windows share storage). Operations that require
+contiguous data call `to_contiguous()` internally. Many operations (reduce, matmul, conv) work
+directly on strided tensors via `StridedIter`.
 
 ---
 
@@ -761,88 +690,7 @@ this in `Arc` for cheap cloning while preserving zero-copy capabilities.
 ## Thread Safety
 
 `Arc<Bytes>` provides thread-safe sharing with automatic COW:
+
 - `Arc` is `Send + Sync` for safe cross-thread sharing
 - `Arc::make_mut` triggers copy only when data is shared
 - `Arc::strong_count` enables `is_unique()` checks for in-place optimization
-
----
-
-## Implementation Phases
-
-### Phase 1: Minimum Viable Backend
-
-- `Layout`, `EmberTensor` (using `Bytes`)
-- `Backend` trait impl
-- Basic `FloatTensorOps`: from_data, into_data, shape, dtype
-
-### Phase 2: Core Operations
-
-- Arithmetic: add, sub, mul, div, neg
-- Comparisons: equal, greater, less
-- Shape: reshape, transpose, slice, concat
-- Reductions: sum, mean, max, min
-- Matmul via gemm crate
-
-### Phase 3: Module Operations (Done)
-
-- **Convolutions** (done): conv1d, conv2d, conv3d via unified im2col + gemm
-  - All dtypes: f32, f64, f16 (native), bf16 (via f32)
-  - Groups, stride, padding, dilation support
-- **Pooling** (done): max_pool, avg_pool, adaptive_avg_pool via unified 3D
-  - All dtypes: f32, f64, f16 (native), bf16 (via f32)
-  - Forward and backward passes with indices for max pool
-- **Conv Transpose** (done): conv_transpose1d, conv_transpose2d, conv_transpose3d via unified 3D
-  - All dtypes: f32, f64, f16 (native), bf16 (via f32)
-  - Scatter-based algorithm with atomic f32 adds for parallelism
-- Full `ModuleOps` trait (partial - deform_conv, interpolate pending)
-
-### Phase 4: Optimization
-
-- NEON SIMD kernels
-- Parallel execution via rayon
-- Contiguous detection and fast paths
-
-### Phase 5: Advanced
-
-- Quantization (Q8, Q4)
-- f16/bf16 compute paths
-- no_std support
-- WASM validation
-
----
-
-## File Structure
-
-```
-src/
-├── lib.rs
-├── backend.rs          # Backend trait impl
-├── tensor.rs           # EmberTensor (Bytes + Layout + DType)
-├── layout.rs           # Layout (shape + strides)
-├── ops/
-│   ├── mod.rs
-│   ├── unary.rs
-│   ├── binary.rs
-│   ├── reduce.rs
-│   ├── shape.rs
-│   ├── matmul.rs
-│   ├── conv.rs
-│   ├── pool.rs
-│   └── unfold.rs       # Zero-copy strided unfold
-└── simd/
-    ├── mod.rs
-    └── neon.rs
-```
-
----
-
-## Dependencies
-
-| Crate        | Purpose                              |
-| ------------ | ------------------------------------ |
-| burn-backend | Core types, Backend trait            |
-| burn-std     | Bytes, utilities                     |
-| gemm         | Matrix multiplication (pure Rust)    |
-| pulp         | Portable SIMD (used for reductions)  |
-| half         | f16/bf16 types                       |
-| rayon        | Parallelism (default feature)        |
