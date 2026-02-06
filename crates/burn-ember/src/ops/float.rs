@@ -218,8 +218,10 @@ impl FloatTensorOps<Ember> for Ember {
         indices: IntTensor<Ember>,
     ) -> FloatTensor<Ember> {
         match tensor.dtype() {
-            DType::F32 => crate::ops::gather_scatter::gather_f32(tensor, dim, indices),
-            DType::F64 => crate::ops::gather_scatter::gather_f64(tensor, dim, indices),
+            DType::F32 => crate::ops::gather_scatter::gather::<f32>(tensor, dim, indices),
+            DType::F64 => crate::ops::gather_scatter::gather::<f64>(tensor, dim, indices),
+            DType::F16 => crate::ops::gather_scatter::gather::<f16>(tensor, dim, indices),
+            DType::BF16 => crate::ops::gather_scatter::gather::<bf16>(tensor, dim, indices),
             _ => panic!("float_gather: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -231,8 +233,10 @@ impl FloatTensorOps<Ember> for Ember {
         value: FloatTensor<Ember>,
     ) -> FloatTensor<Ember> {
         match tensor.dtype() {
-            DType::F32 => crate::ops::gather_scatter::scatter_add_f32(tensor, dim, indices, value),
-            DType::F64 => crate::ops::gather_scatter::scatter_add_f64(tensor, dim, indices, value),
+            DType::F32 => crate::ops::gather_scatter::scatter_add::<f32>(tensor, dim, indices, value),
+            DType::F64 => crate::ops::gather_scatter::scatter_add::<f64>(tensor, dim, indices, value),
+            DType::F16 => crate::ops::gather_scatter::scatter_add::<f16>(tensor, dim, indices, value),
+            DType::BF16 => crate::ops::gather_scatter::scatter_add::<bf16>(tensor, dim, indices, value),
             _ => panic!("float_scatter_add: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -243,8 +247,10 @@ impl FloatTensorOps<Ember> for Ember {
         indices: IntTensor<Ember>,
     ) -> FloatTensor<Ember> {
         match tensor.dtype() {
-            DType::F32 => crate::ops::gather_scatter::select_f32(tensor, dim, indices),
-            DType::F64 => crate::ops::gather_scatter::select_f64(tensor, dim, indices),
+            DType::F32 => crate::ops::gather_scatter::select::<f32>(tensor, dim, indices),
+            DType::F64 => crate::ops::gather_scatter::select::<f64>(tensor, dim, indices),
+            DType::F16 => crate::ops::gather_scatter::select::<f16>(tensor, dim, indices),
+            DType::BF16 => crate::ops::gather_scatter::select::<bf16>(tensor, dim, indices),
             _ => panic!("float_select: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -256,8 +262,10 @@ impl FloatTensorOps<Ember> for Ember {
         value: FloatTensor<Ember>,
     ) -> FloatTensor<Ember> {
         match tensor.dtype() {
-            DType::F32 => crate::ops::gather_scatter::select_add_f32(tensor, dim, indices, value),
-            DType::F64 => crate::ops::gather_scatter::select_add_f64(tensor, dim, indices, value),
+            DType::F32 => crate::ops::gather_scatter::select_add::<f32>(tensor, dim, indices, value),
+            DType::F64 => crate::ops::gather_scatter::select_add::<f64>(tensor, dim, indices, value),
+            DType::F16 => crate::ops::gather_scatter::select_add::<f16>(tensor, dim, indices, value),
+            DType::BF16 => crate::ops::gather_scatter::select_add::<bf16>(tensor, dim, indices, value),
             _ => panic!("float_select_add: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -484,6 +492,8 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::cumulative::cumsum_f32(tensor, dim),
             DType::F64 => crate::ops::cumulative::cumsum_f64(tensor, dim),
+            DType::F16 => crate::ops::cumulative::cumsum_half(tensor, dim, f16::to_f32, f16::from_f32),
+            DType::BF16 => crate::ops::cumulative::cumsum_half(tensor, dim, bf16::to_f32, bf16::from_f32),
             _ => panic!("float_cumsum: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -492,6 +502,8 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::cumulative::cumprod_f32(tensor, dim),
             DType::F64 => crate::ops::cumulative::cumprod_f64(tensor, dim),
+            DType::F16 => crate::ops::cumulative::cumprod_half(tensor, dim, f16::to_f32, f16::from_f32),
+            DType::BF16 => crate::ops::cumulative::cumprod_half(tensor, dim, bf16::to_f32, bf16::from_f32),
             _ => panic!("float_cumprod: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -500,6 +512,8 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::cumulative::cummin_f32(tensor, dim),
             DType::F64 => crate::ops::cumulative::cummin_f64(tensor, dim),
+            DType::F16 => crate::ops::cumulative::cummin_half(tensor, dim, f16::to_f32, f16::from_f32),
+            DType::BF16 => crate::ops::cumulative::cummin_half(tensor, dim, bf16::to_f32, bf16::from_f32),
             _ => panic!("float_cummin: unsupported dtype {:?}", tensor.dtype()),
         }
     }
@@ -508,6 +522,8 @@ impl FloatTensorOps<Ember> for Ember {
         match tensor.dtype() {
             DType::F32 => crate::ops::cumulative::cummax_f32(tensor, dim),
             DType::F64 => crate::ops::cumulative::cummax_f64(tensor, dim),
+            DType::F16 => crate::ops::cumulative::cummax_half(tensor, dim, f16::to_f32, f16::from_f32),
+            DType::BF16 => crate::ops::cumulative::cummax_half(tensor, dim, bf16::to_f32, bf16::from_f32),
             _ => panic!("float_cummax: unsupported dtype {:?}", tensor.dtype()),
         }
     }

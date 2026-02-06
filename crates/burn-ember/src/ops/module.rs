@@ -2,16 +2,38 @@
 //!
 //! These operations power neural network modules like convolutions and pooling.
 
-use crate::Ember;
+use crate::{Ember, EmberTensor, Layout};
 use crate::ops::{conv, deform_conv, interpolate, pool};
 use burn_backend::{
-    DType,
+    DType, Element,
     ops::{
         ConvOptions, ConvTransposeOptions, DeformConv2dBackward, DeformConvOptions,
         InterpolateMode, InterpolateOptions, MaxPool2dBackward, MaxPool2dWithIndices, ModuleOps,
     },
     tensor::{FloatTensor, IntTensor},
 };
+use burn_std::Bytes;
+use bytemuck::Pod;
+
+/// Cast a tensor from half-precision type E to f32.
+fn cast_to_f32<E: Element + Pod + Copy>(tensor: EmberTensor, to_f32: fn(E) -> f32) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape().clone();
+    let data: &[E] = tensor.storage();
+    let f32_data: alloc::vec::Vec<f32> = data.iter().map(|&v| to_f32(v)).collect();
+    let bytes = Bytes::from_elems(f32_data);
+    EmberTensor::new(bytes, Layout::contiguous(shape), DType::F32)
+}
+
+/// Cast a tensor from f32 back to half-precision type E.
+fn cast_from_f32<E: Element + Pod + Copy>(tensor: EmberTensor, from_f32: fn(f32) -> E) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape().clone();
+    let data: &[f32] = tensor.storage();
+    let half_data: alloc::vec::Vec<E> = data.iter().map(|&v| from_f32(v)).collect();
+    let bytes = Bytes::from_elems(half_data);
+    EmberTensor::new(bytes, Layout::contiguous(shape), E::dtype())
+}
 
 impl ModuleOps<Ember> for Ember {
     fn conv1d(
@@ -77,6 +99,38 @@ impl ModuleOps<Ember> for Ember {
                 options.weight_groups,
                 options.offset_groups,
             ),
+            DType::F16 => {
+                use burn_std::f16;
+                let result = deform_conv::deform_conv2d_f32(
+                    cast_to_f32(x, f16::to_f32),
+                    cast_to_f32(offset, f16::to_f32),
+                    cast_to_f32(weight, f16::to_f32),
+                    mask.map(|m| cast_to_f32(m, f16::to_f32)),
+                    bias.map(|b| cast_to_f32(b, f16::to_f32)),
+                    options.stride,
+                    options.padding,
+                    options.dilation,
+                    options.weight_groups,
+                    options.offset_groups,
+                );
+                cast_from_f32(result, f16::from_f32)
+            }
+            DType::BF16 => {
+                use burn_std::bf16;
+                let result = deform_conv::deform_conv2d_f32(
+                    cast_to_f32(x, bf16::to_f32),
+                    cast_to_f32(offset, bf16::to_f32),
+                    cast_to_f32(weight, bf16::to_f32),
+                    mask.map(|m| cast_to_f32(m, bf16::to_f32)),
+                    bias.map(|b| cast_to_f32(b, bf16::to_f32)),
+                    options.stride,
+                    options.padding,
+                    options.dilation,
+                    options.weight_groups,
+                    options.offset_groups,
+                );
+                cast_from_f32(result, bf16::from_f32)
+            }
             dtype => panic!("deform_conv2d: unsupported dtype {:?}", dtype),
         }
     }
@@ -104,6 +158,52 @@ impl ModuleOps<Ember> for Ember {
                 options.weight_groups,
                 options.offset_groups,
             ),
+            DType::F16 => {
+                use burn_std::f16;
+                let (xg, og, wg, mg, bg) = deform_conv::deform_conv2d_backward_f32(
+                    cast_to_f32(x, f16::to_f32),
+                    cast_to_f32(offset, f16::to_f32),
+                    cast_to_f32(weight, f16::to_f32),
+                    mask.map(|m| cast_to_f32(m, f16::to_f32)),
+                    bias.map(|b| cast_to_f32(b, f16::to_f32)),
+                    cast_to_f32(output_grad, f16::to_f32),
+                    options.stride,
+                    options.padding,
+                    options.dilation,
+                    options.weight_groups,
+                    options.offset_groups,
+                );
+                (
+                    cast_from_f32(xg, f16::from_f32),
+                    cast_from_f32(og, f16::from_f32),
+                    cast_from_f32(wg, f16::from_f32),
+                    mg.map(|m| cast_from_f32(m, f16::from_f32)),
+                    bg.map(|b| cast_from_f32(b, f16::from_f32)),
+                )
+            }
+            DType::BF16 => {
+                use burn_std::bf16;
+                let (xg, og, wg, mg, bg) = deform_conv::deform_conv2d_backward_f32(
+                    cast_to_f32(x, bf16::to_f32),
+                    cast_to_f32(offset, bf16::to_f32),
+                    cast_to_f32(weight, bf16::to_f32),
+                    mask.map(|m| cast_to_f32(m, bf16::to_f32)),
+                    bias.map(|b| cast_to_f32(b, bf16::to_f32)),
+                    cast_to_f32(output_grad, bf16::to_f32),
+                    options.stride,
+                    options.padding,
+                    options.dilation,
+                    options.weight_groups,
+                    options.offset_groups,
+                );
+                (
+                    cast_from_f32(xg, bf16::from_f32),
+                    cast_from_f32(og, bf16::from_f32),
+                    cast_from_f32(wg, bf16::from_f32),
+                    mg.map(|m| cast_from_f32(m, bf16::from_f32)),
+                    bg.map(|b| cast_from_f32(b, bf16::from_f32)),
+                )
+            }
             dtype => panic!("deform_conv2d_backward: unsupported dtype {:?}", dtype),
         };
         DeformConv2dBackward::new(x_grad, offset_grad, weight_grad, mask_grad, bias_grad)
