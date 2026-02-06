@@ -30,7 +30,14 @@ macro_rules! max_pool3d_with_indices_typed {
             ceil_mode: bool,
         ) -> (EmberTensor, EmberTensor) {
             max_pool3d_with_indices_impl::<$T>(
-                x, kernel_size, stride, padding, dilation, ceil_mode, $dtype, $neg_inf,
+                x,
+                kernel_size,
+                stride,
+                padding,
+                dilation,
+                ceil_mode,
+                $dtype,
+                $neg_inf,
             )
         }
     };
@@ -48,8 +55,16 @@ macro_rules! avg_pool3d_typed {
             ceil_mode: bool,
         ) -> EmberTensor {
             avg_pool3d_impl::<$T>(
-                x, kernel_size, stride, padding, count_include_pad, ceil_mode,
-                $dtype, $zero, $add_fn, $div_fn,
+                x,
+                kernel_size,
+                stride,
+                padding,
+                count_include_pad,
+                ceil_mode,
+                $dtype,
+                $zero,
+                $add_fn,
+                $div_fn,
             )
         }
     };
@@ -59,9 +74,7 @@ macro_rules! avg_pool3d_typed {
 macro_rules! adaptive_avg_pool3d_typed {
     ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $add_fn:expr, $div_fn:expr) => {
         pub fn $fn_name(x: EmberTensor, output_size: [usize; 3]) -> EmberTensor {
-            adaptive_avg_pool3d_impl::<$T>(
-                x, output_size, $dtype, $zero, $add_fn, $div_fn,
-            )
+            adaptive_avg_pool3d_impl::<$T>(x, output_size, $dtype, $zero, $add_fn, $div_fn)
         }
     };
 }
@@ -69,11 +82,7 @@ macro_rules! adaptive_avg_pool3d_typed {
 /// Generates max_pool3d_backward typed dispatchers.
 macro_rules! max_pool3d_backward_typed {
     ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $add_fn:expr) => {
-        pub fn $fn_name(
-            x: EmberTensor,
-            grad: EmberTensor,
-            indices: EmberTensor,
-        ) -> EmberTensor {
+        pub fn $fn_name(x: EmberTensor, grad: EmberTensor, indices: EmberTensor) -> EmberTensor {
             max_pool3d_backward_impl::<$T>(x, grad, indices, $dtype, $zero, $add_fn)
         }
     };
@@ -91,8 +100,16 @@ macro_rules! avg_pool3d_backward_typed {
             count_include_pad: bool,
         ) -> EmberTensor {
             avg_pool3d_backward_impl::<$T>(
-                x, grad, kernel_size, stride, padding, count_include_pad,
-                $dtype, $zero, $add_fn, $div_fn,
+                x,
+                grad,
+                kernel_size,
+                stride,
+                padding,
+                count_include_pad,
+                $dtype,
+                $zero,
+                $add_fn,
+                $div_fn,
             )
         }
     };
@@ -102,9 +119,7 @@ macro_rules! avg_pool3d_backward_typed {
 macro_rules! adaptive_avg_pool3d_backward_typed {
     ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $add_fn:expr, $div_fn:expr) => {
         pub fn $fn_name(x: EmberTensor, grad: EmberTensor) -> EmberTensor {
-            adaptive_avg_pool3d_backward_impl::<$T>(
-                x, grad, $dtype, $zero, $add_fn, $div_fn,
-            )
+            adaptive_avg_pool3d_backward_impl::<$T>(x, grad, $dtype, $zero, $add_fn, $div_fn)
         }
     };
 }
@@ -135,9 +150,24 @@ fn pool_output_size(
 // Max Pool 3D - core implementation
 // ============================================================================
 
-max_pool3d_with_indices_typed!(max_pool3d_with_indices_f32, f32, DType::F32, f32::NEG_INFINITY);
-max_pool3d_with_indices_typed!(max_pool3d_with_indices_f64, f64, DType::F64, f64::NEG_INFINITY);
-max_pool3d_with_indices_typed!(max_pool3d_with_indices_f16, f16, DType::F16, f16::NEG_INFINITY);
+max_pool3d_with_indices_typed!(
+    max_pool3d_with_indices_f32,
+    f32,
+    DType::F32,
+    f32::NEG_INFINITY
+);
+max_pool3d_with_indices_typed!(
+    max_pool3d_with_indices_f64,
+    f64,
+    DType::F64,
+    f64::NEG_INFINITY
+);
+max_pool3d_with_indices_typed!(
+    max_pool3d_with_indices_f16,
+    f16,
+    DType::F16,
+    f16::NEG_INFINITY
+);
 
 pub fn max_pool3d_with_indices_bf16(
     x: EmberTensor,
@@ -565,9 +595,30 @@ pub fn max_pool1d_f32(
 // Avg Pool 3D - core implementation
 // ============================================================================
 
-avg_pool3d_typed!(avg_pool3d_f32, f32, DType::F32, 0.0f32, |a, b| a + b, |sum, count| sum / count as f32);
-avg_pool3d_typed!(avg_pool3d_f64, f64, DType::F64, 0.0f64, |a, b| a + b, |sum, count| sum / count as f64);
-avg_pool3d_typed!(avg_pool3d_f16, f16, DType::F16, f16::from_f32(0.0), |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()), |sum: f16, count| f16::from_f32(sum.to_f32() / count as f32));
+avg_pool3d_typed!(
+    avg_pool3d_f32,
+    f32,
+    DType::F32,
+    0.0f32,
+    |a, b| a + b,
+    |sum, count| sum / count as f32
+);
+avg_pool3d_typed!(
+    avg_pool3d_f64,
+    f64,
+    DType::F64,
+    0.0f64,
+    |a, b| a + b,
+    |sum, count| sum / count as f64
+);
+avg_pool3d_typed!(
+    avg_pool3d_f16,
+    f16,
+    DType::F16,
+    f16::from_f32(0.0),
+    |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()),
+    |sum: f16, count| f16::from_f32(sum.to_f32() / count as f32)
+);
 
 pub fn avg_pool3d_bf16(
     x: EmberTensor,
@@ -923,9 +974,30 @@ pub fn avg_pool1d_f32(
 // Adaptive Avg Pool 3D - core implementation
 // ============================================================================
 
-adaptive_avg_pool3d_typed!(adaptive_avg_pool3d_f32, f32, DType::F32, 0.0f32, |a, b| a + b, |sum, count| sum / count as f32);
-adaptive_avg_pool3d_typed!(adaptive_avg_pool3d_f64, f64, DType::F64, 0.0f64, |a, b| a + b, |sum, count| sum / count as f64);
-adaptive_avg_pool3d_typed!(adaptive_avg_pool3d_f16, f16, DType::F16, f16::from_f32(0.0), |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()), |sum: f16, count| f16::from_f32(sum.to_f32() / count as f32));
+adaptive_avg_pool3d_typed!(
+    adaptive_avg_pool3d_f32,
+    f32,
+    DType::F32,
+    0.0f32,
+    |a, b| a + b,
+    |sum, count| sum / count as f32
+);
+adaptive_avg_pool3d_typed!(
+    adaptive_avg_pool3d_f64,
+    f64,
+    DType::F64,
+    0.0f64,
+    |a, b| a + b,
+    |sum, count| sum / count as f64
+);
+adaptive_avg_pool3d_typed!(
+    adaptive_avg_pool3d_f16,
+    f16,
+    DType::F16,
+    f16::from_f32(0.0),
+    |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()),
+    |sum: f16, count| f16::from_f32(sum.to_f32() / count as f32)
+);
 
 pub fn adaptive_avg_pool3d_bf16(x: EmberTensor, output_size: [usize; 3]) -> EmberTensor {
     let x_f32 = convert_bf16_to_f32(&x);
@@ -1162,9 +1234,17 @@ pub fn max_pool2d_backward_bf16(
     convert_f32_to_bf16(&result_f32)
 }
 
-max_pool3d_backward_typed!(max_pool3d_backward_f32, f32, DType::F32, 0.0f32, |a, b| a + b);
-max_pool3d_backward_typed!(max_pool3d_backward_f64, f64, DType::F64, 0.0f64, |a, b| a + b);
-max_pool3d_backward_typed!(max_pool3d_backward_f16, f16, DType::F16, f16::from_f32(0.0), |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()));
+max_pool3d_backward_typed!(max_pool3d_backward_f32, f32, DType::F32, 0.0f32, |a, b| a
+    + b);
+max_pool3d_backward_typed!(max_pool3d_backward_f64, f64, DType::F64, 0.0f64, |a, b| a
+    + b);
+max_pool3d_backward_typed!(
+    max_pool3d_backward_f16,
+    f16,
+    DType::F16,
+    f16::from_f32(0.0),
+    |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32())
+);
 
 /// Generic max pool 3D backward implementation.
 fn max_pool3d_backward_impl<T>(
@@ -1312,9 +1392,30 @@ pub fn avg_pool2d_backward_bf16(
     convert_f32_to_bf16(&result_f32)
 }
 
-avg_pool3d_backward_typed!(avg_pool3d_backward_f32, f32, DType::F32, 0.0f32, |a, b| a + b, |val, count| val / count as f32);
-avg_pool3d_backward_typed!(avg_pool3d_backward_f64, f64, DType::F64, 0.0f64, |a, b| a + b, |val, count| val / count as f64);
-avg_pool3d_backward_typed!(avg_pool3d_backward_f16, f16, DType::F16, f16::from_f32(0.0), |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()), |val: f16, count| f16::from_f32(val.to_f32() / count as f32));
+avg_pool3d_backward_typed!(
+    avg_pool3d_backward_f32,
+    f32,
+    DType::F32,
+    0.0f32,
+    |a, b| a + b,
+    |val, count| val / count as f32
+);
+avg_pool3d_backward_typed!(
+    avg_pool3d_backward_f64,
+    f64,
+    DType::F64,
+    0.0f64,
+    |a, b| a + b,
+    |val, count| val / count as f64
+);
+avg_pool3d_backward_typed!(
+    avg_pool3d_backward_f16,
+    f16,
+    DType::F16,
+    f16::from_f32(0.0),
+    |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()),
+    |val: f16, count| f16::from_f32(val.to_f32() / count as f32)
+);
 
 /// Generic avg pool 3D backward implementation.
 #[allow(clippy::too_many_arguments)]
@@ -1469,9 +1570,30 @@ pub fn adaptive_avg_pool2d_backward_bf16(x: EmberTensor, grad: EmberTensor) -> E
     convert_f32_to_bf16(&result_f32)
 }
 
-adaptive_avg_pool3d_backward_typed!(adaptive_avg_pool3d_backward_f32, f32, DType::F32, 0.0f32, |a, b| a + b, |val, count| val / count as f32);
-adaptive_avg_pool3d_backward_typed!(adaptive_avg_pool3d_backward_f64, f64, DType::F64, 0.0f64, |a, b| a + b, |val, count| val / count as f64);
-adaptive_avg_pool3d_backward_typed!(adaptive_avg_pool3d_backward_f16, f16, DType::F16, f16::from_f32(0.0), |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()), |val: f16, count| f16::from_f32(val.to_f32() / count as f32));
+adaptive_avg_pool3d_backward_typed!(
+    adaptive_avg_pool3d_backward_f32,
+    f32,
+    DType::F32,
+    0.0f32,
+    |a, b| a + b,
+    |val, count| val / count as f32
+);
+adaptive_avg_pool3d_backward_typed!(
+    adaptive_avg_pool3d_backward_f64,
+    f64,
+    DType::F64,
+    0.0f64,
+    |a, b| a + b,
+    |val, count| val / count as f64
+);
+adaptive_avg_pool3d_backward_typed!(
+    adaptive_avg_pool3d_backward_f16,
+    f16,
+    DType::F16,
+    f16::from_f32(0.0),
+    |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()),
+    |val: f16, count| f16::from_f32(val.to_f32() / count as f32)
+);
 
 /// Generic adaptive avg pool 3D backward implementation.
 fn adaptive_avg_pool3d_backward_impl<T>(

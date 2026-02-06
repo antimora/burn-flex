@@ -46,11 +46,7 @@ macro_rules! interpolate_bf16 {
 /// Generates an interpolation backward typed dispatcher.
 macro_rules! interpolate_backward_typed {
     ($fn_name:ident, $impl_fn:ident, $T:ty) => {
-        pub fn $fn_name(
-            x: EmberTensor,
-            grad: EmberTensor,
-            output_size: [usize; 2],
-        ) -> EmberTensor {
+        pub fn $fn_name(x: EmberTensor, grad: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
             $impl_fn::<$T>(x, grad, output_size)
         }
     };
@@ -59,11 +55,7 @@ macro_rules! interpolate_backward_typed {
 /// Generates an interpolation bf16 backward wrapper via f32 conversion.
 macro_rules! interpolate_backward_bf16 {
     ($bf16_fn:ident, $f32_fn:ident) => {
-        pub fn $bf16_fn(
-            x: EmberTensor,
-            grad: EmberTensor,
-            output_size: [usize; 2],
-        ) -> EmberTensor {
+        pub fn $bf16_fn(x: EmberTensor, grad: EmberTensor, output_size: [usize; 2]) -> EmberTensor {
             let x_f32 = convert_bf16_to_f32(&x);
             let grad_f32 = convert_bf16_to_f32(&grad);
             let result_f32 = $f32_fn(x_f32, grad_f32, output_size);
@@ -95,20 +87,65 @@ interpolate_bf16!(interpolate_bicubic_bf16, interpolate_bicubic_f32);
 // Backward pass - dtype dispatch
 // ============================================================================
 
-interpolate_backward_typed!(interpolate_nearest_backward_f32, interpolate_nearest_backward_impl, f32);
-interpolate_backward_typed!(interpolate_nearest_backward_f64, interpolate_nearest_backward_impl, f64);
-interpolate_backward_typed!(interpolate_nearest_backward_f16, interpolate_nearest_backward_impl, f16);
-interpolate_backward_bf16!(interpolate_nearest_backward_bf16, interpolate_nearest_backward_f32);
+interpolate_backward_typed!(
+    interpolate_nearest_backward_f32,
+    interpolate_nearest_backward_impl,
+    f32
+);
+interpolate_backward_typed!(
+    interpolate_nearest_backward_f64,
+    interpolate_nearest_backward_impl,
+    f64
+);
+interpolate_backward_typed!(
+    interpolate_nearest_backward_f16,
+    interpolate_nearest_backward_impl,
+    f16
+);
+interpolate_backward_bf16!(
+    interpolate_nearest_backward_bf16,
+    interpolate_nearest_backward_f32
+);
 
-interpolate_backward_typed!(interpolate_bilinear_backward_f32, interpolate_bilinear_backward_impl, f32);
-interpolate_backward_typed!(interpolate_bilinear_backward_f64, interpolate_bilinear_backward_impl, f64);
-interpolate_backward_typed!(interpolate_bilinear_backward_f16, interpolate_bilinear_backward_impl, f16);
-interpolate_backward_bf16!(interpolate_bilinear_backward_bf16, interpolate_bilinear_backward_f32);
+interpolate_backward_typed!(
+    interpolate_bilinear_backward_f32,
+    interpolate_bilinear_backward_impl,
+    f32
+);
+interpolate_backward_typed!(
+    interpolate_bilinear_backward_f64,
+    interpolate_bilinear_backward_impl,
+    f64
+);
+interpolate_backward_typed!(
+    interpolate_bilinear_backward_f16,
+    interpolate_bilinear_backward_impl,
+    f16
+);
+interpolate_backward_bf16!(
+    interpolate_bilinear_backward_bf16,
+    interpolate_bilinear_backward_f32
+);
 
-interpolate_backward_typed!(interpolate_bicubic_backward_f32, interpolate_bicubic_backward_impl, f32);
-interpolate_backward_typed!(interpolate_bicubic_backward_f64, interpolate_bicubic_backward_impl, f64);
-interpolate_backward_typed!(interpolate_bicubic_backward_f16, interpolate_bicubic_backward_impl, f16);
-interpolate_backward_bf16!(interpolate_bicubic_backward_bf16, interpolate_bicubic_backward_f32);
+interpolate_backward_typed!(
+    interpolate_bicubic_backward_f32,
+    interpolate_bicubic_backward_impl,
+    f32
+);
+interpolate_backward_typed!(
+    interpolate_bicubic_backward_f64,
+    interpolate_bicubic_backward_impl,
+    f64
+);
+interpolate_backward_typed!(
+    interpolate_bicubic_backward_f16,
+    interpolate_bicubic_backward_impl,
+    f16
+);
+interpolate_backward_bf16!(
+    interpolate_bicubic_backward_bf16,
+    interpolate_bicubic_backward_f32
+);
 
 // ============================================================================
 // Generic implementations with rayon parallelism

@@ -110,9 +110,30 @@ macro_rules! conv_transpose3d_typed {
 // Conv1d - delegates to conv3d
 // ============================================================================
 
-conv_nd_via_3d!(conv1d_f32, conv3d_f32, expand_1d_to_3d, squeeze_3d_to_1d, 1, ConvOptions);
-conv_nd_via_3d!(conv1d_f64, conv3d_f64, expand_1d_to_3d, squeeze_3d_to_1d, 1, ConvOptions);
-conv_nd_via_3d!(conv1d_f16, conv3d_f16, expand_1d_to_3d, squeeze_3d_to_1d, 1, ConvOptions);
+conv_nd_via_3d!(
+    conv1d_f32,
+    conv3d_f32,
+    expand_1d_to_3d,
+    squeeze_3d_to_1d,
+    1,
+    ConvOptions
+);
+conv_nd_via_3d!(
+    conv1d_f64,
+    conv3d_f64,
+    expand_1d_to_3d,
+    squeeze_3d_to_1d,
+    1,
+    ConvOptions
+);
+conv_nd_via_3d!(
+    conv1d_f16,
+    conv3d_f16,
+    expand_1d_to_3d,
+    squeeze_3d_to_1d,
+    1,
+    ConvOptions
+);
 bf16_via_f32!(conv1d_bf16, conv1d_f32, 1, ConvOptions);
 
 fn expand_1d_to_3d(
@@ -161,9 +182,30 @@ fn squeeze_3d_to_1d(tensor: EmberTensor) -> EmberTensor {
 // Conv2d - delegates to conv3d
 // ============================================================================
 
-conv_nd_via_3d!(conv2d_f32, conv3d_f32, expand_2d_to_3d, squeeze_3d_to_2d, 2, ConvOptions);
-conv_nd_via_3d!(conv2d_f64, conv3d_f64, expand_2d_to_3d, squeeze_3d_to_2d, 2, ConvOptions);
-conv_nd_via_3d!(conv2d_f16, conv3d_f16, expand_2d_to_3d, squeeze_3d_to_2d, 2, ConvOptions);
+conv_nd_via_3d!(
+    conv2d_f32,
+    conv3d_f32,
+    expand_2d_to_3d,
+    squeeze_3d_to_2d,
+    2,
+    ConvOptions
+);
+conv_nd_via_3d!(
+    conv2d_f64,
+    conv3d_f64,
+    expand_2d_to_3d,
+    squeeze_3d_to_2d,
+    2,
+    ConvOptions
+);
+conv_nd_via_3d!(
+    conv2d_f16,
+    conv3d_f16,
+    expand_2d_to_3d,
+    squeeze_3d_to_2d,
+    2,
+    ConvOptions
+);
 bf16_via_f32!(conv2d_bf16, conv2d_f32, 2, ConvOptions);
 
 fn expand_2d_to_3d(
@@ -213,9 +255,33 @@ fn squeeze_3d_to_2d(tensor: EmberTensor) -> EmberTensor {
 // Conv3d - native implementations
 // ============================================================================
 
-conv3d_typed!(conv3d_f32, f32, DType::F32, 0.0f32, gemm_f32, |a, b| a + b, conv3d_1x1_f32);
-conv3d_typed!(conv3d_f64, f64, DType::F64, 0.0f64, gemm_f64, |a, b| a + b, conv3d_1x1_f64);
-conv3d_typed!(conv3d_f16, f16, DType::F16, f16::from_f32(0.0), gemm_f16, |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()), conv3d_1x1_f16);
+conv3d_typed!(
+    conv3d_f32,
+    f32,
+    DType::F32,
+    0.0f32,
+    gemm_f32,
+    |a, b| a + b,
+    conv3d_1x1_f32
+);
+conv3d_typed!(
+    conv3d_f64,
+    f64,
+    DType::F64,
+    0.0f64,
+    gemm_f64,
+    |a, b| a + b,
+    conv3d_1x1_f64
+);
+conv3d_typed!(
+    conv3d_f16,
+    f16,
+    DType::F16,
+    f16::from_f32(0.0),
+    gemm_f16,
+    |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()),
+    conv3d_1x1_f16
+);
 bf16_via_f32!(conv3d_bf16, conv3d_f32, 3, ConvOptions);
 
 /// Generic 3D convolution implementation using tiled im2col.
@@ -766,9 +832,18 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
     }
 }
 
-conv3d_1x1_typed!(conv3d_1x1_f32, f32, DType::F32, 0.0f32, gemm_f32, |a, b| a + b);
-conv3d_1x1_typed!(conv3d_1x1_f64, f64, DType::F64, 0.0f64, gemm_f64, |a, b| a + b);
-conv3d_1x1_typed!(conv3d_1x1_f16, f16, DType::F16, f16::from_f32(0.0), gemm_f16, |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()));
+conv3d_1x1_typed!(conv3d_1x1_f32, f32, DType::F32, 0.0f32, gemm_f32, |a, b| a
+    + b);
+conv3d_1x1_typed!(conv3d_1x1_f64, f64, DType::F64, 0.0f64, gemm_f64, |a, b| a
+    + b);
+conv3d_1x1_typed!(
+    conv3d_1x1_f16,
+    f16,
+    DType::F16,
+    f16::from_f32(0.0),
+    gemm_f16,
+    |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32())
+);
 
 // ============================================================================
 // Bias addition
@@ -798,10 +873,36 @@ fn add_bias<T: Copy>(
 // Conv Transpose 1d - delegates to conv_transpose3d
 // ============================================================================
 
-conv_nd_via_3d!(conv_transpose1d_f32, conv_transpose3d_f32, expand_transpose_1d_to_3d, squeeze_3d_to_1d, 1, ConvTransposeOptions);
-conv_nd_via_3d!(conv_transpose1d_f64, conv_transpose3d_f64, expand_transpose_1d_to_3d, squeeze_3d_to_1d, 1, ConvTransposeOptions);
-conv_nd_via_3d!(conv_transpose1d_f16, conv_transpose3d_f16, expand_transpose_1d_to_3d, squeeze_3d_to_1d, 1, ConvTransposeOptions);
-bf16_via_f32!(conv_transpose1d_bf16, conv_transpose1d_f32, 1, ConvTransposeOptions);
+conv_nd_via_3d!(
+    conv_transpose1d_f32,
+    conv_transpose3d_f32,
+    expand_transpose_1d_to_3d,
+    squeeze_3d_to_1d,
+    1,
+    ConvTransposeOptions
+);
+conv_nd_via_3d!(
+    conv_transpose1d_f64,
+    conv_transpose3d_f64,
+    expand_transpose_1d_to_3d,
+    squeeze_3d_to_1d,
+    1,
+    ConvTransposeOptions
+);
+conv_nd_via_3d!(
+    conv_transpose1d_f16,
+    conv_transpose3d_f16,
+    expand_transpose_1d_to_3d,
+    squeeze_3d_to_1d,
+    1,
+    ConvTransposeOptions
+);
+bf16_via_f32!(
+    conv_transpose1d_bf16,
+    conv_transpose1d_f32,
+    1,
+    ConvTransposeOptions
+);
 
 fn expand_transpose_1d_to_3d(
     x: &EmberTensor,
@@ -843,10 +944,36 @@ fn expand_transpose_1d_to_3d(
 // Conv Transpose 2d - delegates to conv_transpose3d
 // ============================================================================
 
-conv_nd_via_3d!(conv_transpose2d_f32, conv_transpose3d_f32, expand_transpose_2d_to_3d, squeeze_3d_to_2d, 2, ConvTransposeOptions);
-conv_nd_via_3d!(conv_transpose2d_f64, conv_transpose3d_f64, expand_transpose_2d_to_3d, squeeze_3d_to_2d, 2, ConvTransposeOptions);
-conv_nd_via_3d!(conv_transpose2d_f16, conv_transpose3d_f16, expand_transpose_2d_to_3d, squeeze_3d_to_2d, 2, ConvTransposeOptions);
-bf16_via_f32!(conv_transpose2d_bf16, conv_transpose2d_f32, 2, ConvTransposeOptions);
+conv_nd_via_3d!(
+    conv_transpose2d_f32,
+    conv_transpose3d_f32,
+    expand_transpose_2d_to_3d,
+    squeeze_3d_to_2d,
+    2,
+    ConvTransposeOptions
+);
+conv_nd_via_3d!(
+    conv_transpose2d_f64,
+    conv_transpose3d_f64,
+    expand_transpose_2d_to_3d,
+    squeeze_3d_to_2d,
+    2,
+    ConvTransposeOptions
+);
+conv_nd_via_3d!(
+    conv_transpose2d_f16,
+    conv_transpose3d_f16,
+    expand_transpose_2d_to_3d,
+    squeeze_3d_to_2d,
+    2,
+    ConvTransposeOptions
+);
+bf16_via_f32!(
+    conv_transpose2d_bf16,
+    conv_transpose2d_f32,
+    2,
+    ConvTransposeOptions
+);
 
 fn expand_transpose_2d_to_3d(
     x: &EmberTensor,
@@ -890,8 +1017,19 @@ fn expand_transpose_2d_to_3d(
 
 conv_transpose3d_typed!(conv_transpose3d_f32, f32, DType::F32, 0.0f32, |a, b| a + b);
 conv_transpose3d_typed!(conv_transpose3d_f64, f64, DType::F64, 0.0f64, |a, b| a + b);
-conv_transpose3d_typed!(conv_transpose3d_f16, f16, DType::F16, f16::from_f32(0.0), |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()));
-bf16_via_f32!(conv_transpose3d_bf16, conv_transpose3d_f32, 3, ConvTransposeOptions);
+conv_transpose3d_typed!(
+    conv_transpose3d_f16,
+    f16,
+    DType::F16,
+    f16::from_f32(0.0),
+    |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32())
+);
+bf16_via_f32!(
+    conv_transpose3d_bf16,
+    conv_transpose3d_f32,
+    3,
+    ConvTransposeOptions
+);
 
 /// Sequential scatter loop for transposed convolution.
 ///
