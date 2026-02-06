@@ -449,6 +449,88 @@ impl IntTensorOps<Ember> for Ember {
     ) -> IntTensor<Ember> {
         crate::ops::unfold::unfold_int(tensor, dim, size, step)
     }
+
+    fn int_neg(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_scalar_op(tensor, 0i64, |a, _| -a)
+    }
+
+    fn int_clamp(tensor: IntTensor<Ember>, min: Scalar, max: Scalar) -> IntTensor<Ember> {
+        let min_val = min.to_i64().unwrap();
+        let max_val = max.to_i64().unwrap();
+        int_scalar_op(tensor, 0i64, move |x, _| x.clamp(min_val, max_val))
+    }
+
+    fn int_clamp_min(tensor: IntTensor<Ember>, min: Scalar) -> IntTensor<Ember> {
+        let min_val = min.to_i64().unwrap();
+        int_scalar_op(tensor, 0i64, move |x, _| x.max(min_val))
+    }
+
+    fn int_clamp_max(tensor: IntTensor<Ember>, max: Scalar) -> IntTensor<Ember> {
+        let max_val = max.to_i64().unwrap();
+        int_scalar_op(tensor, 0i64, move |x, _| x.min(max_val))
+    }
+
+    fn int_sign(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
+        int_scalar_op(tensor, 0i64, |x, _| {
+            if x > 0 {
+                1
+            } else if x < 0 {
+                -1
+            } else {
+                0
+            }
+        })
+    }
+
+    fn int_mean(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
+        let n = tensor.layout().num_elements();
+        let sum_result = crate::ops::reduce::sum(tensor);
+        let data: &[i64] = sum_result.storage();
+        let mean_val = data[0] / n as i64;
+        EmberTensor::new(
+            Bytes::from_elems(alloc::vec![mean_val]),
+            Layout::contiguous(Shape::from(alloc::vec![1])),
+            DType::I64,
+        )
+    }
+
+    fn int_max_dim(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::max_dim(tensor, dim)
+    }
+
+    fn int_min_dim(tensor: IntTensor<Ember>, dim: usize) -> IntTensor<Ember> {
+        crate::ops::reduce::min_dim(tensor, dim)
+    }
+
+    fn int_max_dim_with_indices(
+        tensor: IntTensor<Ember>,
+        dim: usize,
+    ) -> (IntTensor<Ember>, IntTensor<Ember>) {
+        crate::ops::reduce::max_dim_with_indices(tensor, dim)
+    }
+
+    fn int_min_dim_with_indices(
+        tensor: IntTensor<Ember>,
+        dim: usize,
+    ) -> (IntTensor<Ember>, IntTensor<Ember>) {
+        crate::ops::reduce::min_dim_with_indices(tensor, dim)
+    }
+
+    fn int_any(tensor: IntTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::any_int(tensor)
+    }
+
+    fn int_any_dim(tensor: IntTensor<Ember>, dim: usize) -> BoolTensor<Ember> {
+        crate::ops::comparison::any_int_dim(tensor, dim)
+    }
+
+    fn int_all(tensor: IntTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::all_int(tensor)
+    }
+
+    fn int_all_dim(tensor: IntTensor<Ember>, dim: usize) -> BoolTensor<Ember> {
+        crate::ops::comparison::all_int_dim(tensor, dim)
+    }
 }
 
 #[cfg(test)]

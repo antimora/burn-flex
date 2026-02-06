@@ -268,6 +268,30 @@ impl BoolTensorOps<Ember> for Ember {
     ) -> BoolTensor<Ember> {
         crate::ops::unfold::unfold_bool(tensor, dim, size, step)
     }
+
+    fn bool_not_equal(lhs: BoolTensor<Ember>, rhs: BoolTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::bool_not_equal(lhs, rhs)
+    }
+
+    fn bool_not_equal_elem(lhs: BoolTensor<Ember>, rhs: bool) -> BoolTensor<Ember> {
+        crate::ops::comparison::bool_not_equal_elem(lhs, rhs)
+    }
+
+    fn bool_any(tensor: BoolTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::any_bool(tensor)
+    }
+
+    fn bool_any_dim(tensor: BoolTensor<Ember>, dim: usize) -> BoolTensor<Ember> {
+        crate::ops::comparison::any_bool_dim(tensor, dim)
+    }
+
+    fn bool_all(tensor: BoolTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::all_bool(tensor)
+    }
+
+    fn bool_all_dim(tensor: BoolTensor<Ember>, dim: usize) -> BoolTensor<Ember> {
+        crate::ops::comparison::all_bool_dim(tensor, dim)
+    }
 }
 
 /// Boolean binary operation type.

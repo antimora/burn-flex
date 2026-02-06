@@ -469,7 +469,7 @@ pub fn erf(tensor: EmberTensor) -> EmberTensor {
 
 /// Approximation of the error function for f32.
 /// Uses the Horner form of the approximation from Abramowitz and Stegun.
-fn erf_f32(x: f32) -> f32 {
+pub fn erf_f32(x: f32) -> f32 {
     let a1 = 0.254_829_6_f32;
     let a2 = -0.284_496_72_f32;
     let a3 = 1.421_413_8_f32;
@@ -487,7 +487,7 @@ fn erf_f32(x: f32) -> f32 {
 }
 
 /// Approximation of the error function for f64.
-fn erf_f64(x: f64) -> f64 {
+pub fn erf_f64(x: f64) -> f64 {
     let a1 = 0.254829592_f64;
     let a2 = -0.284496736_f64;
     let a3 = 1.421413741_f64;

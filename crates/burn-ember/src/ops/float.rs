@@ -358,6 +358,108 @@ impl FloatTensorOps<Ember> for Ember {
         crate::ops::comparison::not_equal_elem(lhs, rhs.to_f64().unwrap())
     }
 
+    fn float_neg(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::unary_op(tensor, |x: f32| -x, |x: f64| -x)
+    }
+
+    fn float_clamp(tensor: FloatTensor<Ember>, min: Scalar, max: Scalar) -> FloatTensor<Ember> {
+        let min32 = min.to_f32().unwrap();
+        let max32 = max.to_f32().unwrap();
+        let min64 = min.to_f64().unwrap();
+        let max64 = max.to_f64().unwrap();
+        unary::unary_op(
+            tensor,
+            move |x: f32| x.clamp(min32, max32),
+            move |x: f64| x.clamp(min64, max64),
+        )
+    }
+
+    fn float_clamp_min(tensor: FloatTensor<Ember>, min: Scalar) -> FloatTensor<Ember> {
+        let min32 = min.to_f32().unwrap();
+        let min64 = min.to_f64().unwrap();
+        unary::unary_op(
+            tensor,
+            move |x: f32| x.max(min32),
+            move |x: f64| x.max(min64),
+        )
+    }
+
+    fn float_clamp_max(tensor: FloatTensor<Ember>, max: Scalar) -> FloatTensor<Ember> {
+        let max32 = max.to_f32().unwrap();
+        let max64 = max.to_f64().unwrap();
+        unary::unary_op(
+            tensor,
+            move |x: f32| x.min(max32),
+            move |x: f64| x.min(max64),
+        )
+    }
+
+    fn float_sign(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        unary::unary_op(
+            tensor,
+            |x: f32| {
+                if x > 0.0 {
+                    1.0
+                } else if x < 0.0 {
+                    -1.0
+                } else {
+                    0.0
+                }
+            },
+            |x: f64| {
+                if x > 0.0 {
+                    1.0
+                } else if x < 0.0 {
+                    -1.0
+                } else {
+                    0.0
+                }
+            },
+        )
+    }
+
+    fn float_mean(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
+        crate::ops::reduce::mean(tensor)
+    }
+
+    fn float_max_dim(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        crate::ops::reduce::max_dim(tensor, dim)
+    }
+
+    fn float_min_dim(tensor: FloatTensor<Ember>, dim: usize) -> FloatTensor<Ember> {
+        crate::ops::reduce::min_dim(tensor, dim)
+    }
+
+    fn float_max_dim_with_indices(
+        tensor: FloatTensor<Ember>,
+        dim: usize,
+    ) -> (FloatTensor<Ember>, IntTensor<Ember>) {
+        crate::ops::reduce::max_dim_with_indices(tensor, dim)
+    }
+
+    fn float_min_dim_with_indices(
+        tensor: FloatTensor<Ember>,
+        dim: usize,
+    ) -> (FloatTensor<Ember>, IntTensor<Ember>) {
+        crate::ops::reduce::min_dim_with_indices(tensor, dim)
+    }
+
+    fn float_any(tensor: FloatTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::any_float(tensor)
+    }
+
+    fn float_any_dim(tensor: FloatTensor<Ember>, dim: usize) -> BoolTensor<Ember> {
+        crate::ops::comparison::any_float_dim(tensor, dim)
+    }
+
+    fn float_all(tensor: FloatTensor<Ember>) -> BoolTensor<Ember> {
+        crate::ops::comparison::all_float(tensor)
+    }
+
+    fn float_all_dim(tensor: FloatTensor<Ember>, dim: usize) -> BoolTensor<Ember> {
+        crate::ops::comparison::all_float_dim(tensor, dim)
+    }
+
     fn float_sum(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
         crate::ops::reduce::sum(tensor)
     }
