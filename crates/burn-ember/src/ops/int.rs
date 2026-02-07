@@ -104,7 +104,7 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_equal_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
-        crate::ops::comparison::int_equal_elem(lhs, rhs.to_f64().unwrap() as i64)
+        crate::ops::comparison::int_equal_elem(lhs, rhs.to_i64().unwrap())
     }
 
     fn int_greater(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
@@ -112,7 +112,7 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_greater_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
-        crate::ops::comparison::int_greater_elem(lhs, rhs.to_f64().unwrap() as i64)
+        crate::ops::comparison::int_greater_elem(lhs, rhs.to_i64().unwrap())
     }
 
     fn int_greater_equal(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
@@ -120,7 +120,7 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_greater_equal_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
-        crate::ops::comparison::int_greater_equal_elem(lhs, rhs.to_f64().unwrap() as i64)
+        crate::ops::comparison::int_greater_equal_elem(lhs, rhs.to_i64().unwrap())
     }
 
     fn int_lower(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
@@ -128,7 +128,7 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_lower_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
-        crate::ops::comparison::int_lower_elem(lhs, rhs.to_f64().unwrap() as i64)
+        crate::ops::comparison::int_lower_elem(lhs, rhs.to_i64().unwrap())
     }
 
     fn int_lower_equal(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> BoolTensor<Ember> {
@@ -136,7 +136,7 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_lower_equal_elem(lhs: IntTensor<Ember>, rhs: Scalar) -> BoolTensor<Ember> {
-        crate::ops::comparison::int_lower_equal_elem(lhs, rhs.to_f64().unwrap() as i64)
+        crate::ops::comparison::int_lower_equal_elem(lhs, rhs.to_i64().unwrap())
     }
 
     fn int_add(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
