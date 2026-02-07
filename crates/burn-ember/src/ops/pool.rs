@@ -224,8 +224,10 @@ where
         {
             use rayon::prelude::*;
 
-            let output = vec![neg_inf; batch_size * channels * spatial_out];
-            let indices = vec![-1i64; batch_size * channels * spatial_out];
+            let mut output = vec![neg_inf; batch_size * channels * spatial_out];
+            let mut indices = vec![-1i64; batch_size * channels * spatial_out];
+            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
+            let idx_ptr = crate::ops::SendMutPtr::new(indices.as_mut_ptr());
 
             (0..batch_size).into_par_iter().for_each(|b| {
                 (0..channels).into_par_iter().for_each(|c| {
@@ -278,10 +280,8 @@ where
                                 }
 
                                 unsafe {
-                                    let out_ptr = output.as_ptr().add(out_idx) as *mut T;
-                                    *out_ptr = max_val;
-                                    let idx_ptr = indices.as_ptr().add(out_idx) as *mut i64;
-                                    *idx_ptr = max_idx;
+                                    out_ptr.write(out_idx, max_val);
+                                    idx_ptr.write(out_idx, max_idx);
                                 }
                             }
                         }
@@ -688,7 +688,8 @@ where
         {
             use rayon::prelude::*;
 
-            let output = vec![zero; batch_size * channels * spatial_out];
+            let mut output = vec![zero; batch_size * channels * spatial_out];
+            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
 
             (0..batch_size).into_par_iter().for_each(|b| {
                 (0..channels).into_par_iter().for_each(|c| {
@@ -758,8 +759,7 @@ where
                                 };
 
                                 unsafe {
-                                    let out_ptr = output.as_ptr().add(out_idx) as *mut T;
-                                    *out_ptr = div_fn(sum, divisor);
+                                    out_ptr.write(out_idx, div_fn(sum, divisor));
                                 }
                             }
                         }
@@ -1035,7 +1035,8 @@ where
         {
             use rayon::prelude::*;
 
-            let output = vec![zero; batch_size * channels * spatial_out];
+            let mut output = vec![zero; batch_size * channels * spatial_out];
+            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
 
             (0..batch_size).into_par_iter().for_each(|b| {
                 (0..channels).into_par_iter().for_each(|c| {
@@ -1072,8 +1073,7 @@ where
                                 }
 
                                 unsafe {
-                                    let out_ptr = output.as_ptr().add(out_idx) as *mut T;
-                                    *out_ptr = div_fn(sum, count.max(1));
+                                    out_ptr.write(out_idx, div_fn(sum, count.max(1)));
                                 }
                             }
                         }

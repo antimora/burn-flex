@@ -179,7 +179,8 @@ where
         {
             use rayon::prelude::*;
 
-            let output = vec![T::zero(); out_numel];
+            let mut output = vec![T::zero(); out_numel];
+            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
 
             (0..batch).into_par_iter().for_each(|b| {
                 (0..channels).into_par_iter().for_each(|c| {
@@ -193,8 +194,7 @@ where
                             let out_idx = out_base + oh * out_width + ow;
                             let val = input[in_base + ih * in_width + iw];
                             unsafe {
-                                let out_ptr = output.as_ptr().add(out_idx) as *mut T;
-                                *out_ptr = val;
+                                out_ptr.write(out_idx, val);
                             }
                         }
                     }
@@ -260,7 +260,8 @@ where
         {
             use rayon::prelude::*;
 
-            let output = vec![T::zero(); out_numel];
+            let mut output = vec![T::zero(); out_numel];
+            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
 
             (0..batch).into_par_iter().for_each(|b| {
                 (0..channels).into_par_iter().for_each(|c| {
@@ -292,8 +293,7 @@ where
 
                             let out_idx = out_base + oh * out_width + ow;
                             unsafe {
-                                let out_ptr = output.as_ptr().add(out_idx) as *mut T;
-                                *out_ptr = result;
+                                out_ptr.write(out_idx, result);
                             }
                         }
                     }
@@ -377,7 +377,8 @@ where
         {
             use rayon::prelude::*;
 
-            let output = vec![T::zero(); out_numel];
+            let mut output = vec![T::zero(); out_numel];
+            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
             let num_bc_pairs = batch * channels;
 
             // Adaptive parallelization: if few (batch, channel) pairs, parallelize rows too
@@ -423,8 +424,7 @@ where
 
                         let out_idx = out_base + oh * out_width + ow;
                         unsafe {
-                            let out_ptr = output.as_ptr().add(out_idx) as *mut T;
-                            *out_ptr = T::from(sum).unwrap();
+                            out_ptr.write(out_idx, T::from(sum).unwrap());
                         }
                     }
                 });
@@ -466,8 +466,7 @@ where
 
                                 let out_idx = out_base + oh * out_width + ow;
                                 unsafe {
-                                    let out_ptr = output.as_ptr().add(out_idx) as *mut T;
-                                    *out_ptr = T::from(sum).unwrap();
+                                    out_ptr.write(out_idx, T::from(sum).unwrap());
                                 }
                             }
                         }

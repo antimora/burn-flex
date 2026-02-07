@@ -403,7 +403,8 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
         {
             use rayon::prelude::*;
 
-            let dst = vec![zero; batch_size * channels_out * spatial_out];
+            let mut dst = vec![zero; batch_size * channels_out * spatial_out];
+            let dst_ptr = crate::ops::SendMutPtr::new(dst.as_mut_ptr());
 
             // Process batches and tiles in parallel (nested parallelism)
             (0..batch_size).into_par_iter().for_each(|b| {
@@ -471,8 +472,7 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
                                     + global_idx;
                                 let res_idx = c_out * tile_size + local_idx;
                                 unsafe {
-                                    let ptr = dst.as_ptr().add(dst_idx) as *mut T;
-                                    *ptr = result[res_idx];
+                                    dst_ptr.write(dst_idx, result[res_idx]);
                                 }
                             }
                         }
@@ -714,7 +714,8 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
-            let dst = vec![zero; batch_size * channels_out * spatial];
+            let mut dst = vec![zero; batch_size * channels_out * spatial];
+            let dst_ptr = crate::ops::SendMutPtr::new(dst.as_mut_ptr());
 
             (0..batch_size).into_par_iter().for_each(|b| {
                 for g in 0..groups {
@@ -745,10 +746,9 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
                     // Write result to output
                     let out_offset = b * channels_out * spatial + out_c_start * spatial;
                     unsafe {
-                        let ptr = dst.as_ptr().add(out_offset) as *mut T;
                         core::ptr::copy_nonoverlapping(
                             result.as_ptr(),
-                            ptr,
+                            dst_ptr.ptr_add(out_offset),
                             out_channels_per_group * spatial,
                         );
                     }
