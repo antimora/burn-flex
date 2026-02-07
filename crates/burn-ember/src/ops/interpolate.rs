@@ -721,19 +721,13 @@ where
 
                     for dy in -1..=2_isize {
                         let y = y0 + dy;
-                        if y < 0 || y >= in_height as isize {
-                            continue;
-                        }
-                        let y_idx = y as usize;
+                        let y_idx = y.clamp(0, in_height as isize - 1) as usize;
                         let ty = (y_in - y0 as f64) - dy as f64;
                         let wy = cubic_weight(ty, a);
 
                         for dx in -1..=2_isize {
                             let x = x0 + dx;
-                            if x < 0 || x >= in_width as isize {
-                                continue;
-                            }
-                            let x_idx = x as usize;
+                            let x_idx = x.clamp(0, in_width as isize - 1) as usize;
                             let tx = (x_in - x0 as f64) - dx as f64;
                             let wx = cubic_weight(tx, a);
 

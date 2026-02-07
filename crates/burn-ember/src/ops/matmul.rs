@@ -12,6 +12,12 @@ use burn_std::{Bytes, Shape, bf16, f16};
 
 use crate::{EmberTensor, Layout};
 
+/// Checked multiplication for matrix sizes, panics on overflow.
+#[inline]
+fn checked_size(a: usize, b: usize) -> usize {
+    a.checked_mul(b).expect("matmul: matrix size overflow")
+}
+
 /// Threshold for enabling parallelism (M*N*K operations).
 /// 192^3 = ~7M ops - balance between 128x128 (no parallel) and 256x256 (parallel)
 const PARALLEL_THRESHOLD: usize = 192 * 192 * 192;
@@ -276,9 +282,9 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
     let batch_size: usize = broadcast_shape.iter().product();
-    let lhs_matrix_size = m * k;
-    let rhs_matrix_size = k * n;
-    let out_matrix_size = m * n;
+    let lhs_matrix_size = checked_size(m, k);
+    let rhs_matrix_size = checked_size(k, n);
+    let out_matrix_size = checked_size(m, n);
 
     let mut out_dims = broadcast_shape.clone();
     out_dims.push(m);
@@ -527,9 +533,9 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
     let batch_size: usize = broadcast_shape.iter().product();
-    let lhs_matrix_size = m * k;
-    let rhs_matrix_size = k * n;
-    let out_matrix_size = m * n;
+    let lhs_matrix_size = checked_size(m, k);
+    let rhs_matrix_size = checked_size(k, n);
+    let out_matrix_size = checked_size(m, n);
 
     let mut out_dims = broadcast_shape.clone();
     out_dims.push(m);
@@ -765,9 +771,9 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
     let batch_size: usize = broadcast_shape.iter().product();
-    let lhs_matrix_size = m * k;
-    let rhs_matrix_size = k * n;
-    let out_matrix_size = m * n;
+    let lhs_matrix_size = checked_size(m, k);
+    let rhs_matrix_size = checked_size(k, n);
+    let out_matrix_size = checked_size(m, n);
 
     let mut out_dims = broadcast_shape.clone();
     out_dims.push(m);
@@ -1092,9 +1098,9 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
     let batch_size: usize = broadcast_shape.iter().product();
     let rhs_batch_size: usize = rhs_batch.iter().product();
-    let lhs_matrix_size = m * k;
-    let rhs_matrix_size = k * n;
-    let out_matrix_size = m * n;
+    let lhs_matrix_size = checked_size(m, k);
+    let rhs_matrix_size = checked_size(k, n);
+    let out_matrix_size = checked_size(m, n);
 
     let mut out_dims = broadcast_shape.clone();
     out_dims.push(m);
@@ -1248,9 +1254,9 @@ fn matmul_batched_i64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
     let batch_size: usize = broadcast_shape.iter().product();
-    let lhs_matrix_size = m * k;
-    let rhs_matrix_size = k * n;
-    let out_matrix_size = m * n;
+    let lhs_matrix_size = checked_size(m, k);
+    let rhs_matrix_size = checked_size(k, n);
+    let out_matrix_size = checked_size(m, n);
 
     let mut out_dims = broadcast_shape.clone();
     out_dims.push(m);

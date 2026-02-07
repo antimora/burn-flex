@@ -153,12 +153,22 @@ impl ActivationOps<Ember> for Ember {
 
 #[inline]
 fn sigmoid_f32(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
+    if x >= 0.0 {
+        1.0 / (1.0 + (-x).exp())
+    } else {
+        let e = x.exp();
+        e / (1.0 + e)
+    }
 }
 
 #[inline]
 fn sigmoid_f64(x: f64) -> f64 {
-    1.0 / (1.0 + (-x).exp())
+    if x >= 0.0 {
+        1.0 / (1.0 + (-x).exp())
+    } else {
+        let e = x.exp();
+        e / (1.0 + e)
+    }
 }
 
 #[cfg(test)]

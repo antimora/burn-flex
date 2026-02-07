@@ -207,6 +207,9 @@ impl ModuleOps<Ember> for Ember {
                     bg.map(|b| cast_from_f32(b, bf16::from_f32)),
                 )
             }
+            // f64 backward computed via f32: precision loss for large/small values.
+            // A native f64 implementation would require duplicating ~400 lines of
+            // deform_conv2d_backward. f64 deform_conv is rare in practice.
             DType::F64 => {
                 let to = |v: f64| v as f32;
                 let from = |v: f32| v as f64;

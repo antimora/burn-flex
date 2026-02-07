@@ -109,7 +109,7 @@ where
 }
 
 /// Binary operation with in-place optimization for Pod types.
-fn binary_op_typed<E, Op>(mut lhs: EmberTensor, rhs: &EmberTensor, op: Op) -> EmberTensor
+pub(crate) fn binary_op_typed<E, Op>(mut lhs: EmberTensor, rhs: &EmberTensor, op: Op) -> EmberTensor
 where
     E: Element + bytemuck::Pod,
     Op: Fn(E, E) -> E,
@@ -229,7 +229,7 @@ where
     }
 }
 
-fn scalar_op_typed<E, Op>(mut tensor: EmberTensor, scalar: E, op: Op) -> EmberTensor
+pub(crate) fn scalar_op_typed<E, Op>(mut tensor: EmberTensor, scalar: E, op: Op) -> EmberTensor
 where
     E: Element + bytemuck::Pod,
     Op: Fn(E, E) -> E,
@@ -290,8 +290,8 @@ where
         DType::I32 => binary_op_typed(lhs, &rhs, |a: i32, b: i32| op(a as i64, b as i64) as i32),
         DType::I16 => binary_op_typed(lhs, &rhs, |a: i16, b: i16| op(a as i64, b as i64) as i16),
         DType::I8 => binary_op_typed(lhs, &rhs, |a: i8, b: i8| op(a as i64, b as i64) as i8),
-        // NOTE: u64 values > i64::MAX reinterpret as negative i64. This is correct for
-        // add/sub/mul/bitwise (two's complement), but wrong for div/rem.
+        // u64 values > i64::MAX wrap to negative i64. This is correct for
+        // add/sub/mul/bitwise (two's complement). Div/rem are handled at the call site.
         DType::U64 => binary_op_typed(lhs, &rhs, |a: u64, b: u64| op(a as i64, b as i64) as u64),
         DType::U32 => binary_op_typed(lhs, &rhs, |a: u32, b: u32| op(a as i64, b as i64) as u32),
         DType::U16 => binary_op_typed(lhs, &rhs, |a: u16, b: u16| op(a as i64, b as i64) as u16),

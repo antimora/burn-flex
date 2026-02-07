@@ -139,11 +139,9 @@ fn pool_output_size(
 ) -> usize {
     let effective_kernel = dilation * (kernel - 1) + 1;
     let padded = input + 2 * padding;
-    assert!(
-        padded >= effective_kernel,
-        "pool_output_size: input size ({input}) + 2*padding ({padding}) is smaller than \
-         effective kernel size ({effective_kernel})"
-    );
+    if padded < effective_kernel {
+        return if ceil_mode { 1 } else { 0 };
+    }
     let numerator = padded - effective_kernel;
     if ceil_mode {
         numerator.div_ceil(stride) + 1

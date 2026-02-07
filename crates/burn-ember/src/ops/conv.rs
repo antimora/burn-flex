@@ -328,6 +328,16 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
     let out_h = calculate_conv_output_size(kernel_h, stride_h, pad_h, options.dilation[1], in_h);
     let out_w = calculate_conv_output_size(kernel_w, stride_w, pad_w, options.dilation[2], in_w);
 
+    // Validate sizes won't overflow index calculations
+    let _total = [batch_size, channels_out, out_d, out_h, out_w]
+        .iter()
+        .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+        .expect("conv: output tensor dimensions would overflow index calculations");
+    let _col_total = [channels_per_group, kernel_d, kernel_h, kernel_w]
+        .iter()
+        .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+        .expect("conv: kernel dimensions would overflow index calculations");
+
     let x_data: &[T] = x.storage();
     let w_data: &[T] = weight.storage();
 
@@ -472,6 +482,9 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
                                     + global_idx;
                                 let res_idx = c_out * tile_size + local_idx;
                                 unsafe {
+                                    debug_assert!(
+                                        dst_idx < batch_size * channels_out * spatial_out
+                                    );
                                     dst_ptr.write(dst_idx, result[res_idx]);
                                 }
                             }

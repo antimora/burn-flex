@@ -307,10 +307,10 @@ pub fn prod_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
 /// Argmax along a dimension, returning indices as i64.
 pub fn argmax(tensor: EmberTensor, dim: usize) -> EmberTensor {
     match tensor.dtype() {
-        DType::F32 => argmax_impl::<f32>(&tensor, dim),
-        DType::F64 => argmax_impl::<f64>(&tensor, dim),
-        DType::F16 => argext_half::<f16>(&tensor, dim, |a, b| a > b, f16::to_f32),
-        DType::BF16 => argext_half::<bf16>(&tensor, dim, |a, b| a > b, bf16::to_f32),
+        DType::F32 => argmax_float_impl::<f32>(&tensor, dim),
+        DType::F64 => argmax_float_impl::<f64>(&tensor, dim),
+        DType::F16 => argext_half::<f16>(&tensor, dim, |a, b| a.is_nan() || a > b, f16::to_f32),
+        DType::BF16 => argext_half::<bf16>(&tensor, dim, |a, b| a.is_nan() || a > b, bf16::to_f32),
         DType::I8 => argmax_impl::<i8>(&tensor, dim),
         DType::I16 => argmax_impl::<i16>(&tensor, dim),
         DType::I32 => argmax_impl::<i32>(&tensor, dim),
@@ -322,10 +322,10 @@ pub fn argmax(tensor: EmberTensor, dim: usize) -> EmberTensor {
 /// Argmin along a dimension, returning indices as i64.
 pub fn argmin(tensor: EmberTensor, dim: usize) -> EmberTensor {
     match tensor.dtype() {
-        DType::F32 => argmin_impl::<f32>(&tensor, dim),
-        DType::F64 => argmin_impl::<f64>(&tensor, dim),
-        DType::F16 => argext_half::<f16>(&tensor, dim, |a, b| a < b, f16::to_f32),
-        DType::BF16 => argext_half::<bf16>(&tensor, dim, |a, b| a < b, bf16::to_f32),
+        DType::F32 => argmin_float_impl::<f32>(&tensor, dim),
+        DType::F64 => argmin_float_impl::<f64>(&tensor, dim),
+        DType::F16 => argext_half::<f16>(&tensor, dim, |a, b| a.is_nan() || a < b, f16::to_f32),
+        DType::BF16 => argext_half::<bf16>(&tensor, dim, |a, b| a.is_nan() || a < b, bf16::to_f32),
         DType::I8 => argmin_impl::<i8>(&tensor, dim),
         DType::I16 => argmin_impl::<i16>(&tensor, dim),
         DType::I32 => argmin_impl::<i32>(&tensor, dim),
@@ -791,8 +791,8 @@ pub fn mean(tensor: EmberTensor) -> EmberTensor {
 /// Max along a dimension, returning only values.
 pub fn max_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
     match tensor.dtype() {
-        DType::F32 => max_dim_impl::<f32>(&tensor, dim),
-        DType::F64 => max_dim_impl::<f64>(&tensor, dim),
+        DType::F32 => max_dim_float_impl::<f32>(&tensor, dim),
+        DType::F64 => max_dim_float_impl::<f64>(&tensor, dim),
         DType::F16 => max_dim_f16(&tensor, dim, true),
         DType::BF16 => max_dim_bf16(&tensor, dim, true),
         DType::I64 => max_dim_impl::<i64>(&tensor, dim),
@@ -804,8 +804,8 @@ pub fn max_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
 /// Min along a dimension, returning only values.
 pub fn min_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
     match tensor.dtype() {
-        DType::F32 => min_dim_impl::<f32>(&tensor, dim),
-        DType::F64 => min_dim_impl::<f64>(&tensor, dim),
+        DType::F32 => min_dim_float_impl::<f32>(&tensor, dim),
+        DType::F64 => min_dim_float_impl::<f64>(&tensor, dim),
         DType::F16 => min_dim_f16(&tensor, dim, true),
         DType::BF16 => min_dim_bf16(&tensor, dim, true),
         DType::I64 => min_dim_impl::<i64>(&tensor, dim),
@@ -817,16 +817,17 @@ pub fn min_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
 /// Max along a dimension with indices, returning (values, indices) in a single pass.
 pub fn max_dim_with_indices(tensor: EmberTensor, dim: usize) -> (EmberTensor, EmberTensor) {
     match tensor.dtype() {
-        DType::F32 => max_dim_with_indices_impl::<f32>(&tensor, dim),
-        DType::F64 => max_dim_with_indices_impl::<f64>(&tensor, dim),
+        DType::F32 => max_dim_with_indices_float_impl::<f32>(&tensor, dim),
+        DType::F64 => max_dim_with_indices_float_impl::<f64>(&tensor, dim),
         DType::F16 => {
             let values = max_dim_f16(&tensor, dim, true);
-            let indices = argext_half::<f16>(&tensor, dim, |a, b| a > b, f16::to_f32);
+            let indices = argext_half::<f16>(&tensor, dim, |a, b| a.is_nan() || a > b, f16::to_f32);
             (values, indices)
         }
         DType::BF16 => {
             let values = max_dim_bf16(&tensor, dim, true);
-            let indices = argext_half::<bf16>(&tensor, dim, |a, b| a > b, bf16::to_f32);
+            let indices =
+                argext_half::<bf16>(&tensor, dim, |a, b| a.is_nan() || a > b, bf16::to_f32);
             (values, indices)
         }
         DType::I64 => max_dim_with_indices_impl::<i64>(&tensor, dim),
@@ -841,16 +842,17 @@ pub fn max_dim_with_indices(tensor: EmberTensor, dim: usize) -> (EmberTensor, Em
 /// Min along a dimension with indices, returning (values, indices) in a single pass.
 pub fn min_dim_with_indices(tensor: EmberTensor, dim: usize) -> (EmberTensor, EmberTensor) {
     match tensor.dtype() {
-        DType::F32 => min_dim_with_indices_impl::<f32>(&tensor, dim),
-        DType::F64 => min_dim_with_indices_impl::<f64>(&tensor, dim),
+        DType::F32 => min_dim_with_indices_float_impl::<f32>(&tensor, dim),
+        DType::F64 => min_dim_with_indices_float_impl::<f64>(&tensor, dim),
         DType::F16 => {
             let values = min_dim_f16(&tensor, dim, true);
-            let indices = argext_half::<f16>(&tensor, dim, |a, b| a < b, f16::to_f32);
+            let indices = argext_half::<f16>(&tensor, dim, |a, b| a.is_nan() || a < b, f16::to_f32);
             (values, indices)
         }
         DType::BF16 => {
             let values = min_dim_bf16(&tensor, dim, true);
-            let indices = argext_half::<bf16>(&tensor, dim, |a, b| a < b, bf16::to_f32);
+            let indices =
+                argext_half::<bf16>(&tensor, dim, |a, b| a.is_nan() || a < b, bf16::to_f32);
             (values, indices)
         }
         DType::I64 => min_dim_with_indices_impl::<i64>(&tensor, dim),
@@ -888,6 +890,47 @@ fn max_dim_impl<E: Element + bytemuck::Pod + PartialOrd>(
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
                 if val > max_val {
+                    max_val = val;
+                }
+            }
+            values.push(max_val);
+        }
+    }
+
+    EmberTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape)),
+        E::dtype(),
+    )
+}
+
+/// Float-specific max_dim that propagates NaN.
+fn max_dim_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
+    tensor: &EmberTensor,
+    dim: usize,
+) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+    assert!(dim < ndims);
+
+    let dim_size = shape.dims[dim];
+    let mut out_shape: Vec<usize> = shape.dims.clone();
+    out_shape[dim] = 1;
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let data: &[E] = tensor.storage();
+    let start_offset = tensor.layout().start_offset();
+
+    let mut values: Vec<E> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
+    for outer in 0..outer_size.max(1) {
+        for inner in 0..inner_size.max(1) {
+            let first_idx = start_offset + outer * dim_size * inner_size + inner;
+            let mut max_val = data[first_idx];
+            for d in 1..dim_size {
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                let val = data[idx];
+                if val.is_nan() || val > max_val {
                     max_val = val;
                 }
             }
@@ -940,6 +983,153 @@ fn min_dim_impl<E: Element + bytemuck::Pod + PartialOrd>(
         Layout::contiguous(Shape::from(out_shape)),
         E::dtype(),
     )
+}
+
+/// Float-specific min_dim that propagates NaN.
+fn min_dim_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
+    tensor: &EmberTensor,
+    dim: usize,
+) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+    assert!(dim < ndims);
+
+    let dim_size = shape.dims[dim];
+    let mut out_shape: Vec<usize> = shape.dims.clone();
+    out_shape[dim] = 1;
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let data: &[E] = tensor.storage();
+    let start_offset = tensor.layout().start_offset();
+
+    let mut values: Vec<E> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
+    for outer in 0..outer_size.max(1) {
+        for inner in 0..inner_size.max(1) {
+            let first_idx = start_offset + outer * dim_size * inner_size + inner;
+            let mut min_val = data[first_idx];
+            for d in 1..dim_size {
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                let val = data[idx];
+                if val.is_nan() || val < min_val {
+                    min_val = val;
+                }
+            }
+            values.push(min_val);
+        }
+    }
+
+    EmberTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape)),
+        E::dtype(),
+    )
+}
+
+/// Float-specific max_dim_with_indices that propagates NaN.
+fn max_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
+    tensor: &EmberTensor,
+    dim: usize,
+) -> (EmberTensor, EmberTensor) {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+    assert!(dim < ndims);
+
+    let dim_size = shape.dims[dim];
+    let mut out_shape: Vec<usize> = shape.dims.clone();
+    out_shape[dim] = 1;
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let data: &[E] = tensor.storage();
+    let start_offset = tensor.layout().start_offset();
+    let cap = outer_size.max(1) * inner_size.max(1);
+
+    let mut values: Vec<E> = Vec::with_capacity(cap);
+    let mut indices: Vec<i64> = Vec::with_capacity(cap);
+
+    for outer in 0..outer_size.max(1) {
+        for inner in 0..inner_size.max(1) {
+            let first_idx = start_offset + outer * dim_size * inner_size + inner;
+            let mut max_val = data[first_idx];
+            let mut max_idx: i64 = 0;
+            for d in 1..dim_size {
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                let val = data[idx];
+                if val.is_nan() || val > max_val {
+                    max_val = val;
+                    max_idx = d as i64;
+                }
+            }
+            values.push(max_val);
+            indices.push(max_idx);
+        }
+    }
+
+    let val_tensor = EmberTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape.clone())),
+        E::dtype(),
+    );
+    let idx_tensor = EmberTensor::new(
+        Bytes::from_elems(indices),
+        Layout::contiguous(Shape::from(out_shape)),
+        DType::I64,
+    );
+    (val_tensor, idx_tensor)
+}
+
+/// Float-specific min_dim_with_indices that propagates NaN.
+fn min_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
+    tensor: &EmberTensor,
+    dim: usize,
+) -> (EmberTensor, EmberTensor) {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+    assert!(dim < ndims);
+
+    let dim_size = shape.dims[dim];
+    let mut out_shape: Vec<usize> = shape.dims.clone();
+    out_shape[dim] = 1;
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let data: &[E] = tensor.storage();
+    let start_offset = tensor.layout().start_offset();
+    let cap = outer_size.max(1) * inner_size.max(1);
+
+    let mut values: Vec<E> = Vec::with_capacity(cap);
+    let mut indices: Vec<i64> = Vec::with_capacity(cap);
+
+    for outer in 0..outer_size.max(1) {
+        for inner in 0..inner_size.max(1) {
+            let first_idx = start_offset + outer * dim_size * inner_size + inner;
+            let mut min_val = data[first_idx];
+            let mut min_idx: i64 = 0;
+            for d in 1..dim_size {
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                let val = data[idx];
+                if val.is_nan() || val < min_val {
+                    min_val = val;
+                    min_idx = d as i64;
+                }
+            }
+            values.push(min_val);
+            indices.push(min_idx);
+        }
+    }
+
+    let val_tensor = EmberTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape.clone())),
+        E::dtype(),
+    );
+    let idx_tensor = EmberTensor::new(
+        Bytes::from_elems(indices),
+        Layout::contiguous(Shape::from(out_shape)),
+        DType::I64,
+    );
+    (val_tensor, idx_tensor)
 }
 
 fn max_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
@@ -1068,7 +1258,7 @@ fn max_dim_f16(tensor: &EmberTensor, dim: usize, _values_only: bool) -> EmberTen
             for d in 1..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx].to_f32();
-                if val > max_val {
+                if val.is_nan() || val > max_val {
                     max_val = val;
                 }
             }
@@ -1105,7 +1295,7 @@ fn min_dim_f16(tensor: &EmberTensor, dim: usize, _values_only: bool) -> EmberTen
             for d in 1..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx].to_f32();
-                if val < min_val {
+                if val.is_nan() || val < min_val {
                     min_val = val;
                 }
             }
@@ -1142,7 +1332,7 @@ fn max_dim_bf16(tensor: &EmberTensor, dim: usize, _values_only: bool) -> EmberTe
             for d in 1..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx].to_f32();
-                if val > max_val {
+                if val.is_nan() || val > max_val {
                     max_val = val;
                 }
             }
@@ -1179,7 +1369,7 @@ fn min_dim_bf16(tensor: &EmberTensor, dim: usize, _values_only: bool) -> EmberTe
             for d in 1..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx].to_f32();
-                if val < min_val {
+                if val.is_nan() || val < min_val {
                     min_val = val;
                 }
             }
@@ -1372,6 +1562,114 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
                 if min_val.is_none() || val < min_val.unwrap() {
+                    min_val = Some(val);
+                    min_idx = d as i64;
+                }
+            }
+            result.push(min_idx);
+        }
+    }
+
+    let bytes = Bytes::from_elems(result);
+    EmberTensor::new(
+        bytes,
+        Layout::contiguous(Shape::from(out_shape)),
+        DType::I64,
+    )
+}
+
+/// Float-specific argmax that propagates NaN.
+fn argmax_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
+    tensor: &EmberTensor,
+    dim: usize,
+) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+
+    assert!(
+        dim < ndims,
+        "dim {} out of bounds for {} dimensions",
+        dim,
+        ndims
+    );
+
+    let dim_size = shape.dims[dim];
+    let mut out_shape: Vec<usize> = shape.dims.clone();
+    out_shape[dim] = 1;
+    let out_size: usize = out_shape.iter().product();
+
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+
+    let data: &[E] = tensor.storage();
+    let start_offset = tensor.layout().start_offset();
+
+    let mut result: Vec<i64> = Vec::with_capacity(out_size);
+
+    for outer in 0..outer_size.max(1) {
+        for inner in 0..inner_size.max(1) {
+            let mut max_idx: i64 = 0;
+            let mut max_val: Option<E> = None;
+
+            for d in 0..dim_size {
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                let val = data[idx];
+                if max_val.is_none() || val.is_nan() || val > max_val.unwrap() {
+                    max_val = Some(val);
+                    max_idx = d as i64;
+                }
+            }
+            result.push(max_idx);
+        }
+    }
+
+    let bytes = Bytes::from_elems(result);
+    EmberTensor::new(
+        bytes,
+        Layout::contiguous(Shape::from(out_shape)),
+        DType::I64,
+    )
+}
+
+/// Float-specific argmin that propagates NaN.
+fn argmin_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
+    tensor: &EmberTensor,
+    dim: usize,
+) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+
+    assert!(
+        dim < ndims,
+        "dim {} out of bounds for {} dimensions",
+        dim,
+        ndims
+    );
+
+    let dim_size = shape.dims[dim];
+    let mut out_shape: Vec<usize> = shape.dims.clone();
+    out_shape[dim] = 1;
+    let out_size: usize = out_shape.iter().product();
+
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+
+    let data: &[E] = tensor.storage();
+    let start_offset = tensor.layout().start_offset();
+
+    let mut result: Vec<i64> = Vec::with_capacity(out_size);
+
+    for outer in 0..outer_size.max(1) {
+        for inner in 0..inner_size.max(1) {
+            let mut min_idx: i64 = 0;
+            let mut min_val: Option<E> = None;
+
+            for d in 0..dim_size {
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                let val = data[idx];
+                if min_val.is_none() || val.is_nan() || val < min_val.unwrap() {
                     min_val = Some(val);
                     min_idx = d as i64;
                 }
@@ -1865,5 +2163,43 @@ mod tests {
         // For each row along dim 2, the second element (from the original dim 0 of 2x3 blocks)
         // is always larger: [1 vs 4] -> idx 1, [2 vs 5] -> idx 1, etc.
         assert_eq!(values, vec![1, 1, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn test_max_dim_nan_propagation() {
+        let data: Vec<f32> = vec![1.0, f32::NAN, 3.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [1, 3]));
+        let result = max_dim(tensor, 1);
+        let values: Vec<f32> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert!(values[0].is_nan());
+    }
+
+    #[test]
+    fn test_min_dim_nan_propagation() {
+        let data: Vec<f32> = vec![1.0, f32::NAN, 3.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [1, 3]));
+        let result = min_dim(tensor, 1);
+        let values: Vec<f32> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert!(values[0].is_nan());
+    }
+
+    #[test]
+    fn test_max_dim_with_indices_nan_propagation() {
+        let data: Vec<f32> = vec![1.0, f32::NAN, 3.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [1, 3]));
+        let (values, indices) = max_dim_with_indices(tensor, 1);
+        let vals: Vec<f32> = bytemuck::cast_slice(&values.into_data().bytes).to_vec();
+        let idxs: Vec<i64> = bytemuck::cast_slice(&indices.into_data().bytes).to_vec();
+        assert!(vals[0].is_nan());
+        assert_eq!(idxs[0], 1); // NaN is at index 1
+    }
+
+    #[test]
+    fn test_argmax_nan_propagation() {
+        let data: Vec<f32> = vec![1.0, f32::NAN, 3.0];
+        let tensor = EmberTensor::from_data(TensorData::new(data, [1, 3]));
+        let result = argmax(tensor, 1);
+        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert_eq!(values[0], 1); // NaN is at index 1
     }
 }

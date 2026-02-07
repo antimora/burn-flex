@@ -9,7 +9,7 @@ use burn_std::{Bytes, IntDType, Shape, Slice};
 use num_traits::ToPrimitive;
 
 use crate::Layout;
-use crate::ops::binary::{int_binary_op, int_scalar_op};
+use crate::ops::binary::{binary_op_typed, int_binary_op, int_scalar_op, scalar_op_typed};
 use crate::{Ember, EmberTensor, ops::matmul};
 
 impl IntTensorOps<Ember> for Ember {
@@ -164,19 +164,35 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_div(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        // U64 values > i64::MAX produce wrong results through i64 cast
+        if lhs.dtype() == DType::U64 {
+            let (lhs, rhs) = crate::ops::expand::broadcast_binary(lhs, rhs);
+            return binary_op_typed(lhs, &rhs, |a: u64, b: u64| a / b);
+        }
         int_binary_op(lhs, rhs, |a, b| a / b)
     }
 
     fn int_div_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| a / b);
+        }
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a / b)
     }
 
     fn int_remainder(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
+        // U64 values > i64::MAX produce wrong results through i64 cast
+        if lhs.dtype() == DType::U64 {
+            let (lhs, rhs) = crate::ops::expand::broadcast_binary(lhs, rhs);
+            return binary_op_typed(lhs, &rhs, |a: u64, b: u64| a % b);
+        }
         // Python/PyTorch-style remainder: result has same sign as divisor
         int_binary_op(lhs, rhs, |a, b| ((a % b) + b) % b)
     }
 
     fn int_remainder_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| a % b);
+        }
         // Python/PyTorch-style remainder: result has same sign as divisor
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| ((a % b) + b) % b)
     }
@@ -538,6 +554,8 @@ mod tests {
     use burn_tensor::{Int, Tensor, TensorData};
 
     use crate::Ember;
+    use crate::EmberTensor;
+    use burn_backend::ops::IntTensorOps;
 
     #[test]
     fn test_int_add() {
@@ -756,5 +774,23 @@ mod tests {
         let data = result.into_data();
 
         assert_eq!(data, TensorData::from([[20i64, 15], [10, 5]]));
+    }
+
+    #[test]
+    fn test_u64_div_large_values() {
+        let a = EmberTensor::from_data(TensorData::new(vec![u64::MAX], [1]));
+        let b = EmberTensor::from_data(TensorData::new(vec![2u64], [1]));
+        let result = Ember::int_div(a, b);
+        let values: Vec<u64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert_eq!(values[0], u64::MAX / 2);
+    }
+
+    #[test]
+    fn test_u64_remainder_large_values() {
+        let a = EmberTensor::from_data(TensorData::new(vec![u64::MAX], [1]));
+        let b = EmberTensor::from_data(TensorData::new(vec![2u64], [1]));
+        let result = Ember::int_remainder(a, b);
+        let values: Vec<u64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert_eq!(values[0], u64::MAX % 2);
     }
 }
