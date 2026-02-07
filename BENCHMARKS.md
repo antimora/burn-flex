@@ -18,27 +18,27 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 | Operation   | Size | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
 | ----------- | ---- | ------- | ------- | -------- | --------- | ----------- |
-| add         | 4K   | 542 ns  | 1.41 us | **2.6x** | 16.5 KB   | 49.3 KB     |
-| add         | 64K  | 5.9 us  | 21.1 us | **3.6x** | 262 KB    | 787 KB      |
-| add         | 1M   | 99 us   | 352 us  | **3.6x** | 4.2 MB    | 12.6 MB     |
-| mul         | 4K   | 453 ns  | 1.45 us | **3.2x** | 16.5 KB   | 32.8 KB     |
-| mul         | 64K  | 7.6 us  | 21.6 us | **2.8x** | 262 KB    | 787 KB      |
-| mul         | 1M   | 115 us  | 355 us  | **3.1x** | 4.2 MB    | 12.6 MB     |
-| div         | 1M   | 115 us  | 351 us  | **3.1x** | 4.2 MB    | 12.6 MB     |
-| add_scalar  | 1M   | 76 us   | 179 us  | **2.4x** | 4.2 MB    | 8.4 MB      |
-| mul_scalar  | 1M   | 76 us   | 193 us  | **2.5x** | 4.2 MB    | 8.4 MB      |
-| powf        | 64K  | 197 us  | 211 us  | **1.1x** | 262 KB    | 787 KB      |
-| powf        | 1M   | 3.22 ms | 3.42 ms | **1.1x** | 4.2 MB    | 12.6 MB     |
-| powf_scalar | 1M   | 3.09 ms | 3.19 ms | 1.0x     | 4.2 MB    | 8.4 MB      |
-| atan2       | 64K  | 146 us  | 159 us  | **1.1x** | 262 KB    | 787 KB      |
-| atan2       | 1M   | 2.50 ms | 2.56 ms | 1.0x     | 4.2 MB    | 12.6 MB     |
+| add         | 4K   | 449 ns  | 1.45 us | **3.2x** | 16.5 KB   | 49.3 KB     |
+| add         | 64K  | 7.7 us  | 21.0 us | **2.7x** | 262 KB    | 787 KB      |
+| add         | 1M   | 118 us  | 344 us  | **2.9x** | 4.2 MB    | 12.6 MB     |
+| mul         | 4K   | 449 ns  | 1.75 us | **3.9x** | 16.5 KB   | 32.8 KB     |
+| mul         | 64K  | 7.6 us  | 21.3 us | **2.8x** | 262 KB    | 787 KB      |
+| mul         | 1M   | 119 us  | 343 us  | **2.9x** | 4.2 MB    | 12.6 MB     |
+| div         | 1M   | 115 us  | 347 us  | **3.0x** | 4.2 MB    | 12.6 MB     |
+| add_scalar  | 1M   | 83 us   | 209 us  | **2.5x** | 4.2 MB    | 8.4 MB      |
+| mul_scalar  | 1M   | 79 us   | 188 us  | **2.4x** | 4.2 MB    | 8.4 MB      |
+| powf        | 64K  | 198 us  | 219 us  | **1.1x** | 262 KB    | 787 KB      |
+| powf        | 1M   | 3.25 ms | 3.49 ms | **1.1x** | 4.2 MB    | 12.6 MB     |
+| powf_scalar | 1M   | 3.10 ms | 3.29 ms | **1.1x** | 4.2 MB    | 8.4 MB      |
+| atan2       | 64K  | 147 us  | 155 us  | **1.1x** | 262 KB    | 787 KB      |
+| atan2       | 1M   | 2.37 ms | 2.59 ms | **1.1x** | 4.2 MB    | 12.6 MB     |
 
 ### Transposed
 
 | Operation | Size      | Ember   | NdArray | Speedup | Ember Mem | NdArray Mem |
 | --------- | --------- | ------- | ------- | ------- | --------- | ----------- |
-| add       | 256x256   | 51 us   | 53 us   | 1.0x    | 262 KB    | 524 KB      |
-| add       | 1024x1024 | 1.12 ms | 1.10 ms | 1.0x    | 4.2 MB    | 8.4 MB      |
+| add       | 256x256   | 49 us   | 56 us   | **1.1x** | 262 KB    | 524 KB      |
+| add       | 1024x1024 | 979 us  | 1.30 ms | **1.3x** | 4.2 MB    | 8.4 MB      |
 
 ---
 
@@ -46,22 +46,22 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 | Operation      | Size | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
 | -------------- | ---- | ------- | ------- | -------- | --------- | ----------- |
-| int_add        | 4K   | 688 ns  | 4.41 us | **6.4x** | 32.9 KB   | 98.4 KB     |
-| int_add        | 64K  | 15.4 us | 39.4 us | **2.6x** | 524 KB    | 1.57 MB     |
-| int_add        | 1M   | 246 us  | 696 us  | **2.8x** | 8.4 MB    | 25.2 MB     |
-| int_mul        | 4K   | 1.38 us | 4.58 us | **3.3x** | 32.9 KB   | 98.4 KB     |
-| int_mul        | 64K  | 18.5 us | 48.0 us | **2.6x** | 524 KB    | 1.57 MB     |
-| int_mul        | 1M   | 230 us  | 707 us  | **3.1x** | 8.4 MB    | 25.2 MB     |
-| int_div        | 1M   | 607 us  | 1.08 ms | **1.8x** | 8.4 MB    | 25.2 MB     |
-| int_add_scalar | 1M   | 152 us  | 413 us  | **2.7x** | 8.4 MB    | 16.8 MB     |
-| int_mul_scalar | 1M   | 281 us  | 432 us  | **1.5x** | 8.4 MB    | 16.8 MB     |
+| int_add        | 4K   | 835 ns  | 3.98 us | **4.8x** | 32.9 KB   | 98.4 KB     |
+| int_add        | 64K  | 14.6 us | 41.6 us | **2.8x** | 524 KB    | 1.57 MB     |
+| int_add        | 1M   | 241 us  | 722 us  | **3.0x** | 8.4 MB    | 25.2 MB     |
+| int_mul        | 4K   | 1.38 us | 4.29 us | **3.1x** | 32.9 KB   | 98.4 KB     |
+| int_mul        | 64K  | 18.5 us | 53.5 us | **2.9x** | 524 KB    | 1.57 MB     |
+| int_mul        | 1M   | 230 us  | 743 us  | **3.2x** | 8.4 MB    | 25.2 MB     |
+| int_div        | 1M   | 615 us  | 1.14 ms | **1.9x** | 8.4 MB    | 25.2 MB     |
+| int_add_scalar | 1M   | 149 us  | 453 us  | **3.0x** | 8.4 MB    | 16.8 MB     |
+| int_mul_scalar | 1M   | 284 us  | 464 us  | **1.6x** | 8.4 MB    | 16.8 MB     |
 
 ### Transposed (i64)
 
 | Operation | Size      | Ember   | NdArray | Speedup  |
 | --------- | --------- | ------- | ------- | -------- |
-| int_add   | 256x256   | 58 us   | 64 us   | **1.1x** |
-| int_add   | 1024x1024 | 1.46 ms | 1.33 ms | 0.91x    |
+| int_add   | 256x256   | 57 us   | 65 us   | **1.1x** |
+| int_add   | 1024x1024 | 1.50 ms | 1.40 ms | 0.93x    |
 
 ---
 
@@ -372,47 +372,47 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 | Operation | Size | Ember  | NdArray | Speedup  | Ember Mem | NdArray Mem |
 | --------- | ---- | ------ | ------- | -------- | --------- | ----------- |
-| greater   | 4K   | 531 ns | 1.74 us | **3.3x** | 4.2 KB    | 49.3 KB     |
-| greater   | 64K  | 6.5 us | 21.3 us | **3.3x** | 65.6 KB   | 787 KB      |
-| greater   | 1M   | 96 us  | 373 us  | **3.9x** | 1.0 MB    | 12.6 MB     |
-| equal     | 4K   | 578 ns | 1.69 us | **2.9x** | 4.2 KB    | 49.3 KB     |
-| equal     | 1M   | 99 us  | 306 us  | **3.1x** | 1.0 MB    | 12.6 MB     |
-| lower     | 1M   | 98 us  | 308 us  | **3.1x** | 1.0 MB    | 12.6 MB     |
+| greater   | 4K   | 535 ns | 1.45 us | **2.7x** | 4.2 KB    | 49.3 KB     |
+| greater   | 64K  | 6.2 us | 21.0 us | **3.4x** | 65.6 KB   | 787 KB      |
+| greater   | 1M   | 89 us  | 308 us  | **3.5x** | 1.0 MB    | 12.6 MB     |
+| equal     | 4K   | 545 ns | 1.49 us | **2.7x** | 4.2 KB    | 49.3 KB     |
+| equal     | 1M   | 89 us  | 307 us  | **3.5x** | 1.0 MB    | 12.6 MB     |
+| lower     | 1M   | 88 us  | 304 us  | **3.5x** | 1.0 MB    | 12.6 MB     |
 
 ### Scalar Comparisons
 
 | Operation    | Size | Ember | NdArray | Speedup  |
 | ------------ | ---- | ----- | ------- | -------- |
-| greater_elem | 1M   | 95 us | 202 us  | **2.1x** |
+| greater_elem | 1M   | 77 us | 200 us  | **2.6x** |
 
 ### Transposed Comparisons
 
 | Operation | Size      | Ember   | NdArray | Speedup |
 | --------- | --------- | ------- | ------- | ------- |
 | greater   | 256x256   | 53 us   | 51 us   | 0.96x   |
-| greater   | 1024x1024 | 1.02 ms | 1.06 ms | 1.0x    |
+| greater   | 1024x1024 | 972 us  | 1.21 ms | **1.2x** |
 
 ### Broadcast Comparisons
 
 | Operation | Shape     | Ember  | NdArray | Speedup  |
 | --------- | --------- | ------ | ------- | -------- |
-| greater   | 256x256   | 8.0 us | 26.7 us | **3.3x** |
-| greater   | 1024x1024 | 115 us | 316 us  | **2.7x** |
+| greater   | 256x256   | 6.2 us | 25.7 us | **4.1x** |
+| greater   | 1024x1024 | 86 us  | 319 us  | **3.7x** |
 
 ### Expand (Broadcasting)
 
 | Operation           | Ember  | NdArray | Speedup    |
 | ------------------- | ------ | ------- | ---------- |
-| 1x1 to 1000x1000    | 164 ns | 302 us  | **~1800x** |
-| 1024x1 to 1024x1024 | 122 ns | 322 us  | **~2600x** |
-| 1x1024 to 1024x1024 | 141 ns | 78 us   | **~550x**  |
+| 1x1 to 1000x1000    | 171 ns | 287 us  | **~1700x** |
+| 1024x1 to 1024x1024 | 130 ns | 307 us  | **~2400x** |
+| 1x1024 to 1024x1024 | 145 ns | 75 us   | **~520x**  |
 
 ### Boolean Operations
 
 | Operation | Size | Ember | NdArray | Speedup |
 | --------- | ---- | ----- | ------- | ------- |
-| bool_not  | 1M   | 25 us | 19 us   | 0.76x   |
-| bool_and  | 1M   | 35 us | 29 us   | 0.83x   |
+| bool_not  | 1M   | 24 us | 19 us   | 0.79x   |
+| bool_and  | 1M   | 32 us | 28 us   | 0.88x   |
 
 ---
 
