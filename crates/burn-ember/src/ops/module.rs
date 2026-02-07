@@ -207,6 +207,30 @@ impl ModuleOps<Ember> for Ember {
                     bg.map(|b| cast_from_f32(b, bf16::from_f32)),
                 )
             }
+            DType::F64 => {
+                let to = |v: f64| v as f32;
+                let from = |v: f32| v as f64;
+                let (xg, og, wg, mg, bg) = deform_conv::deform_conv2d_backward_f32(
+                    cast_to_f32(x, to),
+                    cast_to_f32(offset, to),
+                    cast_to_f32(weight, to),
+                    mask.map(|m| cast_to_f32(m, to)),
+                    bias.map(|b| cast_to_f32(b, to)),
+                    cast_to_f32(output_grad, to),
+                    options.stride,
+                    options.padding,
+                    options.dilation,
+                    options.weight_groups,
+                    options.offset_groups,
+                );
+                (
+                    cast_from_f32(xg, from),
+                    cast_from_f32(og, from),
+                    cast_from_f32(wg, from),
+                    mg.map(|m| cast_from_f32(m, from)),
+                    bg.map(|b| cast_from_f32(b, from)),
+                )
+            }
             dtype => panic!("deform_conv2d_backward: unsupported dtype {:?}", dtype),
         };
         DeformConv2dBackward::new(x_grad, offset_grad, weight_grad, mask_grad, bias_grad)
