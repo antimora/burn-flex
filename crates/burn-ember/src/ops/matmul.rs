@@ -23,7 +23,7 @@ const BATCH_PARALLEL_THRESHOLD: usize = 128 * 128 * 128; // ~2M ops total
 
 /// Get parallelism setting based on matrix size.
 fn get_parallelism(m: usize, n: usize, k: usize) -> gemm::Parallelism {
-    let ops = m * n * k;
+    let ops = m.saturating_mul(n).saturating_mul(k);
     if ops >= PARALLEL_THRESHOLD {
         #[cfg(feature = "rayon")]
         {
@@ -291,7 +291,7 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_data: &[f32] = rhs.storage();
     let out_data: &mut [f32] = output.storage_mut();
 
-    let per_matrix_ops = m * n * k;
+    let per_matrix_ops = m.saturating_mul(n).saturating_mul(k);
 
     // Strategy:
     // 1. Large matrices: let gemm parallelize internally
@@ -299,7 +299,7 @@ fn matmul_batched_f32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     // 3. Small total work: single-threaded
     #[cfg(feature = "rayon")]
     {
-        let total_ops = batch_size * per_matrix_ops;
+        let total_ops = batch_size.saturating_mul(per_matrix_ops);
 
         // Heuristic: batch parallelism is better when we have enough batches
         // to saturate cores (>=4), even for large matrices. This avoids
@@ -542,11 +542,11 @@ fn matmul_batched_f64(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_data: &[f64] = rhs.storage();
     let out_data: &mut [f64] = output.storage_mut();
 
-    let per_matrix_ops = m * n * k;
+    let per_matrix_ops = m.saturating_mul(n).saturating_mul(k);
 
     #[cfg(feature = "rayon")]
     {
-        let total_ops = batch_size * per_matrix_ops;
+        let total_ops = batch_size.saturating_mul(per_matrix_ops);
         let prefer_batch_parallel = batch_size >= 4 && total_ops >= BATCH_PARALLEL_THRESHOLD;
 
         if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
@@ -780,11 +780,11 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let rhs_data: &[f16] = rhs.storage();
     let out_data: &mut [f16] = output.storage_mut();
 
-    let per_matrix_ops = m * n * k;
+    let per_matrix_ops = m.saturating_mul(n).saturating_mul(k);
 
     #[cfg(feature = "rayon")]
     {
-        let total_ops = batch_size * per_matrix_ops;
+        let total_ops = batch_size.saturating_mul(per_matrix_ops);
         let prefer_batch_parallel = batch_size >= 4 && total_ops >= BATCH_PARALLEL_THRESHOLD;
 
         if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
