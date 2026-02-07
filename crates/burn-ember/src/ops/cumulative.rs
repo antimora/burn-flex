@@ -1,7 +1,7 @@
 //! Cumulative operations along a dimension.
 
 use alloc::vec;
-use burn_backend::{DType, Element};
+use burn_backend::Element;
 use burn_std::Bytes;
 use bytemuck::Pod;
 use num_traits::Num;
@@ -25,42 +25,6 @@ pub fn cumprod<E: Element + Pod + Default + Copy + Num>(
     dim: usize,
 ) -> EmberTensor {
     cumulative_op(tensor, dim, E::one(), |acc, val| acc * val)
-}
-
-/// Cumulative minimum along a dimension.
-pub fn cummin<E: Element + Pod + Default + Copy + PartialOrd>(
-    tensor: EmberTensor,
-    dim: usize,
-) -> EmberTensor {
-    let init = get_max_value::<E>();
-    #[allow(clippy::eq_op)]
-    cumulative_op(tensor, dim, init, |acc, val| {
-        if acc != acc {
-            acc
-        } else if val != val || val < acc {
-            val
-        } else {
-            acc
-        }
-    })
-}
-
-/// Cumulative maximum along a dimension.
-pub fn cummax<E: Element + Pod + Default + Copy + PartialOrd>(
-    tensor: EmberTensor,
-    dim: usize,
-) -> EmberTensor {
-    let init = get_min_value::<E>();
-    #[allow(clippy::eq_op)]
-    cumulative_op(tensor, dim, init, |acc, val| {
-        if acc != acc {
-            acc
-        } else if val != val || val > acc {
-            val
-        } else {
-            acc
-        }
-    })
 }
 
 /// Generic cumulative operation along a dimension.
@@ -204,30 +168,6 @@ where
     EmberTensor::new(bytes, Layout::contiguous(shape), E::dtype())
 }
 
-// Helper functions to get min/max values for different types
-fn get_max_value<E: Element + Pod>() -> E {
-    // Use bytemuck to transmute appropriate max values
-    match E::dtype() {
-        DType::F32 => bytemuck::cast(f32::INFINITY),
-        DType::F64 => bytemuck::cast(f64::INFINITY),
-        DType::I64 => bytemuck::cast(i64::MAX),
-        DType::I32 => bytemuck::cast(i32::MAX),
-        DType::U8 => bytemuck::cast(u8::MAX),
-        _ => panic!("get_max_value: unsupported dtype {:?}", E::dtype()),
-    }
-}
-
-fn get_min_value<E: Element + Pod>() -> E {
-    match E::dtype() {
-        DType::F32 => bytemuck::cast(f32::NEG_INFINITY),
-        DType::F64 => bytemuck::cast(f64::NEG_INFINITY),
-        DType::I64 => bytemuck::cast(i64::MIN),
-        DType::I32 => bytemuck::cast(i32::MIN),
-        DType::U8 => bytemuck::cast(u8::MIN),
-        _ => panic!("get_min_value: unsupported dtype {:?}", E::dtype()),
-    }
-}
-
 // Type-specific wrappers
 
 pub fn cumsum_f32(tensor: EmberTensor, dim: usize) -> EmberTensor {
@@ -255,27 +195,45 @@ pub fn cumprod_i64(tensor: EmberTensor, dim: usize) -> EmberTensor {
 }
 
 pub fn cummin_f32(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    cummin::<f32>(tensor, dim)
+    cumulative_op(tensor, dim, f32::INFINITY, |acc, val| {
+        if val.is_nan() || val < acc { val } else { acc }
+    })
 }
 
 pub fn cummin_f64(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    cummin::<f64>(tensor, dim)
+    cumulative_op(tensor, dim, f64::INFINITY, |acc, val| {
+        if val.is_nan() || val < acc { val } else { acc }
+    })
 }
 
 pub fn cummin_i64(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    cummin::<i64>(tensor, dim)
+    cumulative_op(
+        tensor,
+        dim,
+        i64::MAX,
+        |acc, val| if val < acc { val } else { acc },
+    )
 }
 
 pub fn cummax_f32(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    cummax::<f32>(tensor, dim)
+    cumulative_op(tensor, dim, f32::NEG_INFINITY, |acc, val| {
+        if val.is_nan() || val > acc { val } else { acc }
+    })
 }
 
 pub fn cummax_f64(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    cummax::<f64>(tensor, dim)
+    cumulative_op(tensor, dim, f64::NEG_INFINITY, |acc, val| {
+        if val.is_nan() || val > acc { val } else { acc }
+    })
 }
 
 pub fn cummax_i64(tensor: EmberTensor, dim: usize) -> EmberTensor {
-    cummax::<i64>(tensor, dim)
+    cumulative_op(
+        tensor,
+        dim,
+        i64::MIN,
+        |acc, val| if val > acc { val } else { acc },
+    )
 }
 
 pub fn cumsum_half<E: Element + Pod + Default + Copy>(
@@ -306,7 +264,7 @@ pub fn cummin_half<E: Element + Pod + Default + Copy>(
         tensor,
         dim,
         f32::INFINITY,
-        |acc, val| if val < acc { val } else { acc },
+        |acc, val| if val.is_nan() || val < acc { val } else { acc },
         to_f32,
         from_f32,
     )
@@ -322,7 +280,7 @@ pub fn cummax_half<E: Element + Pod + Default + Copy>(
         tensor,
         dim,
         f32::NEG_INFINITY,
-        |acc, val| if val > acc { val } else { acc },
+        |acc, val| if val.is_nan() || val > acc { val } else { acc },
         to_f32,
         from_f32,
     )
@@ -419,7 +377,6 @@ mod tests {
     #[test]
     fn test_cummin_nan_propagation() {
         // [3.0, NaN, 1.0, 2.0] -> [3.0, NaN, NaN, NaN]
-        // Once NaN is encountered, it should propagate to all subsequent positions
         let tensor = EmberTensor::from_data(TensorData::new(vec![3.0f32, f32::NAN, 1.0, 2.0], [4]));
         let result = cummin_f32(tensor, 0);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
