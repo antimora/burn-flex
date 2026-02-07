@@ -226,8 +226,8 @@ pub fn mean_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
             }
             tensor
         }
-        DType::I32 => scalar_div_int::<i32>(sum_result, dim_size as i32),
-        DType::I64 => scalar_div_int::<i64>(sum_result, dim_size as i64),
+        DType::I32 => scalar_div::<i32>(sum_result, dim_size as i32),
+        DType::I64 => scalar_div::<i64>(sum_result, dim_size as i64),
         _ => panic!("mean_dim: unsupported dtype {:?}", dtype),
     }
 }
@@ -1221,17 +1221,6 @@ fn scalar_div_bf16(mut tensor: EmberTensor, divisor: f32) -> EmberTensor {
     let data: &mut [bf16] = tensor.storage_mut();
     for x in data.iter_mut() {
         *x = bf16::from_f32(x.to_f32() / divisor);
-    }
-    tensor
-}
-
-fn scalar_div_int<E: Element + bytemuck::Pod + core::ops::Div<Output = E> + Copy>(
-    mut tensor: EmberTensor,
-    divisor: E,
-) -> EmberTensor {
-    let data: &mut [E] = tensor.storage_mut();
-    for x in data.iter_mut() {
-        *x = *x / divisor;
     }
     tensor
 }
