@@ -1196,14 +1196,14 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
-            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::sync::atomic::{AtomicU32, Ordering};
 
             // For f32, we can use atomic adds for thread-safe accumulation
             // For other types, we fall back to per-(batch, out_channel) parallelism
             if dtype == DType::F32 {
                 // Atomic approach for f32: each thread can write to any output position
-                let atomic_output: Vec<AtomicU64> =
-                    (0..output_size).map(|_| AtomicU64::new(0)).collect();
+                let atomic_output: Vec<AtomicU32> =
+                    (0..output_size).map(|_| AtomicU32::new(0)).collect();
 
                 (0..batch_size * out_channels)
                     .into_par_iter()
@@ -1281,9 +1281,9 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
                                                         let old_bits =
                                                             atomic.load(Ordering::Relaxed);
                                                         let old_f32 =
-                                                            f32::from_bits(old_bits as u32);
+                                                            f32::from_bits(old_bits);
                                                         let new_f32 = old_f32 + prod;
-                                                        let new_bits = new_f32.to_bits() as u64;
+                                                        let new_bits = new_f32.to_bits();
                                                         if atomic
                                                             .compare_exchange_weak(
                                                                 old_bits,
@@ -1309,7 +1309,7 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
                 atomic_output
                     .into_iter()
                     .map(|a| {
-                        let bits = a.load(Ordering::Relaxed) as u32;
+                        let bits = a.load(Ordering::Relaxed);
                         let f = f32::from_bits(bits);
                         bytemuck::cast_slice::<f32, T>(&[f])[0]
                     })
