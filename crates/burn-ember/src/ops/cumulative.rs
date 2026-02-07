@@ -33,12 +33,18 @@ pub fn cummin<E: Element + Pod + Default + Copy + PartialOrd>(
     dim: usize,
 ) -> EmberTensor {
     let init = get_max_value::<E>();
-    cumulative_op(
-        tensor,
-        dim,
-        init,
-        |acc, val| if val < acc { val } else { acc },
-    )
+    cumulative_op(tensor, dim, init, |acc, val| {
+        #[allow(clippy::eq_op)]
+        if acc != acc {
+            acc
+        } else if val != val {
+            val
+        } else if val < acc {
+            val
+        } else {
+            acc
+        }
+    })
 }
 
 /// Cumulative maximum along a dimension.
@@ -47,12 +53,18 @@ pub fn cummax<E: Element + Pod + Default + Copy + PartialOrd>(
     dim: usize,
 ) -> EmberTensor {
     let init = get_min_value::<E>();
-    cumulative_op(
-        tensor,
-        dim,
-        init,
-        |acc, val| if val > acc { val } else { acc },
-    )
+    cumulative_op(tensor, dim, init, |acc, val| {
+        #[allow(clippy::eq_op)]
+        if acc != acc {
+            acc
+        } else if val != val {
+            val
+        } else if val > acc {
+            val
+        } else {
+            acc
+        }
+    })
 }
 
 /// Generic cumulative operation along a dimension.
