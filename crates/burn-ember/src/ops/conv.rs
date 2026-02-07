@@ -1280,8 +1280,7 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
                                                     loop {
                                                         let old_bits =
                                                             atomic.load(Ordering::Relaxed);
-                                                        let old_f32 =
-                                                            f32::from_bits(old_bits);
+                                                        let old_f32 = f32::from_bits(old_bits);
                                                         let new_f32 = old_f32 + prod;
                                                         let new_bits = new_f32.to_bits();
                                                         if atomic

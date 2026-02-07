@@ -120,7 +120,13 @@ impl FloatTensorOps<Ember> for Ember {
 
     fn float_remainder(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
         // Python/PyTorch-style remainder: result has same sign as divisor
-        binary_op(lhs, rhs, |a, b| ((a % b) + b) % b, |a, b| ((a % b) + b) % b, None)
+        binary_op(
+            lhs,
+            rhs,
+            |a, b| ((a % b) + b) % b,
+            |a, b| ((a % b) + b) % b,
+            None,
+        )
     }
 
     fn float_remainder_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
@@ -699,7 +705,13 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_atan2(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        binary_op(lhs, rhs, |a: f32, b| a.atan2(b), |a: f64, b| a.atan2(b), None)
+        binary_op(
+            lhs,
+            rhs,
+            |a: f32, b| a.atan2(b),
+            |a: f64, b| a.atan2(b),
+            None,
+        )
     }
 
     fn float_round(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {
