@@ -761,14 +761,15 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
     let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
     let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
-    debug_assert_eq!(lhs_batch, rhs_batch, "matmul: batch dimensions must match");
 
-    let batch_size: usize = lhs_batch.iter().product();
+    let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
+
+    let batch_size: usize = broadcast_shape.iter().product();
     let lhs_matrix_size = m * k;
     let rhs_matrix_size = k * n;
     let out_matrix_size = m * n;
 
-    let mut out_dims = lhs_batch.clone();
+    let mut out_dims = broadcast_shape.clone();
     out_dims.push(m);
     out_dims.push(n);
     let out_shape = Shape::from(out_dims);
@@ -789,11 +790,16 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
         if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
+                let lhs_offset =
+                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
+                let rhs_offset =
+                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                let out_offset = b * out_matrix_size;
                 unsafe {
                     gemm_single_f16(
-                        out_data[b * out_matrix_size..].as_mut_ptr(),
-                        lhs_data[b * lhs_matrix_size..].as_ptr(),
-                        rhs_data[b * rhs_matrix_size..].as_ptr(),
+                        out_data[out_offset..].as_mut_ptr(),
+                        lhs_data[lhs_offset..].as_ptr(),
+                        rhs_data[rhs_offset..].as_ptr(),
                         m,
                         n,
                         k,
@@ -809,24 +815,35 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
             out_chunks
                 .into_par_iter()
                 .enumerate()
-                .for_each(|(b, out_chunk)| unsafe {
-                    gemm_single_f16(
-                        out_chunk.as_mut_ptr(),
-                        lhs_data[b * lhs_matrix_size..].as_ptr(),
-                        rhs_data[b * rhs_matrix_size..].as_ptr(),
-                        m,
-                        n,
-                        k,
-                        gemm::Parallelism::None,
-                    );
+                .for_each(|(b, out_chunk)| {
+                    let lhs_offset =
+                        batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
+                    let rhs_offset =
+                        batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                    unsafe {
+                        gemm_single_f16(
+                            out_chunk.as_mut_ptr(),
+                            lhs_data[lhs_offset..].as_ptr(),
+                            rhs_data[rhs_offset..].as_ptr(),
+                            m,
+                            n,
+                            k,
+                            gemm::Parallelism::None,
+                        );
+                    }
                 });
         } else {
             for b in 0..batch_size {
+                let lhs_offset =
+                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
+                let rhs_offset =
+                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                let out_offset = b * out_matrix_size;
                 unsafe {
                     gemm_single_f16(
-                        out_data[b * out_matrix_size..].as_mut_ptr(),
-                        lhs_data[b * lhs_matrix_size..].as_ptr(),
-                        rhs_data[b * rhs_matrix_size..].as_ptr(),
+                        out_data[out_offset..].as_mut_ptr(),
+                        lhs_data[lhs_offset..].as_ptr(),
+                        rhs_data[rhs_offset..].as_ptr(),
                         m,
                         n,
                         k,
@@ -841,11 +858,16 @@ fn matmul_batched_f16(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     {
         let _ = per_matrix_ops;
         for b in 0..batch_size {
+            let lhs_offset =
+                batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
+            let rhs_offset =
+                batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+            let out_offset = b * out_matrix_size;
             unsafe {
                 gemm_single_f16(
-                    out_data[b * out_matrix_size..].as_mut_ptr(),
-                    lhs_data[b * lhs_matrix_size..].as_ptr(),
-                    rhs_data[b * rhs_matrix_size..].as_ptr(),
+                    out_data[out_offset..].as_mut_ptr(),
+                    lhs_data[lhs_offset..].as_ptr(),
+                    rhs_data[rhs_offset..].as_ptr(),
                     m,
                     n,
                     k,
@@ -1065,17 +1087,16 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
 
     let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
     let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
-    debug_assert_eq!(
-        lhs_batch, rhs_batch,
-        "int_matmul: batch dimensions must match"
-    );
 
-    let batch_size: usize = lhs_batch.iter().product();
+    let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
+
+    let batch_size: usize = broadcast_shape.iter().product();
+    let rhs_batch_size: usize = rhs_batch.iter().product();
     let lhs_matrix_size = m * k;
     let rhs_matrix_size = k * n;
     let out_matrix_size = m * n;
 
-    let mut out_dims = lhs_batch.clone();
+    let mut out_dims = broadcast_shape.clone();
     out_dims.push(m);
     out_dims.push(n);
     let out_shape = Shape::from(out_dims);
@@ -1083,9 +1104,9 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
     let lhs_data: &[i32] = lhs.storage();
     let rhs_data: &[i32] = rhs.storage();
 
-    // Transpose entire rhs tensor once: [B, K, N] -> [B, N, K]
-    let mut rhs_transposed = vec![0i32; batch_size * n * k];
-    for b in 0..batch_size {
+    // Transpose rhs per actual rhs batch: [B_rhs, K, N] -> [B_rhs, N, K]
+    let mut rhs_transposed = vec![0i32; rhs_batch_size * n * k];
+    for b in 0..rhs_batch_size {
         let src_offset = b * rhs_matrix_size;
         let dst_offset = b * n * k;
         for i in 0..k {
@@ -1105,8 +1126,10 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
             .par_chunks_mut(out_matrix_size)
             .enumerate()
             .for_each(|(b, out_slice)| {
-                let lhs_offset = b * lhs_matrix_size;
-                let rhs_t_offset = b * n * k;
+                let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+                let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+                let lhs_offset = lhs_batch_idx * lhs_matrix_size;
+                let rhs_t_offset = rhs_batch_idx * n * k;
 
                 let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
                 let rhs_t_slice = &rhs_transposed[rhs_t_offset..rhs_t_offset + n * k];
@@ -1132,8 +1155,10 @@ fn matmul_batched_i32(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
         let mut output = vec![0i32; batch_size * out_matrix_size];
 
         for b in 0..batch_size {
-            let lhs_offset = b * lhs_matrix_size;
-            let rhs_t_offset = b * n * k;
+            let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+            let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+            let lhs_offset = lhs_batch_idx * lhs_matrix_size;
+            let rhs_t_offset = rhs_batch_idx * n * k;
             let out_offset = b * out_matrix_size;
 
             let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
