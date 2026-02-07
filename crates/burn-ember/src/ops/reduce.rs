@@ -208,8 +208,24 @@ pub fn mean_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
         DType::F64 => scalar_div::<f64>(sum_result, dim_size as f64),
         DType::F16 => scalar_div_f16(sum_result, dim_size as f32),
         DType::BF16 => scalar_div_bf16(sum_result, dim_size as f32),
-        DType::I8 => scalar_div_int::<i8>(sum_result, dim_size as i8),
-        DType::I16 => scalar_div_int::<i16>(sum_result, dim_size as i16),
+        DType::I8 => {
+            let divisor = dim_size as i32;
+            let mut tensor = sum_result;
+            let data: &mut [i8] = tensor.storage_mut();
+            for x in data.iter_mut() {
+                *x = ((*x as i32) / divisor) as i8;
+            }
+            tensor
+        }
+        DType::I16 => {
+            let divisor = dim_size as i32;
+            let mut tensor = sum_result;
+            let data: &mut [i16] = tensor.storage_mut();
+            for x in data.iter_mut() {
+                *x = ((*x as i32) / divisor) as i16;
+            }
+            tensor
+        }
         DType::I32 => scalar_div_int::<i32>(sum_result, dim_size as i32),
         DType::I64 => scalar_div_int::<i64>(sum_result, dim_size as i64),
         _ => panic!("mean_dim: unsupported dtype {:?}", dtype),
