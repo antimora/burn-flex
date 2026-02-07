@@ -712,7 +712,7 @@ fn reduce_bool_dim_with(
     combine: fn(bool, bool) -> bool,
     is_nonzero: impl Fn(usize) -> bool,
 ) -> EmberTensor {
-    let tensor = tensor.to_contiguous();
+    debug_assert!(tensor.is_contiguous() && tensor.layout().start_offset() == 0);
     let shape = tensor.layout().shape();
     let ndims = shape.num_dims();
     assert!(dim < ndims);
@@ -722,7 +722,6 @@ fn reduce_bool_dim_with(
     out_shape[dim] = 1;
     let outer_size: usize = shape.dims[..dim].iter().product();
     let inner_size: usize = shape.dims[dim + 1..].iter().product();
-    let start_offset = tensor.layout().start_offset();
 
     let out_size = outer_size.max(1) * inner_size.max(1);
     let mut result: Vec<u8> = Vec::with_capacity(out_size);
@@ -731,7 +730,7 @@ fn reduce_bool_dim_with(
         for inner in 0..inner_size.max(1) {
             let mut acc = init;
             for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                let idx = outer * dim_size * inner_size + d * inner_size + inner;
                 acc = combine(acc, is_nonzero(idx));
             }
             result.push(if acc { 1 } else { 0 });
@@ -752,22 +751,23 @@ fn reduce_bool_dim(
     init: bool,
     combine: fn(bool, bool) -> bool,
 ) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     match tensor.dtype() {
         DType::F32 => {
             let data: &[f32] = tensor.storage();
-            reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx] != 0.0)
+            reduce_bool_dim_with(&tensor, dim, init, combine, |idx| data[idx] != 0.0)
         }
         DType::F64 => {
             let data: &[f64] = tensor.storage();
-            reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx] != 0.0)
+            reduce_bool_dim_with(&tensor, dim, init, combine, |idx| data[idx] != 0.0)
         }
         DType::F16 => {
             let data: &[f16] = tensor.storage();
-            reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx].to_f32() != 0.0)
+            reduce_bool_dim_with(&tensor, dim, init, combine, |idx| data[idx].to_f32() != 0.0)
         }
         DType::BF16 => {
             let data: &[bf16] = tensor.storage();
-            reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx].to_f32() != 0.0)
+            reduce_bool_dim_with(&tensor, dim, init, combine, |idx| data[idx].to_f32() != 0.0)
         }
         _ => panic!("reduce_bool_dim: unsupported dtype {:?}", tensor.dtype()),
     }
@@ -780,8 +780,9 @@ fn reduce_bool_dim_int(
     init: bool,
     combine: fn(bool, bool) -> bool,
 ) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     let data: &[i64] = tensor.storage();
-    reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx] != 0)
+    reduce_bool_dim_with(&tensor, dim, init, combine, |idx| data[idx] != 0)
 }
 
 /// Reduce along a dimension producing a bool tensor (for bool any/all_dim).
@@ -791,8 +792,9 @@ fn reduce_bool_dim_raw(
     init: bool,
     combine: fn(bool, bool) -> bool,
 ) -> EmberTensor {
+    let tensor = tensor.to_contiguous();
     let data: &[u8] = tensor.bytes();
-    reduce_bool_dim_with(tensor, dim, init, combine, |idx| data[idx] != 0)
+    reduce_bool_dim_with(&tensor, dim, init, combine, |idx| data[idx] != 0)
 }
 
 #[cfg(test)]
