@@ -24,11 +24,15 @@ pub enum BinaryOp {
 ///
 /// Requires tensors to have the same shape. Uses SIMD acceleration for f32
 /// when available and both tensors are contiguous.
+///
+/// Pass `simd_hint` to enable direct SIMD dispatch for standard ops (add/sub/mul/div).
+/// Pass `None` for custom operations that have no SIMD fast path.
 pub fn binary_op<F32Op, F64Op>(
     lhs: EmberTensor,
     rhs: EmberTensor,
     f32_op: F32Op,
     f64_op: F64Op,
+    simd_hint: Option<BinaryOp>,
 ) -> EmberTensor
 where
     F32Op: Fn(f32, f32) -> f32 + Copy,
@@ -42,7 +46,7 @@ where
     let dtype = lhs.dtype();
 
     match dtype {
-        DType::F32 => binary_op_f32(lhs, &rhs, f32_op),
+        DType::F32 => binary_op_f32(lhs, &rhs, f32_op, simd_hint),
         DType::F64 => binary_op_typed(lhs, &rhs, f64_op),
         DType::F16 => binary_op_typed(lhs, &rhs, |a: f16, b: f16| {
             f16::from_f32(f32_op(a.to_f32(), b.to_f32()))
@@ -56,26 +60,27 @@ where
 
 /// Specialized binary operation for f32 with SIMD fast path.
 #[cfg(feature = "simd")]
-fn binary_op_f32<Op>(mut lhs: EmberTensor, rhs: &EmberTensor, op: Op) -> EmberTensor
+fn binary_op_f32<Op>(
+    mut lhs: EmberTensor,
+    rhs: &EmberTensor,
+    op: Op,
+    simd_hint: Option<BinaryOp>,
+) -> EmberTensor
 where
     Op: Fn(f32, f32) -> f32,
 {
     // In-place SIMD fast path: lhs unique, contiguous at offset 0, rhs contiguous
-    if lhs.is_unique()
-        && let (Some((0, l_end)), Some((r_start, r_end))) = (
-            lhs.layout().contiguous_offsets(),
-            rhs.layout().contiguous_offsets(),
-        )
-    {
-        // Detect operation type
-        if let Some(simd_op) = detect_binary_op(&op) {
+    if let Some(simd_op) = simd_hint {
+        if lhs.is_unique()
+            && let (Some((0, l_end)), Some((r_start, r_end))) = (
+                lhs.layout().contiguous_offsets(),
+                rhs.layout().contiguous_offsets(),
+            )
+        {
             let r_slice: &[f32] = &rhs.storage()[r_start..r_end];
-
-            // Get mutable access to lhs storage
             let lhs_storage: &mut [f32] = lhs.storage_mut();
             let l_slice = &mut lhs_storage[..l_end];
 
-            // Use true in-place SIMD operations
             match simd_op {
                 BinaryOp::Add => simd::add_inplace_f32(l_slice, r_slice),
                 BinaryOp::Sub => simd::sub_inplace_f32(l_slice, r_slice),
@@ -92,36 +97,16 @@ where
 
 /// Fallback when SIMD is disabled.
 #[cfg(not(feature = "simd"))]
-fn binary_op_f32<Op>(lhs: EmberTensor, rhs: &EmberTensor, op: Op) -> EmberTensor
+fn binary_op_f32<Op>(
+    lhs: EmberTensor,
+    rhs: &EmberTensor,
+    op: Op,
+    _simd_hint: Option<BinaryOp>,
+) -> EmberTensor
 where
     Op: Fn(f32, f32) -> f32,
 {
     binary_op_typed(lhs, rhs, op)
-}
-
-/// Detect which binary operation is being performed by testing sample values.
-#[cfg(feature = "simd")]
-fn detect_binary_op<Op>(op: &Op) -> Option<BinaryOp>
-where
-    Op: Fn(f32, f32) -> f32,
-{
-    // Test with values that distinguish operations
-    let a = 6.0f32;
-    let b = 2.0f32;
-    let result = op(a, b);
-
-    // Check which operation matches
-    if (result - 8.0).abs() < 1e-6 {
-        Some(BinaryOp::Add) // 6 + 2 = 8
-    } else if (result - 4.0).abs() < 1e-6 {
-        Some(BinaryOp::Sub) // 6 - 2 = 4
-    } else if (result - 12.0).abs() < 1e-6 {
-        Some(BinaryOp::Mul) // 6 * 2 = 12
-    } else if (result - 3.0).abs() < 1e-6 {
-        Some(BinaryOp::Div) // 6 / 2 = 3
-    } else {
-        None // Unknown operation, use generic path
-    }
 }
 
 /// Binary operation with in-place optimization for Pod types.
@@ -363,7 +348,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(vec![5.0f32, 6.0, 7.0, 8.0], vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let data = result.into_data();
 
         let expected: Vec<f32> = vec![6.0, 8.0, 10.0, 12.0];
@@ -376,7 +361,7 @@ mod tests {
             EmberTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x - y, |x, y| x - y);
+        let result = binary_op(a, b, |x, y| x - y, |x, y| x - y, None);
         let data = result.into_data();
 
         let expected: Vec<f32> = vec![9.0, 18.0, 27.0, 36.0];
@@ -388,7 +373,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(vec![2.0f32, 3.0, 4.0, 5.0], vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
+        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y, None);
         let data = result.into_data();
 
         let expected: Vec<f32> = vec![2.0, 6.0, 12.0, 20.0];
@@ -401,7 +386,7 @@ mod tests {
             EmberTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(vec![2.0f32, 4.0, 5.0, 8.0], vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x / y, |x, y| x / y);
+        let result = binary_op(a, b, |x, y| x / y, |x, y| x / y, None);
         let data = result.into_data();
 
         let expected: Vec<f32> = vec![5.0, 5.0, 6.0, 5.0];
@@ -417,7 +402,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(vec![1.0f64, 2.0, 3.0, 4.0], vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(vec![5.0f64, 6.0, 7.0, 8.0], vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let data = result.into_data();
 
         let expected: Vec<f64> = vec![6.0, 8.0, 10.0, 12.0];
@@ -429,7 +414,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(vec![1.5f64, 2.5, 3.5, 4.5], vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(vec![2.0f64, 2.0, 2.0, 2.0], vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
+        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y, None);
         let data = result.into_data();
 
         let expected: Vec<f64> = vec![3.0, 5.0, 7.0, 9.0];
@@ -448,7 +433,7 @@ mod tests {
         let a_t = a.transpose(0, 1);
         let b_t = b.transpose(0, 1);
 
-        let result = binary_op(a_t, b_t, |x, y| x * y, |x, y| x * y);
+        let result = binary_op(a_t, b_t, |x, y| x * y, |x, y| x * y, None);
         let data = result.into_data();
 
         // a_t = [[1, 3], [2, 4]], b_t = [[2, 4], [3, 5]]
@@ -467,7 +452,7 @@ mod tests {
         let a_narrow = a.narrow(0, 1, 2); // rows 1-2
         let b_narrow = b.narrow(0, 1, 2);
 
-        let result = binary_op(a_narrow, b_narrow, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a_narrow, b_narrow, |x, y| x + y, |x, y| x + y, None);
         let data = result.into_data();
 
         // rows 1-2: [4,5,6,7], [8,9,10,11] doubled
@@ -484,7 +469,7 @@ mod tests {
         // a is contiguous, b is transposed (non-contiguous)
         let b_t = b.transpose(0, 1);
 
-        let result = binary_op(a, b_t, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b_t, |x, y| x + y, |x, y| x + y, None);
         let data = result.into_data();
 
         // a = [[1,2], [3,4]], b_t = [[10,30], [20,40]]
@@ -570,7 +555,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(vec![5.0f32], vec![1]));
         let b = EmberTensor::from_data(TensorData::new(vec![3.0f32], vec![1]));
 
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let data = result.into_data();
 
         assert_eq!(data.as_slice::<f32>().unwrap(), &[8.0f32]);
@@ -581,7 +566,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0], vec![5]));
         let b = EmberTensor::from_data(TensorData::new(vec![5.0f32, 4.0, 3.0, 2.0, 1.0], vec![5]));
 
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let data = result.into_data();
 
         let expected: Vec<f32> = vec![6.0, 6.0, 6.0, 6.0, 6.0];
@@ -593,7 +578,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(vec![1.0f32; 24], vec![2, 3, 4]));
         let b = EmberTensor::from_data(TensorData::new(vec![2.0f32; 24], vec![2, 3, 4]));
 
-        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
+        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y, None);
         let data = result.into_data();
 
         let expected: Vec<f32> = vec![2.0; 24];
@@ -614,7 +599,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(vec![-1.0f32, -2.0, 3.0, 4.0], vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(vec![1.0f32, 2.0, -3.0, -4.0], vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let data = result.into_data();
 
         let expected: Vec<f32> = vec![0.0, 0.0, 0.0, 0.0];
@@ -649,7 +634,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let expected: Vec<f16> = vec![6.0, 8.0, 10.0, 12.0]
             .into_iter()
             .map(f16::from_f32)
@@ -674,7 +659,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
+        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y, None);
         let expected: Vec<f16> = vec![2.0, 6.0, 12.0, 20.0]
             .into_iter()
             .map(f16::from_f32)
@@ -701,7 +686,7 @@ mod tests {
 
         // a_t = [[1,3], [2,4]], b_t = [[10,30], [20,40]]
         // result = [[11,33], [22,44]]
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let expected: Vec<f16> = vec![11.0, 33.0, 22.0, 44.0]
             .into_iter()
             .map(f16::from_f32)
@@ -746,7 +731,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let expected: Vec<bf16> = vec![6.0, 8.0, 10.0, 12.0]
             .into_iter()
             .map(bf16::from_f32)
@@ -771,7 +756,7 @@ mod tests {
         let a = EmberTensor::from_data(TensorData::new(a_vals, vec![2, 2]));
         let b = EmberTensor::from_data(TensorData::new(b_vals, vec![2, 2]));
 
-        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y);
+        let result = binary_op(a, b, |x, y| x * y, |x, y| x * y, None);
         let expected: Vec<bf16> = vec![2.0, 6.0, 12.0, 20.0]
             .into_iter()
             .map(bf16::from_f32)
@@ -798,7 +783,7 @@ mod tests {
 
         // a_t = [[1,3], [2,4]], b_t = [[10,30], [20,40]]
         // result = [[11,33], [22,44]]
-        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y);
+        let result = binary_op(a, b, |x, y| x + y, |x, y| x + y, None);
         let expected: Vec<bf16> = vec![11.0, 33.0, 22.0, 44.0]
             .into_iter()
             .map(bf16::from_f32)

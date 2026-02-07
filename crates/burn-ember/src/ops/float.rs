@@ -10,7 +10,7 @@ use burn_std::{Bytes, Shape, Slice, bf16, f16};
 use crate::Layout;
 use num_traits::ToPrimitive;
 
-use crate::ops::binary::{binary_op, scalar_op};
+use crate::ops::binary::{BinaryOp, binary_op, scalar_op};
 use crate::ops::matmul;
 use crate::ops::unary;
 use crate::{Ember, EmberTensor};
@@ -83,7 +83,7 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_add(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        binary_op(lhs, rhs, |a, b| a + b, |a, b| a + b)
+        binary_op(lhs, rhs, |a, b| a + b, |a, b| a + b, Some(BinaryOp::Add))
     }
 
     fn float_add_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
@@ -92,7 +92,7 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_sub(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        binary_op(lhs, rhs, |a, b| a - b, |a, b| a - b)
+        binary_op(lhs, rhs, |a, b| a - b, |a, b| a - b, Some(BinaryOp::Sub))
     }
 
     fn float_sub_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
@@ -101,7 +101,7 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_mul(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        binary_op(lhs, rhs, |a, b| a * b, |a, b| a * b)
+        binary_op(lhs, rhs, |a, b| a * b, |a, b| a * b, Some(BinaryOp::Mul))
     }
 
     fn float_mul_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
@@ -110,7 +110,7 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_div(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        binary_op(lhs, rhs, |a, b| a / b, |a, b| a / b)
+        binary_op(lhs, rhs, |a, b| a / b, |a, b| a / b, Some(BinaryOp::Div))
     }
 
     fn float_div_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
@@ -120,7 +120,7 @@ impl FloatTensorOps<Ember> for Ember {
 
     fn float_remainder(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
         // Python/PyTorch-style remainder: result has same sign as divisor
-        binary_op(lhs, rhs, |a, b| ((a % b) + b) % b, |a, b| ((a % b) + b) % b)
+        binary_op(lhs, rhs, |a, b| ((a % b) + b) % b, |a, b| ((a % b) + b) % b, None)
     }
 
     fn float_remainder_scalar(lhs: FloatTensor<Ember>, rhs: Scalar) -> FloatTensor<Ember> {
@@ -634,7 +634,7 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_powf(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        binary_op(lhs, rhs, |a: f32, b| a.powf(b), |a: f64, b| a.powf(b))
+        binary_op(lhs, rhs, |a: f32, b| a.powf(b), |a: f64, b| a.powf(b), None)
     }
 
     fn float_powf_scalar_impl(tensor: FloatTensor<Ember>, value: Scalar) -> FloatTensor<Ember> {
@@ -699,7 +699,7 @@ impl FloatTensorOps<Ember> for Ember {
     }
 
     fn float_atan2(lhs: FloatTensor<Ember>, rhs: FloatTensor<Ember>) -> FloatTensor<Ember> {
-        binary_op(lhs, rhs, |a: f32, b| a.atan2(b), |a: f64, b| a.atan2(b))
+        binary_op(lhs, rhs, |a: f32, b| a.atan2(b), |a: f64, b| a.atan2(b), None)
     }
 
     fn float_round(tensor: FloatTensor<Ember>) -> FloatTensor<Ember> {

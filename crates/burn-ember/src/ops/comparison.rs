@@ -28,6 +28,7 @@ pub fn compare<F32Cmp, F64Cmp>(
     rhs: EmberTensor,
     f32_cmp: F32Cmp,
     f64_cmp: F64Cmp,
+    simd_hint: Option<CompareOp>,
 ) -> EmberTensor
 where
     F32Cmp: Fn(f32, f32) -> bool + Copy,
@@ -41,7 +42,7 @@ where
     let dtype = lhs.dtype();
 
     match dtype {
-        DType::F32 => compare_f32(lhs, &rhs, f32_cmp),
+        DType::F32 => compare_f32(lhs, &rhs, f32_cmp, simd_hint),
         DType::F64 => compare_typed(lhs, &rhs, f64_cmp),
         DType::F16 => compare_typed(lhs, &rhs, |a: f16, b: f16| f32_cmp(a.to_f32(), b.to_f32())),
         DType::BF16 => compare_typed(lhs, &rhs, |a: bf16, b: bf16| {
@@ -53,7 +54,7 @@ where
 
 /// Specialized comparison for f32 with SIMD fast path.
 #[cfg(feature = "simd")]
-fn compare_f32<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp) -> EmberTensor
+fn compare_f32<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp, simd_hint: Option<CompareOp>) -> EmberTensor
 where
     Cmp: Fn(f32, f32) -> bool,
 {
@@ -61,7 +62,7 @@ where
     if let (Some((l_start, l_end)), Some((r_start, r_end))) = (
         lhs.layout().contiguous_offsets(),
         rhs.layout().contiguous_offsets(),
-    ) && let Some(simd_op) = detect_cmp_op(&cmp)
+    ) && let Some(simd_op) = simd_hint.map(compare_op_to_simd)
     {
         let shape = lhs.layout().shape().clone();
         let lhs_storage: &[f32] = lhs.storage();
@@ -79,7 +80,7 @@ where
     // Optimized broadcast path for outer-product style broadcasting
     // Pattern: [N, 1] vs [1, M] -> [N, M] where one has stride 0 in inner dim
     if lhs.layout().num_dims() == 2
-        && let Some(simd_op) = detect_cmp_op(&cmp)
+        && let Some(simd_op) = simd_hint.map(compare_op_to_simd)
         && let Some((result, shape)) = try_broadcast_cmp_f32(&lhs, rhs, simd_op)
     {
         return make_bool_tensor(result, shape);
@@ -210,32 +211,23 @@ fn swap_cmp_op(op: simd::CmpOp) -> simd::CmpOp {
 
 /// Fallback when SIMD is disabled.
 #[cfg(not(feature = "simd"))]
-fn compare_f32<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp) -> EmberTensor
+fn compare_f32<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp, _simd_hint: Option<CompareOp>) -> EmberTensor
 where
     Cmp: Fn(f32, f32) -> bool,
 {
     compare_typed(lhs, rhs, cmp)
 }
 
-/// Detect which comparison operation is being performed by testing sample values.
+/// Convert a CompareOp to the SIMD CmpOp.
 #[cfg(feature = "simd")]
-fn detect_cmp_op<Cmp>(cmp: &Cmp) -> Option<simd::CmpOp>
-where
-    Cmp: Fn(f32, f32) -> bool,
-{
-    // Test with values that distinguish operations
-    let gt = cmp(3.0, 2.0); // true for GT, GE
-    let lt = cmp(2.0, 3.0); // true for LT, LE
-    let eq = cmp(2.0, 2.0); // true for GE, LE, EQ
-
-    match (gt, lt, eq) {
-        (true, false, false) => Some(simd::CmpOp::Gt), // only 3>2 is true
-        (true, false, true) => Some(simd::CmpOp::Ge),  // 3>=2 and 2>=2
-        (false, true, false) => Some(simd::CmpOp::Lt), // only 2<3 is true
-        (false, true, true) => Some(simd::CmpOp::Le),  // 2<3 and 2<=2
-        (false, false, true) => Some(simd::CmpOp::Eq), // only 2==2 is true
-        (true, true, false) => Some(simd::CmpOp::Ne),  // 3!=2 and 2!=3, but 2!=2 is false
-        _ => None,
+fn compare_op_to_simd(op: CompareOp) -> simd::CmpOp {
+    match op {
+        CompareOp::Greater => simd::CmpOp::Gt,
+        CompareOp::GreaterEqual => simd::CmpOp::Ge,
+        CompareOp::Lower => simd::CmpOp::Lt,
+        CompareOp::LowerEqual => simd::CmpOp::Le,
+        CompareOp::Equal => simd::CmpOp::Eq,
+        CompareOp::NotEqual => simd::CmpOp::Ne,
     }
 }
 
@@ -245,6 +237,7 @@ pub fn compare_elem<F32Cmp, F64Cmp>(
     rhs: f64,
     f32_cmp: F32Cmp,
     f64_cmp: F64Cmp,
+    simd_hint: Option<CompareOp>,
 ) -> EmberTensor
 where
     F32Cmp: Fn(f32, f32) -> bool + Copy,
@@ -253,7 +246,7 @@ where
     let dtype = lhs.dtype();
 
     match dtype {
-        DType::F32 => compare_elem_f32(lhs, rhs as f32, f32_cmp),
+        DType::F32 => compare_elem_f32(lhs, rhs as f32, f32_cmp, simd_hint),
         DType::F64 => compare_elem_typed(lhs, rhs, f64_cmp),
         DType::F16 => {
             let scalar = f16::from_f64(rhs);
@@ -273,13 +266,13 @@ where
 
 /// Specialized scalar comparison for f32 with SIMD fast path.
 #[cfg(feature = "simd")]
-fn compare_elem_f32<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp) -> EmberTensor
+fn compare_elem_f32<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp, simd_hint: Option<CompareOp>) -> EmberTensor
 where
     Cmp: Fn(f32, f32) -> bool,
 {
     // SIMD fast path: tensor is contiguous
     if let Some((start, end)) = lhs.layout().contiguous_offsets()
-        && let Some(simd_op) = detect_cmp_op(&cmp)
+        && let Some(simd_op) = simd_hint.map(compare_op_to_simd)
     {
         let shape = lhs.layout().shape().clone();
         let lhs_storage: &[f32] = lhs.storage();
@@ -297,7 +290,7 @@ where
 
 /// Fallback when SIMD is disabled.
 #[cfg(not(feature = "simd"))]
-fn compare_elem_f32<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp) -> EmberTensor
+fn compare_elem_f32<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp, _simd_hint: Option<CompareOp>) -> EmberTensor
 where
     Cmp: Fn(f32, f32) -> bool,
 {
@@ -376,51 +369,51 @@ fn make_bool_tensor(data: Vec<u8>, shape: Shape) -> EmberTensor {
 // Specific comparison functions
 
 pub fn greater(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a > b, |a, b| a > b)
+    compare(lhs, rhs, |a, b| a > b, |a, b| a > b, Some(CompareOp::Greater))
 }
 
 pub fn greater_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a > b, |a, b| a > b)
+    compare_elem(lhs, rhs, |a, b| a > b, |a, b| a > b, Some(CompareOp::Greater))
 }
 
 pub fn greater_equal(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a >= b, |a, b| a >= b)
+    compare(lhs, rhs, |a, b| a >= b, |a, b| a >= b, Some(CompareOp::GreaterEqual))
 }
 
 pub fn greater_equal_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a >= b, |a, b| a >= b)
+    compare_elem(lhs, rhs, |a, b| a >= b, |a, b| a >= b, Some(CompareOp::GreaterEqual))
 }
 
 pub fn lower(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a < b, |a, b| a < b)
+    compare(lhs, rhs, |a, b| a < b, |a, b| a < b, Some(CompareOp::Lower))
 }
 
 pub fn lower_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a < b, |a, b| a < b)
+    compare_elem(lhs, rhs, |a, b| a < b, |a, b| a < b, Some(CompareOp::Lower))
 }
 
 pub fn lower_equal(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a <= b, |a, b| a <= b)
+    compare(lhs, rhs, |a, b| a <= b, |a, b| a <= b, Some(CompareOp::LowerEqual))
 }
 
 pub fn lower_equal_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a <= b, |a, b| a <= b)
+    compare_elem(lhs, rhs, |a, b| a <= b, |a, b| a <= b, Some(CompareOp::LowerEqual))
 }
 
 pub fn equal(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a == b, |a, b| a == b)
+    compare(lhs, rhs, |a, b| a == b, |a, b| a == b, Some(CompareOp::Equal))
 }
 
 pub fn equal_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a == b, |a, b| a == b)
+    compare_elem(lhs, rhs, |a, b| a == b, |a, b| a == b, Some(CompareOp::Equal))
 }
 
 pub fn not_equal(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a != b, |a, b| a != b)
+    compare(lhs, rhs, |a, b| a != b, |a, b| a != b, Some(CompareOp::NotEqual))
 }
 
 pub fn not_equal_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a != b, |a, b| a != b)
+    compare_elem(lhs, rhs, |a, b| a != b, |a, b| a != b, Some(CompareOp::NotEqual))
 }
 
 // Integer comparison functions

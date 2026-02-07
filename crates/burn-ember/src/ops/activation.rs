@@ -24,6 +24,7 @@ impl ActivationOps<Ember> for Ember {
             grad,
             |out: f32, g| if out > 0.0 { g } else { 0.0 },
             |out: f64, g| if out > 0.0 { g } else { 0.0 },
+            None,
         )
     }
 
@@ -44,6 +45,7 @@ impl ActivationOps<Ember> for Ember {
             alpha,
             |x: f32, a| if x >= 0.0 { x } else { a * x },
             |x: f64, a| if x >= 0.0 { x } else { a * x },
+            None,
         )
     }
 
@@ -79,6 +81,7 @@ impl ActivationOps<Ember> for Ember {
                 let pdf = inv_sqrt_2pi_f64 * (-0.5 * x * x).exp();
                 g * (cdf + x * pdf)
             },
+            None,
         )
     }
 
@@ -96,6 +99,7 @@ impl ActivationOps<Ember> for Ember {
             grad,
             |s: f32, g| g * s * (1.0 - s),
             |s: f64, g| g * s * (1.0 - s),
+            None,
         )
     }
 
@@ -142,6 +146,7 @@ impl ActivationOps<Ember> for Ember {
             grad,
             |x: f32, g| g * sigmoid_f32(-x),
             |x: f64, g| g * sigmoid_f64(-x),
+            None,
         )
     }
 }
