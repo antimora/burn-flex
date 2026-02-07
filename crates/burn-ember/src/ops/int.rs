@@ -335,19 +335,19 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn bitwise_left_shift(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        int_binary_op(lhs, rhs, |a, b| a << b)
+        int_binary_op(lhs, rhs, |a, b| a.wrapping_shl(b as u32))
     }
 
     fn bitwise_left_shift_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
-        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a << b)
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a.wrapping_shl(b as u32))
     }
 
     fn bitwise_right_shift(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
-        int_binary_op(lhs, rhs, |a, b| a >> b)
+        int_binary_op(lhs, rhs, |a, b| a.wrapping_shr(b as u32))
     }
 
     fn bitwise_right_shift_scalar(lhs: IntTensor<Ember>, rhs: Scalar) -> IntTensor<Ember> {
-        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a >> b)
+        int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a.wrapping_shr(b as u32))
     }
 
     fn int_cast(tensor: IntTensor<Ember>, dtype: IntDType) -> IntTensor<Ember> {
@@ -467,7 +467,7 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_neg(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
-        int_scalar_op(tensor, 0i64, |a, _| -a)
+        int_scalar_op(tensor, 0i64, |a, _| a.wrapping_neg())
     }
 
     fn int_clamp(tensor: IntTensor<Ember>, min: Scalar, max: Scalar) -> IntTensor<Ember> {
@@ -792,5 +792,32 @@ mod tests {
         let result = Ember::int_remainder(a, b);
         let values: Vec<u64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
         assert_eq!(values[0], u64::MAX % 2);
+    }
+
+    #[test]
+    fn test_int_abs_min_value() {
+        // i64::MIN.abs() panics in debug; wrapping_abs returns MIN (matches PyTorch)
+        let a = EmberTensor::from_data(TensorData::new(vec![i64::MIN], [1]));
+        let result = Ember::int_abs(a);
+        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert_eq!(values[0], i64::MIN.wrapping_abs());
+    }
+
+    #[test]
+    fn test_int_neg_min_value() {
+        // i64::MIN negation panics in debug; wrapping_neg returns MIN (matches PyTorch)
+        let a = EmberTensor::from_data(TensorData::new(vec![i64::MIN], [1]));
+        let result = Ember::int_neg(a);
+        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        assert_eq!(values[0], i64::MIN.wrapping_neg());
+    }
+
+    #[test]
+    fn test_int_shift_large_amount() {
+        // Shift by >= bit width panics without wrapping; should not crash
+        let a = EmberTensor::from_data(TensorData::new(vec![1i64], [1]));
+        let b = EmberTensor::from_data(TensorData::new(vec![64i64], [1]));
+        let _left = Ember::bitwise_left_shift(a.clone(), b.clone());
+        let _right = Ember::bitwise_right_shift(a, b);
     }
 }

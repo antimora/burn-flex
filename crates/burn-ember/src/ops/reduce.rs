@@ -790,6 +790,10 @@ pub fn mean(tensor: EmberTensor) -> EmberTensor {
 
 /// Max along a dimension, returning only values.
 pub fn max_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
+    assert!(
+        tensor.layout().shape().dims[dim] > 0,
+        "max_dim: dimension {dim} has size 0"
+    );
     match tensor.dtype() {
         DType::F32 => max_dim_float_impl::<f32>(&tensor, dim),
         DType::F64 => max_dim_float_impl::<f64>(&tensor, dim),
@@ -803,6 +807,10 @@ pub fn max_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
 
 /// Min along a dimension, returning only values.
 pub fn min_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
+    assert!(
+        tensor.layout().shape().dims[dim] > 0,
+        "min_dim: dimension {dim} has size 0"
+    );
     match tensor.dtype() {
         DType::F32 => min_dim_float_impl::<f32>(&tensor, dim),
         DType::F64 => min_dim_float_impl::<f64>(&tensor, dim),
@@ -816,6 +824,10 @@ pub fn min_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
 
 /// Max along a dimension with indices, returning (values, indices) in a single pass.
 pub fn max_dim_with_indices(tensor: EmberTensor, dim: usize) -> (EmberTensor, EmberTensor) {
+    assert!(
+        tensor.layout().shape().dims[dim] > 0,
+        "max_dim_with_indices: dimension {dim} has size 0"
+    );
     match tensor.dtype() {
         DType::F32 => max_dim_with_indices_float_impl::<f32>(&tensor, dim),
         DType::F64 => max_dim_with_indices_float_impl::<f64>(&tensor, dim),
@@ -841,6 +853,10 @@ pub fn max_dim_with_indices(tensor: EmberTensor, dim: usize) -> (EmberTensor, Em
 
 /// Min along a dimension with indices, returning (values, indices) in a single pass.
 pub fn min_dim_with_indices(tensor: EmberTensor, dim: usize) -> (EmberTensor, EmberTensor) {
+    assert!(
+        tensor.layout().shape().dims[dim] > 0,
+        "min_dim_with_indices: dimension {dim} has size 0"
+    );
     match tensor.dtype() {
         DType::F32 => min_dim_with_indices_float_impl::<f32>(&tensor, dim),
         DType::F64 => min_dim_with_indices_float_impl::<f64>(&tensor, dim),
@@ -2201,5 +2217,19 @@ mod tests {
         let result = argmax(tensor, 1);
         let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
         assert_eq!(values[0], 1); // NaN is at index 1
+    }
+
+    #[test]
+    #[should_panic(expected = "dimension 0 has size 0")]
+    fn test_max_dim_zero_size_panics() {
+        let tensor = EmberTensor::from_data(TensorData::new(Vec::<f32>::new(), [0, 3]));
+        max_dim(tensor, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "dimension 1 has size 0")]
+    fn test_min_dim_zero_size_panics() {
+        let tensor = EmberTensor::from_data(TensorData::new(Vec::<f32>::new(), [3, 0]));
+        min_dim(tensor, 1);
     }
 }

@@ -13,6 +13,19 @@ From README:
 - Zero-copy data loading
 - Thread-safe by design (Arc-based COW)
 
+## Robustness
+
+burn-ember is tested for edge-case robustness to ensure safe behavior on embedded devices and in
+production. This includes:
+
+- **Integer overflow safety**: `wrapping_abs`, `wrapping_neg`, `wrapping_shl/shr` for signed
+  integers at type boundaries (e.g. `i64::MIN`), matching PyTorch two's complement semantics
+- **Rounding correctness**: Uses Rust stdlib `round_ties_even()` for all float types, correct for
+  the full float range
+- **Input validation**: Hard assertions for invalid pooling parameters (zero kernel/stride) and
+  zero-sized reduce dimensions, preventing undefined behavior on malformed inputs
+- **Negative index detection**: Debug assertions on gather/scatter index conversions
+
 ## Target Platform
 
 **Primary: Apple Silicon M3 (ARM64 + NEON)**

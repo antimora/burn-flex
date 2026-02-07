@@ -78,7 +78,9 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     let result: Vec<E> = (0..output_size)
         .into_par_iter()
         .map(|out_idx| {
-            let index_val = indices_data[out_idx] as usize;
+            let raw = indices_data[out_idx];
+            debug_assert!(raw >= 0, "gather: negative index {raw}");
+            let index_val = raw as usize;
             let src_idx = compute_gather_index(
                 out_idx,
                 index_val,
@@ -95,7 +97,9 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     #[cfg(not(feature = "rayon"))]
     let result: Vec<E> = (0..output_size)
         .map(|out_idx| {
-            let index_val = indices_data[out_idx] as usize;
+            let raw = indices_data[out_idx];
+            debug_assert!(raw >= 0, "gather: negative index {raw}");
+            let index_val = raw as usize;
             let src_idx = compute_gather_index(
                 out_idx,
                 index_val,
@@ -286,7 +290,9 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
         // General N-D case (sequential due to potential index conflicts)
         let dim_stride = tensor_strides[dim];
         for idx in 0..num_elements {
-            let index_val = indices_data[idx] as usize;
+            let raw = indices_data[idx];
+            debug_assert!(raw >= 0, "scatter_add: negative index {raw}");
+            let index_val = raw as usize;
             let dst_idx = compute_gather_index(
                 idx,
                 index_val,

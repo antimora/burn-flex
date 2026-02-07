@@ -137,6 +137,8 @@ fn pool_output_size(
     dilation: usize,
     ceil_mode: bool,
 ) -> usize {
+    assert!(kernel > 0, "pool: kernel size must be > 0");
+    assert!(stride > 0, "pool: stride must be > 0");
     let effective_kernel = dilation * (kernel - 1) + 1;
     let padded = input + 2 * padding;
     if padded < effective_kernel {
@@ -2043,5 +2045,17 @@ mod tests {
 
         // Each input position receives gradient from its output region
         assert!(grad_data.iter().all(|&v| (v - 1.0).abs() < 1e-5));
+    }
+
+    #[test]
+    #[should_panic(expected = "kernel size must be > 0")]
+    fn test_pool_output_size_zero_kernel_panics() {
+        pool_output_size(4, 0, 0, 1, 1, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "stride must be > 0")]
+    fn test_pool_output_size_zero_stride_panics() {
+        pool_output_size(4, 2, 0, 0, 1, false);
     }
 }

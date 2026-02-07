@@ -143,10 +143,10 @@ pub fn abs(tensor: EmberTensor) -> EmberTensor {
 pub fn int_abs(tensor: EmberTensor) -> EmberTensor {
     let dtype = tensor.dtype();
     match dtype {
-        DType::I64 => unary_op_typed::<i64, _>(tensor, |x| x.abs()),
-        DType::I32 => unary_op_typed::<i32, _>(tensor, |x| x.abs()),
-        DType::I16 => unary_op_typed::<i16, _>(tensor, |x| x.abs()),
-        DType::I8 => unary_op_typed::<i8, _>(tensor, |x| x.abs()),
+        DType::I64 => unary_op_typed::<i64, _>(tensor, |x| x.wrapping_abs()),
+        DType::I32 => unary_op_typed::<i32, _>(tensor, |x| x.wrapping_abs()),
+        DType::I16 => unary_op_typed::<i16, _>(tensor, |x| x.wrapping_abs()),
+        DType::I8 => unary_op_typed::<i8, _>(tensor, |x| x.wrapping_abs()),
         // Unsigned integers: abs is identity
         DType::U64 | DType::U32 | DType::U16 | DType::U8 => tensor,
         _ => panic!("int_abs: unsupported dtype {:?}", dtype),
@@ -223,30 +223,16 @@ pub fn round(tensor: EmberTensor) -> EmberTensor {
     unary_op(tensor, round_ties_even_f32, round_ties_even_f64)
 }
 
-/// Round ties to even for f32 (banker's rounding)
+/// Round ties to even for f32 (banker's rounding).
+/// Uses the stdlib intrinsic which handles all edge cases including large values.
 fn round_ties_even_f32(x: f32) -> f32 {
-    let f = x.fract().abs();
-    if f == 0.5 {
-        // At a tie: round to even
-        let floor = x.floor();
-        let ceil = x.ceil();
-        if floor as i32 % 2 == 0 { floor } else { ceil }
-    } else {
-        x.round()
-    }
+    x.round_ties_even()
 }
 
-/// Round ties to even for f64 (banker's rounding)
+/// Round ties to even for f64 (banker's rounding).
+/// Uses the stdlib intrinsic which handles all edge cases including large values.
 fn round_ties_even_f64(x: f64) -> f64 {
-    let f = x.fract().abs();
-    if f == 0.5 {
-        // At a tie: round to even
-        let floor = x.floor();
-        let ceil = x.ceil();
-        if floor as i64 % 2 == 0 { floor } else { ceil }
-    } else {
-        x.round()
-    }
+    x.round_ties_even()
 }
 
 /// Floor (round down)
@@ -611,6 +597,18 @@ mod tests {
         // All values should be 0, 1, 2, or 3 depending on permutation
         for &v in &out {
             assert!(v >= -0.01 && v <= 3.01, "unexpected log value: {}", v);
+        }
+    }
+
+    #[test]
+    fn test_round_ties_even_large_float() {
+        // Values outside i32 range used to break the manual round_ties_even impl
+        let data = vec![2e18_f32, -2e18_f32, f32::MAX, f32::MIN];
+        let tensor = tensor_from_vec(data.clone());
+        let result = round(tensor);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        for (a, b) in out.iter().zip(data.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits());
         }
     }
 }

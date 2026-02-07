@@ -63,6 +63,8 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 
 - All `burn-backend-tests` pass across feature flag combinations (`std`, `std+simd`, `std+rayon`,
   `std+simd+rayon`)
+- Tested for edge-case robustness: integer overflow at type boundaries, large-float rounding,
+  invalid pooling parameters, zero-sized dimensions. Safe for embedded devices.
 - All ONNX model checks in `burn-onnx` pass
 - Real model inference verified:
   - [ALBERT](https://huggingface.co/albert/albert-base-v2) (masked language model, all v2 variants)
