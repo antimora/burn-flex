@@ -52,6 +52,7 @@ macro_rules! define_inplace_f32_op {
             b: &'a [f32],
         }
 
+        #[allow(clippy::assign_op_pattern)]
         impl WithSimd for $kernel<'_> {
             type Output = ();
 
@@ -73,7 +74,7 @@ macro_rules! define_inplace_f32_op {
                 }
 
                 for j in simd_len..len {
-                    a[j] /= b[j];
+                    a[j] = a[j] $op b[j];
                 }
             }
         }
@@ -375,6 +376,7 @@ macro_rules! define_bool_binary_u8_op {
             b: &'a [u8],
         }
 
+        #[allow(clippy::assign_op_pattern)]
         impl WithSimd for $inplace_kernel<'_> {
             type Output = ();
 
@@ -399,7 +401,7 @@ macro_rules! define_bool_binary_u8_op {
                 }
 
                 for j in simd_len..len {
-                    a[j] ^= b[j];
+                    a[j] = a[j] $op b[j];
                 }
             }
         }
