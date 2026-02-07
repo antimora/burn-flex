@@ -33,13 +33,11 @@ pub fn cummin<E: Element + Pod + Default + Copy + PartialOrd>(
     dim: usize,
 ) -> EmberTensor {
     let init = get_max_value::<E>();
+    #[allow(clippy::eq_op)]
     cumulative_op(tensor, dim, init, |acc, val| {
-        #[allow(clippy::eq_op)]
         if acc != acc {
             acc
-        } else if val != val {
-            val
-        } else if val < acc {
+        } else if val != val || val < acc {
             val
         } else {
             acc
@@ -53,13 +51,11 @@ pub fn cummax<E: Element + Pod + Default + Copy + PartialOrd>(
     dim: usize,
 ) -> EmberTensor {
     let init = get_min_value::<E>();
+    #[allow(clippy::eq_op)]
     cumulative_op(tensor, dim, init, |acc, val| {
-        #[allow(clippy::eq_op)]
         if acc != acc {
             acc
-        } else if val != val {
-            val
-        } else if val > acc {
+        } else if val != val || val > acc {
             val
         } else {
             acc

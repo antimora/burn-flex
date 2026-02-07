@@ -70,25 +70,24 @@ where
     Op: Fn(f32, f32) -> f32,
 {
     // In-place SIMD fast path: lhs unique, contiguous at offset 0, rhs contiguous
-    if let Some(simd_op) = simd_hint {
-        if lhs.is_unique()
-            && let (Some((0, l_end)), Some((r_start, r_end))) = (
-                lhs.layout().contiguous_offsets(),
-                rhs.layout().contiguous_offsets(),
-            )
-        {
-            let r_slice: &[f32] = &rhs.storage()[r_start..r_end];
-            let lhs_storage: &mut [f32] = lhs.storage_mut();
-            let l_slice = &mut lhs_storage[..l_end];
+    if let Some(simd_op) = simd_hint
+        && lhs.is_unique()
+        && let (Some((0, l_end)), Some((r_start, r_end))) = (
+            lhs.layout().contiguous_offsets(),
+            rhs.layout().contiguous_offsets(),
+        )
+    {
+        let r_slice: &[f32] = &rhs.storage()[r_start..r_end];
+        let lhs_storage: &mut [f32] = lhs.storage_mut();
+        let l_slice = &mut lhs_storage[..l_end];
 
-            match simd_op {
-                BinaryOp::Add => simd::add_inplace_f32(l_slice, r_slice),
-                BinaryOp::Sub => simd::sub_inplace_f32(l_slice, r_slice),
-                BinaryOp::Mul => simd::mul_inplace_f32(l_slice, r_slice),
-                BinaryOp::Div => simd::div_inplace_f32(l_slice, r_slice),
-            }
-            return lhs;
+        match simd_op {
+            BinaryOp::Add => simd::add_inplace_f32(l_slice, r_slice),
+            BinaryOp::Sub => simd::sub_inplace_f32(l_slice, r_slice),
+            BinaryOp::Mul => simd::mul_inplace_f32(l_slice, r_slice),
+            BinaryOp::Div => simd::div_inplace_f32(l_slice, r_slice),
         }
+        return lhs;
     }
 
     // Fallback to generic implementation
