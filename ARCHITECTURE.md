@@ -1,4 +1,4 @@
-# burn-ember Architecture
+# burn-flex Architecture
 
 A pure-Rust CPU backend for [Burn](https://github.com/tracel-ai/burn).
 
@@ -15,7 +15,7 @@ From README:
 
 ## Robustness
 
-burn-ember is tested for edge-case robustness to ensure safe behavior on embedded devices and in
+burn-flex is tested for edge-case robustness to ensure safe behavior on embedded devices and in
 production. This includes:
 
 - **Integer overflow safety**: `wrapping_abs`, `wrapping_neg`, `wrapping_shl/shr` for signed
@@ -73,7 +73,7 @@ Minimize allocations wherever possible:
 When tensor is contiguous at offset 0, mutate in place:
 
 ```rust
-fn neg_inplace(mut tensor: EmberTensor) -> EmberTensor {
+fn neg_inplace(mut tensor: FlexTensor) -> FlexTensor {
     if let Some((0, end)) = tensor.layout().contiguous_offsets() {
         let slice: &mut [f32] = tensor.storage_mut();
         for x in slice[..end].iter_mut() {
@@ -92,7 +92,7 @@ fn neg_inplace(mut tensor: EmberTensor) -> EmberTensor {
 For binary ops, reuse lhs buffer when contiguous at offset 0:
 
 ```rust
-fn add(mut lhs: EmberTensor, rhs: &EmberTensor) -> EmberTensor {
+fn add(mut lhs: FlexTensor, rhs: &FlexTensor) -> FlexTensor {
     if let Some((0, l_end)) = lhs.layout().contiguous_offsets() {
         if let Some((r_start, r_end)) = rhs.layout().contiguous_offsets() {
             let lhs_storage: &mut [f32] = lhs.storage_mut();
@@ -120,13 +120,13 @@ Only allocate when necessary:
 Tensor storage is wrapped in `Arc<Bytes>` for O(1) cloning and thread-safe COW:
 
 ```rust
-pub struct EmberTensor {
+pub struct FlexTensor {
     data: Arc<Bytes>,  // O(1) clone via refcount increment
     layout: Layout,
     dtype: DType,
 }
 
-impl EmberTensor {
+impl FlexTensor {
     /// Check if this tensor uniquely owns its data
     pub fn is_unique(&self) -> bool {
         Arc::strong_count(&self.data) == 1
@@ -149,7 +149,7 @@ Benefits:
 This enables the optimization pattern used throughout:
 
 ```rust
-fn add_inplace(mut lhs: EmberTensor, rhs: &EmberTensor) -> EmberTensor {
+fn add_inplace(mut lhs: FlexTensor, rhs: &FlexTensor) -> FlexTensor {
     if lhs.is_unique() && lhs.is_contiguous_at_offset_zero() {
         // Mutate in place - no allocation needed
         let storage = lhs.make_data_mut();
@@ -262,13 +262,13 @@ use std::sync::Arc;
 use burn_std::Bytes;
 use burn_backend::DType;
 
-pub struct EmberTensor {
+pub struct FlexTensor {
     data: Arc<Bytes>,  // O(1) clone, COW via Arc::make_mut
     layout: Layout,
     dtype: DType,
 }
 
-impl EmberTensor {
+impl FlexTensor {
     /// Zero-copy typed view of full storage (for use with StridedIter)
     pub fn storage<E: Element + bytemuck::Pod>(&self) -> &[E] {
         bytemuck::cast_slice(&self.data)
@@ -284,7 +284,7 @@ impl EmberTensor {
 Operations dispatch on `dtype` and cast once at the boundary:
 
 ```rust
-fn add(a: &EmberTensor, b: &EmberTensor) -> EmberTensor {
+fn add(a: &FlexTensor, b: &FlexTensor) -> FlexTensor {
     match a.dtype {
         DType::F32 => add_impl(a.as_slice::<f32>(), b.as_slice::<f32>()),
         DType::F16 => add_impl(a.as_slice::<f16>(), b.as_slice::<f16>()),
@@ -301,16 +301,16 @@ fn add(a: &EmberTensor, b: &EmberTensor) -> EmberTensor {
 use burn_backend::{Backend, DType};
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Ember;
+pub struct Flex;
 
-impl Backend for Ember {
-    type Device = EmberDevice;
-    type FloatTensorPrimitive = EmberTensor;
-    type IntTensorPrimitive = EmberTensor;
-    type BoolTensorPrimitive = EmberTensor;
-    type QuantizedTensorPrimitive = EmberQTensor;
+impl Backend for Flex {
+    type Device = FlexDevice;
+    type FloatTensorPrimitive = FlexTensor;
+    type IntTensorPrimitive = FlexTensor;
+    type BoolTensorPrimitive = FlexTensor;
+    type QuantizedTensorPrimitive = FlexQTensor;
 
-    fn name() -> String { "ember".into() }
+    fn name() -> String { "flex".into() }
 
     fn float_supported_dtypes() -> Vec<DType> {
         vec![DType::F64, DType::F32, DType::F16, DType::BF16]
@@ -327,7 +327,7 @@ impl Backend for Ember {
 
 ## FusionBackend
 
-burn-ember does not implement `FusionBackend`. Without JIT compilation, fusion adds tracking
+burn-flex does not implement `FusionBackend`. Without JIT compilation, fusion adds tracking
 overhead with no performance benefit. Deferred operations would still execute one-by-one with
 intermediate allocations. For CPU with fusion, use `burn-cpu` (which has cubecl's MLIR-based JIT
 runtime).
@@ -605,7 +605,7 @@ accumulation:
 ### Unfold (Zero-Copy Strided View)
 
 Unfold extracts sliding windows from a tensor along a dimension. Unlike most backends that copy
-data, Ember implements unfold as a **zero-copy strided view**.
+data, Flex implements unfold as a **zero-copy strided view**.
 
 **Output Shape**
 
@@ -616,7 +616,7 @@ Given input with shape `[pre..., dim_size, post...]`, unfold along dimension `di
 
 **Algorithm**
 
-Instead of copying window data, Ember manipulates strides:
+Instead of copying window data, Flex manipulates strides:
 
 ```rust
 // Build output strides:
@@ -647,7 +647,7 @@ Logical view:
 
 **Performance**
 
-| Metric          | Ember                        | NdArray                        |
+| Metric          | Flex                        | NdArray                        |
 | --------------- | ---------------------------- | ------------------------------ |
 | Time complexity | O(1)                         | O(output_elements)             |
 | Memory          | 56-136 bytes (metadata only) | Megabytes (copies all windows) |
@@ -679,7 +679,7 @@ directly on strided tensors via `StridedIter`.
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cache blocking / loop tiling** | Requires architecture-specific tile sizes. M3 has 128KB L1, but optimal tile size varies by operation, data type, and cache hierarchy. Adds complexity without portable benefit.              |
 | **Software prefetching**         | ARM64 `_prefetch` intrinsic is unstable (requires nightly Rust). Apple Silicon has excellent hardware prefetchers that detect strided access patterns automatically. Benefit likely marginal. |
-| **Kernel fusion**                | Outside burn-ember scope. Fusion is handled at the Burn framework level via `burn-fusion`. This backend focuses on single-operation efficiency.                                               |
+| **Kernel fusion**                | Outside burn-flex scope. Fusion is handled at the Burn framework level via `burn-fusion`. This backend focuses on single-operation efficiency.                                               |
 | **Hand-tuned intrinsics**        | Portable SIMD via macerator covers NEON/AVX2/SSE/SIMD128 with a single implementation. Hand-tuned per-arch intrinsics add maintenance burden with marginal benefit for memory-bound ops.      |
 
 ### Why Element-wise Ops are Memory-Bound
@@ -696,7 +696,7 @@ execute 100+ FLOPs in the time it takes to load one cache line from RAM. This me
 
 ## Zero-Copy Loading
 
-`Bytes` from burn-std supports zero-copy scenarios (mmap, external buffers). `EmberTensor` wraps
+`Bytes` from burn-std supports zero-copy scenarios (mmap, external buffers). `FlexTensor` wraps
 this in `Arc` for cheap cloning while preserving zero-copy capabilities.
 
 ## Thread Safety

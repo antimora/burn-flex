@@ -1,4 +1,4 @@
-# burn-ember Project Instructions
+# burn-flex Project Instructions
 
 Consult `ARCHITECTURE.md` for design decisions, memory strategy, and implementation patterns.
 
@@ -22,7 +22,7 @@ Do not start new feature work without confirming the PR/merge status first.
 
 ## Coding Patterns
 
-- Encapsulate bytemuck casting inside `EmberTensor` methods (`storage()`, `storage_mut()`)
+- Encapsulate bytemuck casting inside `FlexTensor` methods (`storage()`, `storage_mut()`)
 - Use `tensor.storage::<f32>()` not `bytemuck::cast_slice(tensor.data())`
 - Check `layout().contiguous_offsets()` for fast-path decisions
 - For in-place ops, check `Some((0, end))` pattern (contiguous at offset 0)

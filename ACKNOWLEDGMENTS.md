@@ -1,6 +1,6 @@
 # Acknowledgments
 
-burn-ember draws on ideas and techniques from several open-source projects.
+burn-flex draws on ideas and techniques from several open-source projects.
 
 ## ndarray
 

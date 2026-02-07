@@ -1,6 +1,6 @@
-# Benchmarks: Ember vs NdArray
+# Benchmarks: Flex vs NdArray
 
-All benchmarks run on Apple M3 Max, comparing burn-ember against burn-ndarray. Default features
+All benchmarks run on Apple M3 Max, comparing burn-flex against burn-ndarray. Default features
 enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 **Date**: 2026-02-07
@@ -8,15 +8,15 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 ## How to Read
 
 - **Median** time reported (lower is better)
-- **Speedup** = NdArray median / Ember median
+- **Speedup** = NdArray median / Flex median
 - **Mem** = peak allocation (`max alloc` from divan)
-- Bold speedup means Ember wins; plain means tie or NdArray wins
+- Bold speedup means Flex wins; plain means tie or NdArray wins
 
 ---
 
 ## Binary Operations (f32)
 
-| Operation   | Size | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Operation   | Size | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | ----------- | ---- | ------- | ------- | -------- | --------- | ----------- |
 | add         | 4K   | 449 ns  | 1.45 us | **3.2x** | 16.5 KB   | 49.3 KB     |
 | add         | 64K  | 7.7 us  | 21.0 us | **2.7x** | 262 KB    | 787 KB      |
@@ -35,7 +35,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Transposed
 
-| Operation | Size      | Ember   | NdArray | Speedup | Ember Mem | NdArray Mem |
+| Operation | Size      | Flex   | NdArray | Speedup | Flex Mem | NdArray Mem |
 | --------- | --------- | ------- | ------- | ------- | --------- | ----------- |
 | add       | 256x256   | 49 us   | 56 us   | **1.1x** | 262 KB    | 524 KB      |
 | add       | 1024x1024 | 979 us  | 1.30 ms | **1.3x** | 4.2 MB    | 8.4 MB      |
@@ -44,7 +44,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ## Binary Operations (i64)
 
-| Operation      | Size | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Operation      | Size | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | -------------- | ---- | ------- | ------- | -------- | --------- | ----------- |
 | int_add        | 4K   | 835 ns  | 3.98 us | **4.8x** | 32.9 KB   | 98.4 KB     |
 | int_add        | 64K  | 14.6 us | 41.6 us | **2.8x** | 524 KB    | 1.57 MB     |
@@ -58,7 +58,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Transposed (i64)
 
-| Operation | Size      | Ember   | NdArray | Speedup  |
+| Operation | Size      | Flex   | NdArray | Speedup  |
 | --------- | --------- | ------- | ------- | -------- |
 | int_add   | 256x256   | 57 us   | 65 us   | **1.1x** |
 | int_add   | 1024x1024 | 1.50 ms | 1.40 ms | 0.93x    |
@@ -67,7 +67,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ## Int Cast
 
-| Operation  | Size      | Ember  | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Operation  | Size      | Flex  | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | ---------- | --------- | ------ | ------- | -------- | --------- | ----------- |
 | i64 to i8  | 256x256   | 5.6 us | 36.7 us | **6.6x** | 65.7 KB   | 1.05 MB     |
 | i64 to i32 | 64x64     | 353 ns | 2.68 us | **7.6x** | 16.5 KB   | 65.6 KB     |
@@ -78,7 +78,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ## Int Random
 
-| Operation | Size       | Ember   | NdArray | Speedup |
+| Operation | Size       | Flex   | NdArray | Speedup |
 | --------- | ---------- | ------- | ------- | ------- |
 | uniform   | 64x64      | 41 us   | 42 us   | 1.0x    |
 | uniform   | 256x256    | 659 us  | 685 us  | 1.0x    |
@@ -91,7 +91,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Square (f32)
 
-| Size      | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Size      | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | --------- | ------- | ------- | -------- | --------- | ----------- |
 | 64x64     | 5.9 us  | 19.8 us | **3.4x** | 33.6 KB   | 49.3 KB     |
 | 128x128   | 43.9 us | 69.1 us | **1.6x** | 328 KB    | 197 KB      |
@@ -101,7 +101,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Rectangular (f32)
 
-| Shape               | Ember  | NdArray | Speedup  |
+| Shape               | Flex  | NdArray | Speedup  |
 | ------------------- | ------ | ------- | -------- |
 | 512x64 x 64x512     | 169 us | 163 us  | 1.0x     |
 | 256x512 x 512x256   | 257 us | 295 us  | **1.1x** |
@@ -109,7 +109,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Transposed (256x256)
 
-| Config          | Ember  | NdArray | Speedup  |
+| Config          | Flex  | NdArray | Speedup  |
 | --------------- | ------ | ------- | -------- |
 | LHS transposed  | 162 us | 197 us  | **1.2x** |
 | RHS transposed  | 187 us | 184 us  | 1.0x     |
@@ -117,7 +117,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Batched (f32)
 
-| Shape              | Ember  | NdArray | Speedup  |
+| Shape              | Flex  | NdArray | Speedup  |
 | ------------------ | ------ | ------- | -------- |
 | 8x 64x64           | 55 us  | 101 us  | **1.8x** |
 | 32x 64x64          | 73 us  | 165 us  | **2.3x** |
@@ -126,7 +126,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Broadcast (f32)
 
-| Shape                     | Ember  | NdArray | Speedup  |
+| Shape                     | Flex  | NdArray | Speedup  |
 | ------------------------- | ------ | ------- | -------- |
 | [1,64,64] x [8,64,64]     | 53 us  | 75 us   | **1.4x** |
 | [8,64,64] x [1,64,64]     | 50 us  | 78 us   | **1.6x** |
@@ -135,7 +135,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Integer (i32)
 
-| Size    | Ember   | NdArray | Speedup  |
+| Size    | Flex   | NdArray | Speedup  |
 | ------- | ------- | ------- | -------- |
 | 64x64   | 107 us  | 115 us  | **1.1x** |
 | 128x128 | 959 us  | 984 us  | 1.0x     |
@@ -148,7 +148,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Basic Slicing
 
-| Operation | Size      | Ember  | NdArray | Speedup   | Ember Mem | NdArray Mem |
+| Operation | Size      | Flex  | NdArray | Speedup   | Flex Mem | NdArray Mem |
 | --------- | --------- | ------ | ------- | --------- | --------- | ----------- |
 | slice 1D  | 1K        | 144 ns | 303 ns  | **2.1x**  | 80 B      | 6.3 KB      |
 | slice 1D  | 1M        | 116 ns | 80 us   | **~690x** | 18 B      | 6.3 MB      |
@@ -158,7 +158,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Narrow
 
-| Operation   | Size      | Ember  | NdArray | Speedup   |
+| Operation   | Size      | Flex  | NdArray | Speedup   |
 | ----------- | --------- | ------ | ------- | --------- |
 | narrow dim0 | 256x256   | 179 ns | 6.1 us  | **~34x**  |
 | narrow dim0 | 1024x1024 | 167 ns | 81 us   | **~490x** |
@@ -166,7 +166,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Slice Assignment
 
-| Operation | Size      | Ember   | NdArray | Speedup  |
+| Operation | Size      | Flex   | NdArray | Speedup  |
 | --------- | --------- | ------- | ------- | -------- |
 | assign 1D | 1K        | 361 ns  | 605 ns  | **1.7x** |
 | assign 2D | 256x256   | 5.6 us  | 13.3 us | **2.4x** |
@@ -174,14 +174,14 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Transposed Slicing
 
-| Size      | Ember  | NdArray | Speedup    |
+| Size      | Flex  | NdArray | Speedup    |
 | --------- | ------ | ------- | ---------- |
 | 256x256   | 98 ns  | 8.2 us  | **~84x**   |
 | 1024x1024 | 112 ns | 236 us  | **~2100x** |
 
 ### Slice with Step
 
-| Operation | Size      | Ember | NdArray | Speedup    |
+| Operation | Size      | Flex | NdArray | Speedup    |
 | --------- | --------- | ----- | ------- | ---------- |
 | step2 1D  | 1K        | 94 ns | 470 ns  | **5.0x**   |
 | step2 1D  | 1M        | 91 ns | 193 us  | **~2100x** |
@@ -194,7 +194,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Full Tensor Sum
 
-| Size | Ember  | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Size | Flex  | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | ---- | ------ | ------- | -------- | --------- | ----------- |
 | 1K   | 228 ns | 375 ns  | **1.6x** | 100 B     | 558 B       |
 | 64K  | 6.2 us | 14.6 us | **2.4x** | 100 B     | 524 KB      |
@@ -202,7 +202,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Sum Along Dimension
 
-| Shape     | Dim | Ember   | NdArray | Speedup  |
+| Shape     | Dim | Flex   | NdArray | Speedup  |
 | --------- | --- | ------- | ------- | -------- |
 | 256x256   | 0   | 5.0 us  | 19.6 us | **3.9x** |
 | 256x256   | 1   | 4.2 us  | 12.9 us | **3.1x** |
@@ -211,35 +211,35 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### 3D Sum (Batched)
 
-| Shape      | Dim | Ember  | NdArray | Speedup  |
+| Shape      | Dim | Flex  | NdArray | Speedup  |
 | ---------- | --- | ------ | ------- | -------- |
 | 32x256x256 | 1   | 150 us | 527 us  | **3.5x** |
 | 32x256x256 | 2   | 133 us | 346 us  | **2.6x** |
 
 ### Sum Transposed
 
-| Size      | Ember   | NdArray | Speedup  |
+| Size      | Flex   | NdArray | Speedup  |
 | --------- | ------- | ------- | -------- |
 | 256x256   | 6.4 us  | 6.5 us  | 1.0x     |
 | 1024x1024 | 53.5 us | 102 us  | **1.9x** |
 
 ### Sum Dim on Transposed
 
-| Size      | Dim | Ember   | NdArray | Speedup  |
+| Size      | Dim | Flex   | NdArray | Speedup  |
 | --------- | --- | ------- | ------- | -------- |
 | 256x256   | 0   | 4.0 us  | 4.5 us  | **1.1x** |
 | 1024x1024 | 0   | 78.9 us | 83.8 us | **1.1x** |
 
 ### Mean Along Dimension
 
-| Shape     | Dim | Ember   | NdArray | Speedup  |
+| Shape     | Dim | Flex   | NdArray | Speedup  |
 | --------- | --- | ------- | ------- | -------- |
 | 256x256   | 1   | 4.2 us  | 12.9 us | **3.1x** |
 | 1024x1024 | 1   | 78.1 us | 207 us  | **2.7x** |
 
 ### Argmax
 
-| Shape     | Dim | Ember   | NdArray | Speedup  |
+| Shape     | Dim | Flex   | NdArray | Speedup  |
 | --------- | --- | ------- | ------- | -------- |
 | 1K        | -   | 3.4 us  | 4.5 us  | **1.3x** |
 | 256x256   | 1   | 227 us  | 243 us  | **1.1x** |
@@ -251,7 +251,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Cumsum
 
-| Shape     | Dim | Ember   | NdArray | Speedup  |
+| Shape     | Dim | Flex   | NdArray | Speedup  |
 | --------- | --- | ------- | ------- | -------- |
 | 1K        | 0   | 828 ns  | 69.2 us | **~84x** |
 | 64K       | 0   | 44.7 us | 4.31 ms | **~96x** |
@@ -262,14 +262,14 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Cumprod
 
-| Shape   | Dim | Ember   | NdArray | Speedup  |
+| Shape   | Dim | Flex   | NdArray | Speedup  |
 | ------- | --- | ------- | ------- | -------- |
 | 1K      | 0   | 1.25 us | 68.8 us | **~55x** |
 | 256x256 | 1   | 67.7 us | 210 us  | **3.1x** |
 
 ### Cummin
 
-| Shape     | Dim | Ember   | NdArray | Speedup  |
+| Shape     | Dim | Flex   | NdArray | Speedup  |
 | --------- | --- | ------- | ------- | -------- |
 | 1K        | 0   | 718 ns  | 65.6 us | **~91x** |
 | 256x256   | 1   | 39.5 us | 214 us  | **5.4x** |
@@ -277,7 +277,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Cummax
 
-| Shape     | Dim | Ember   | NdArray | Speedup  |
+| Shape     | Dim | Flex   | NdArray | Speedup  |
 | --------- | --- | ------- | ------- | -------- |
 | 1K        | 0   | 963 ns  | 65.9 us | **~68x** |
 | 256x256   | 1   | 38.0 us | 127 us  | **3.3x** |
@@ -285,7 +285,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### 3D Cumsum (Batched)
 
-| Shape    | Dim | Ember | NdArray | Speedup  |
+| Shape    | Dim | Flex | NdArray | Speedup  |
 | -------- | --- | ----- | ------- | -------- |
 | 32x64x64 | 1   | 87 us | 89 us   | 1.0x     |
 | 32x64x64 | 2   | 78 us | 241 us  | **3.1x** |
@@ -296,7 +296,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Gather
 
-| Shape     | Dim | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Shape     | Dim | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | --------- | --- | ------- | ------- | -------- | --------- | ----------- |
 | 256x256   | 0   | 34.2 us | 156 us  | **4.6x** | 131 KB    | 787 KB      |
 | 256x256   | 1   | 33.2 us | 103 us  | **3.1x** | 131 KB    | 787 KB      |
@@ -304,14 +304,14 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Scatter Add
 
-| Shape     | Dim | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Shape     | Dim | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | --------- | --- | ------- | ------- | -------- | --------- | ----------- |
 | 256x256   | 1   | 32.5 us | 210 us  | **6.5x** | 262 KB    | 918 KB      |
 | 1024x1024 | 1   | 490 us  | 3.12 ms | **6.4x** | 4.2 MB    | 14.7 MB     |
 
 ### Select
 
-| Shape     | Dim | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Shape     | Dim | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | --------- | --- | ------- | ------- | -------- | --------- | ----------- |
 | 256x256   | 0   | 3.3 us  | 24.2 us | **7.3x** | 131 KB    | 525 KB      |
 | 256x256   | 1   | 26.0 us | 41.8 us | **1.6x** | 131 KB    | 525 KB      |
@@ -319,7 +319,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Select Add
 
-| Shape     | Dim | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Shape     | Dim | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | --------- | --- | ------- | ------- | -------- | --------- | ----------- |
 | 256x256   | 0   | 7.4 us  | 23.4 us | **3.2x** | 262 KB    | 657 KB      |
 | 1024x1024 | 0   | 102 us  | 274 us  | **2.7x** | 4.2 MB    | 10.5 MB     |
@@ -330,7 +330,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Basic Math
 
-| Operation | Size | Ember   | NdArray | Speedup  |
+| Operation | Size | Flex   | NdArray | Speedup  |
 | --------- | ---- | ------- | ------- | -------- |
 | exp       | 4K   | 5.1 us  | 5.6 us  | **1.1x** |
 | exp       | 64K  | 80 us   | 89 us   | **1.1x** |
@@ -346,7 +346,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Trigonometric
 
-| Operation | Size | Ember   | NdArray | Speedup  |
+| Operation | Size | Flex   | NdArray | Speedup  |
 | --------- | ---- | ------- | ------- | -------- |
 | sin       | 4K   | 5.6 us  | 8.1 us  | **1.4x** |
 | sin       | 64K  | 90 us   | 136 us  | **1.5x** |
@@ -359,7 +359,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Transposed (Non-contiguous)
 
-| Operation | Size      | Ember   | NdArray | Speedup |
+| Operation | Size      | Flex   | NdArray | Speedup |
 | --------- | --------- | ------- | ------- | ------- |
 | exp       | 256x256   | 81 us   | 83 us   | 1.0x    |
 | exp       | 1024x1024 | 1.30 ms | 1.34 ms | 1.0x    |
@@ -370,7 +370,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Tensor-Tensor Comparisons
 
-| Operation | Size | Ember  | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Operation | Size | Flex  | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | --------- | ---- | ------ | ------- | -------- | --------- | ----------- |
 | greater   | 4K   | 535 ns | 1.45 us | **2.7x** | 4.2 KB    | 49.3 KB     |
 | greater   | 64K  | 6.2 us | 21.0 us | **3.4x** | 65.6 KB   | 787 KB      |
@@ -381,27 +381,27 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Scalar Comparisons
 
-| Operation    | Size | Ember | NdArray | Speedup  |
+| Operation    | Size | Flex | NdArray | Speedup  |
 | ------------ | ---- | ----- | ------- | -------- |
 | greater_elem | 1M   | 77 us | 200 us  | **2.6x** |
 
 ### Transposed Comparisons
 
-| Operation | Size      | Ember   | NdArray | Speedup |
+| Operation | Size      | Flex   | NdArray | Speedup |
 | --------- | --------- | ------- | ------- | ------- |
 | greater   | 256x256   | 53 us   | 51 us   | 0.96x   |
 | greater   | 1024x1024 | 972 us  | 1.21 ms | **1.2x** |
 
 ### Broadcast Comparisons
 
-| Operation | Shape     | Ember  | NdArray | Speedup  |
+| Operation | Shape     | Flex  | NdArray | Speedup  |
 | --------- | --------- | ------ | ------- | -------- |
 | greater   | 256x256   | 6.2 us | 25.7 us | **4.1x** |
 | greater   | 1024x1024 | 86 us  | 319 us  | **3.7x** |
 
 ### Expand (Broadcasting)
 
-| Operation           | Ember  | NdArray | Speedup    |
+| Operation           | Flex  | NdArray | Speedup    |
 | ------------------- | ------ | ------- | ---------- |
 | 1x1 to 1000x1000    | 171 ns | 287 us  | **~1700x** |
 | 1024x1 to 1024x1024 | 130 ns | 307 us  | **~2400x** |
@@ -409,7 +409,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Boolean Operations
 
-| Operation | Size | Ember | NdArray | Speedup |
+| Operation | Size | Flex | NdArray | Speedup |
 | --------- | ---- | ----- | ------- | ------- |
 | bool_not  | 1M   | 24 us | 19 us   | 0.79x   |
 | bool_and  | 1M   | 32 us | 28 us   | 0.88x   |
@@ -420,7 +420,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Kernel Size Comparison (4x64x56x56, 64 to 128 channels)
 
-| Kernel | Ember   | NdArray | Speedup  |
+| Kernel | Flex   | NdArray | Speedup  |
 | ------ | ------- | ------- | -------- |
 | 1x1    | 871 us  | 1.28 ms | **1.5x** |
 | 3x3    | 3.82 ms | 10.6 ms | **2.8x** |
@@ -429,7 +429,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### ResNet Layers (batch=1, 3x3)
 
-| Layer  | Input       | Channels       | Ember   | NdArray | Speedup  |
+| Layer  | Input       | Channels       | Flex   | NdArray | Speedup  |
 | ------ | ----------- | -------------- | ------- | ------- | -------- |
 | conv1  | 1x3x224x224 | 3 to 64 (k7s2) | 973 us  | 1.27 ms | **1.3x** |
 | layer1 | 1x64x56x56  | 64 to 64       | 1.05 ms | 1.89 ms | **1.8x** |
@@ -439,7 +439,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Small (batch=1, 3x3)
 
-| Input      | Channels | Ember  | NdArray | Speedup  |
+| Input      | Channels | Flex  | NdArray | Speedup  |
 | ---------- | -------- | ------ | ------- | -------- |
 | 1x3x32x32  | 3 to 16  | 71 us  | 85 us   | **1.2x** |
 | 1x16x32x32 | 16 to 32 | 232 us | 277 us  | **1.2x** |
@@ -447,14 +447,14 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Large Batched (batch=16, 3x3)
 
-| Input         | Channels   | Ember | NdArray | Speedup  |
+| Input         | Channels   | Flex | NdArray | Speedup  |
 | ------------- | ---------- | ----- | ------- | -------- |
 | 16x64x128x128 | 64 to 128  | 81 ms | 205 ms  | **2.5x** |
 | 16x128x64x64  | 128 to 256 | 61 ms | 243 ms  | **4.0x** |
 
 ### Medium Batched (batch=8, 3x3)
 
-| Input      | Channels  | Ember   | NdArray | Speedup  |
+| Input      | Channels  | Flex   | NdArray | Speedup  |
 | ---------- | --------- | ------- | ------- | -------- |
 | 8x3x64x64  | 3 to 64   | 951 us  | 564 us  | 0.59x    |
 | 8x32x64x64 | 32 to 64  | 4.83 ms | 7.29 ms | **1.5x** |
@@ -462,7 +462,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Conv1d
 
-| Input      | Kernel | Ember   | NdArray | Speedup  |
+| Input      | Kernel | Flex   | NdArray | Speedup  |
 | ---------- | ------ | ------- | ------- | -------- |
 | 1x16x256   | 3      | 34 us   | 176 us  | **5.2x** |
 | 8x32x512   | 5      | 559 us  | 2.40 ms | **4.3x** |
@@ -474,7 +474,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Max Pool 2D
 
-| Input        | Kernel | Ember  | NdArray | Speedup  |
+| Input        | Kernel | Flex  | NdArray | Speedup  |
 | ------------ | ------ | ------ | ------- | -------- |
 | 1x64x56x56   | 3x3 s2 | 156 us | 193 us  | **1.2x** |
 | 8x64x56x56   | 3x3 s2 | 786 us | 1.17 ms | **1.5x** |
@@ -483,7 +483,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Max Pool 2D (ResNet)
 
-| Input         | Kernel | Ember   | NdArray | Speedup  |
+| Input         | Kernel | Flex   | NdArray | Speedup  |
 | ------------- | ------ | ------- | ------- | -------- |
 | 1x64x112x112  | 3x3 s2 | 491 us  | 650 us  | **1.3x** |
 | 8x64x112x112  | 3x3 s2 | 2.88 ms | 4.02 ms | **1.4x** |
@@ -491,7 +491,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Avg Pool 2D
 
-| Input        | Kernel | Ember  | NdArray | Speedup  |
+| Input        | Kernel | Flex  | NdArray | Speedup  |
 | ------------ | ------ | ------ | ------- | -------- |
 | 1x64x56x56   | 3x3 s2 | 170 us | 212 us  | **1.2x** |
 | 8x64x56x56   | 3x3 s2 | 869 us | 1.19 ms | **1.4x** |
@@ -499,7 +499,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Adaptive Avg Pool 2D
 
-| Input       | Output | Ember  | NdArray | Speedup  |
+| Input       | Output | Flex  | NdArray | Speedup  |
 | ----------- | ------ | ------ | ------- | -------- |
 | 1x256x56x56 | 7x7    | 174 us | 296 us  | **1.7x** |
 | 1x512x7x7   | 1x1    | 75 us  | 80 us   | **1.1x** |
@@ -508,7 +508,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Max Pool 1D
 
-| Input       | Kernel | Ember   | NdArray | Speedup  |
+| Input       | Kernel | Flex   | NdArray | Speedup  |
 | ----------- | ------ | ------- | ------- | -------- |
 | 1x64x256    | 3 s2   | 58 us   | 104 us  | **1.8x** |
 | 8x128x512   | 3 s2   | 340 us  | 1.06 ms | **3.1x** |
@@ -516,7 +516,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Kernel Size Comparison (4x64x56x56)
 
-| Kernel | Ember   | NdArray | Speedup  |
+| Kernel | Flex   | NdArray | Speedup  |
 | ------ | ------- | ------- | -------- |
 | 2x2    | 255 us  | 490 us  | **1.9x** |
 | 3x3    | 444 us  | 651 us  | **1.5x** |
@@ -528,7 +528,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Conv Transpose 2D
 
-| Input          | Output | Ember   | NdArray | Speedup  |
+| Input          | Output | Flex   | NdArray | Speedup  |
 | -------------- | ------ | ------- | ------- | -------- |
 | 1x64x7x7       | 14x14  | 1.31 ms | 1.73 ms | **1.3x** |
 | 1x128x14x14    | 28x28  | 9.13 ms | 13.6 ms | **1.5x** |
@@ -538,7 +538,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### DCGAN Generator
 
-| Layer          | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| Layer          | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | -------------- | ------- | ------- | -------- | --------- | ----------- |
 | 1x1 to 4x4     | 984 us  | 1.79 ms | **1.8x** | 49.6 KB   | 16.8 MB     |
 | 4x4 to 8x8     | 2.90 ms | 3.90 ms | **1.3x** | 98.8 KB   | 4.2 MB      |
@@ -547,7 +547,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Conv Transpose 1D
 
-| Input     | Ember   | NdArray | Speedup  |
+| Input     | Flex   | NdArray | Speedup  |
 | --------- | ------- | ------- | -------- |
 | 1x64x32   | 330 us  | 384 us  | **1.2x** |
 | 8x128x64  | 6.33 ms | 9.70 ms | **1.5x** |
@@ -555,7 +555,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Conv Transpose 3D
 
-| Input      | Output   | Ember   | NdArray | Speedup  |
+| Input      | Output   | Flex   | NdArray | Speedup  |
 | ---------- | -------- | ------- | ------- | -------- |
 | 1x32x4x4x4 | 8x8x8    | 1.47 ms | 2.58 ms | **1.8x** |
 | 1x64x8x8x8 | 16x16x16 | 24.1 ms | 49.3 ms | **2.0x** |
@@ -566,7 +566,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Nearest
 
-| Input       | Output  | Ember | NdArray | Speedup  |
+| Input       | Output  | Flex | NdArray | Speedup  |
 | ----------- | ------- | ----- | ------- | -------- |
 | 1x3x64x64   | 128x128 | 58 us | 157 us  | **2.7x** |
 | 1x3x32x32   | 128x128 | 62 us | 153 us  | **2.5x** |
@@ -576,7 +576,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Bilinear
 
-| Input       | Output  | Ember  | NdArray | Speedup  |
+| Input       | Output  | Flex  | NdArray | Speedup  |
 | ----------- | ------- | ------ | ------- | -------- |
 | 1x3x64x64   | 128x128 | 79 us  | 175 us  | **2.2x** |
 | 1x3x32x32   | 128x128 | 77 us  | 174 us  | **2.3x** |
@@ -586,7 +586,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Bicubic
 
-| Input       | Output  | Ember  | NdArray | Speedup  |
+| Input       | Output  | Flex  | NdArray | Speedup  |
 | ----------- | ------- | ------ | ------- | -------- |
 | 1x3x64x64   | 128x128 | 176 us | 251 us  | **1.4x** |
 | 1x3x32x32   | 128x128 | 167 us | 242 us  | **1.4x** |
@@ -600,7 +600,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Cross Product
 
-| Shape   | Ember   | NdArray | Speedup  |
+| Shape   | Flex   | NdArray | Speedup  |
 | ------- | ------- | ------- | -------- |
 | 1Kx3    | 26.7 us | 46.7 us | **1.7x** |
 | 64Kx3   | 1.57 ms | 2.95 ms | **1.9x** |
@@ -609,7 +609,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Unfold (1D)
 
-| Input | Window | Step | Ember | NdArray | Speedup      |
+| Input | Window | Step | Flex | NdArray | Speedup      |
 | ----- | ------ | ---- | ----- | ------- | ------------ |
 | 1K    | 8      | 1    | 65 ns | 106 us  | **~1600x**   |
 | 64K   | 8      | 1    | 50 ns | 6.8 ms  | **~137000x** |
@@ -618,7 +618,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Unfold (2D/3D)
 
-| Shape    | Dim | Window | Step | Ember | NdArray | Speedup     |
+| Shape    | Dim | Window | Step | Flex | NdArray | Speedup     |
 | -------- | --- | ------ | ---- | ----- | ------- | ----------- |
 | 256x256  | 1   | 8      | 1    | 57 ns | 882 us  | **~15000x** |
 | 256x256  | 1   | 32     | 16   | 57 ns | 68 us   | **~1200x**  |
@@ -631,7 +631,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Small/Tiny Inputs
 
-| Input     | Config      | Ember   | NdArray | Speedup   |
+| Input     | Config      | Flex   | NdArray | Speedup   |
 | --------- | ----------- | ------- | ------- | --------- |
 | 1x3x8x8   | 3 to 8, k3  | 8.7 us  | 91.6 us | **10.5x** |
 | 1x3x8x8   | no mask     | 7.9 us  | 77.2 us | **9.8x**  |
@@ -641,7 +641,7 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Medium Inputs
 
-| Input      | Config       | Ember  | NdArray | Speedup |
+| Input      | Config       | Flex  | NdArray | Speedup |
 | ---------- | ------------ | ------ | ------- | ------- |
 | 1x16x32x32 | 16 to 32, k3 | 833 us | 657 us  | 0.79x   |
 | 1x16x32x32 | wg=4         | 835 us | 590 us  | 0.71x   |

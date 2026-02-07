@@ -272,7 +272,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "burn-ember"
+name = "burn-flex"
 version = "0.0.1"
 dependencies = [
  "aligned-vec",

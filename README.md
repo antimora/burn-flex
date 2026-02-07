@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="logo.png" alt="burn-ember logo" width="400">
+  <img src="logo.png" alt="burn-flex logo" width="400">
 </p>
 
-## burn-ember - The portable ember that carries Burn anywhere.
+## burn-flex - The portable flex that carries Burn anywhere.
 
 A fast, memory-efficient CPU backend for Burn with multi-threading, SIMD, and optimized matrix
 multiplication. Runs on std, no_std, and WebAssembly. Supports f16/bf16, zero-copy data loading, and
@@ -34,7 +34,7 @@ is thread-safe by design.
 
 ### Performance vs burn-ndarray (Apple M3 Max)
 
-burn-ember consistently outperforms burn-ndarray across the board, often using a fraction of the
+burn-flex consistently outperforms burn-ndarray across the board, often using a fraction of the
 memory:
 
 | Category          | Speedup            | Highlights                              |
@@ -61,8 +61,14 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 
 ### Status
 
-- All `burn-backend-tests` pass across feature flag combinations (`std`, `std+simd`, `std+rayon`,
-  `std+simd+rayon`)
+- All `burn-backend-tests` pass across all feature flag combinations:
+  - `no-default-features` (no_std, no SIMD, no rayon)
+  - `no-default-features + simd` (no_std with SIMD)
+  - `std`
+  - `std + simd`
+  - `std + rayon`
+  - `std + simd + rayon` (default)
+- Burn's `burn-no-std-tests` integration suite passes (MNIST model inference in `#![no_std]`)
 - Tested for edge-case robustness: integer overflow at type boundaries, large-float rounding,
   invalid pooling parameters, zero-sized dimensions. Safe for embedded devices.
 - All ONNX model checks in `burn-onnx` pass
@@ -75,5 +81,5 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Design decisions, memory strategy, and implementation
   patterns
-- [BENCHMARKS.md](BENCHMARKS.md) - Full benchmark results (Ember vs NdArray)
-- [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) - Projects that influenced burn-ember
+- [BENCHMARKS.md](BENCHMARKS.md) - Full benchmark results (Flex vs NdArray)
+- [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) - Projects that influenced burn-flex

@@ -14,9 +14,9 @@ use tracel_xtask::prelude::*;
     Vulnerabilities
 )]
 pub enum Command {
-    /// Build burn-ember.
+    /// Build burn-flex.
     Build(BuildCmdArgs),
-    /// Test burn-ember.
+    /// Test burn-flex.
     Test(TestCmdArgs),
 }
 
