@@ -428,7 +428,9 @@ impl FloatTensorOps<Ember> for Ember {
         unary::unary_op(
             tensor,
             |x: f32| {
-                if x > 0.0 {
+                if x.is_nan() {
+                    x
+                } else if x > 0.0 {
                     1.0
                 } else if x < 0.0 {
                     -1.0
@@ -437,7 +439,9 @@ impl FloatTensorOps<Ember> for Ember {
                 }
             },
             |x: f64| {
-                if x > 0.0 {
+                if x.is_nan() {
+                    x
+                } else if x > 0.0 {
                     1.0
                 } else if x < 0.0 {
                     -1.0

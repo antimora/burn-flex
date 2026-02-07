@@ -35,6 +35,10 @@ impl Iterator for StridedIter<'_> {
             return None;
         }
 
+        debug_assert!(
+            self.storage_index >= 0,
+            "StridedIter: negative storage index"
+        );
         let idx = self.storage_index as usize;
         self.remaining -= 1;
 

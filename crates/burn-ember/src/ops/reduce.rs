@@ -37,9 +37,9 @@ pub fn sum(tensor: EmberTensor) -> EmberTensor {
         DType::F64 => sum_impl::<f64>(&tensor),
         DType::F16 => reduce_scalar_half(&tensor, |a, b| a + b, 0.0, f16::to_f32, f16::from_f32),
         DType::BF16 => reduce_scalar_half(&tensor, |a, b| a + b, 0.0, bf16::to_f32, bf16::from_f32),
-        DType::I8 => sum_impl::<i8>(&tensor),
-        DType::I16 => sum_impl::<i16>(&tensor),
-        DType::I32 => sum_impl::<i32>(&tensor),
+        DType::I8 => sum_impl_widening::<i8>(&tensor),
+        DType::I16 => sum_impl_widening::<i16>(&tensor),
+        DType::I32 => sum_impl_widening::<i32>(&tensor),
         DType::I64 => sum_impl::<i64>(&tensor),
         _ => panic!("sum: unsupported dtype {:?}", tensor.dtype()),
     }
@@ -135,6 +135,55 @@ fn sum_impl<E: Element + bytemuck::Pod + Default + core::iter::Sum>(
     )
 }
 
+/// Widening scalar reduction for small integer types: accumulate in i64 to avoid overflow.
+macro_rules! widening_scalar_reduce {
+    ($name:ident, $fold:expr, $init:expr) => {
+        fn $name<E>(tensor: &EmberTensor) -> EmberTensor
+        where
+            E: Element + bytemuck::Pod + Default,
+            i64: From<E>,
+        {
+            let total: i64 = match tensor.layout().contiguous_offsets() {
+                Some((start, end)) => {
+                    let data: &[E] = tensor.storage();
+                    data[start..end]
+                        .iter()
+                        .fold($init, |acc, x| ($fold)(acc, i64::from(*x)))
+                }
+                None => {
+                    let data: &[E] = tensor.storage();
+                    StridedIter::new(tensor.layout())
+                        .fold($init, |acc, idx| ($fold)(acc, i64::from(data[idx])))
+                }
+            };
+            // Truncate back to target type (wrapping, matches PyTorch)
+            let data: &[E] = tensor.storage();
+            let _ = data; // just to bind E
+            let result_bytes = total.to_ne_bytes();
+            // Extract lowest bytes for the target type
+            let result: E =
+                bytemuck::cast_slice::<u8, E>(&result_bytes[..core::mem::size_of::<E>()])[0];
+            let bytes = Bytes::from_elems(vec![result]);
+            EmberTensor::new(
+                bytes,
+                Layout::contiguous(Shape::from(vec![1])),
+                tensor.dtype(),
+            )
+        }
+    };
+}
+
+widening_scalar_reduce!(
+    sum_impl_widening,
+    |acc: i64, x: i64| acc.wrapping_add(x),
+    0i64
+);
+widening_scalar_reduce!(
+    prod_impl_widening,
+    |acc: i64, x: i64| acc.wrapping_mul(x),
+    1i64
+);
+
 /// Scalar reduction for half-precision types, accumulating in f32.
 fn reduce_scalar_half<E>(
     tensor: &EmberTensor,
@@ -188,9 +237,9 @@ pub fn sum_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
             bf16::to_f32,
             bf16::from_f32,
         ),
-        DType::I8 => reduce_dim_impl::<i8, _>(&tensor, dim, 0, |acc, x| acc + x),
-        DType::I16 => reduce_dim_impl::<i16, _>(&tensor, dim, 0, |acc, x| acc + x),
-        DType::I32 => reduce_dim_impl::<i32, _>(&tensor, dim, 0, |acc, x| acc + x),
+        DType::I8 => reduce_dim_widening::<i8, _>(&tensor, dim, 0, |acc, x| acc.wrapping_add(x)),
+        DType::I16 => reduce_dim_widening::<i16, _>(&tensor, dim, 0, |acc, x| acc.wrapping_add(x)),
+        DType::I32 => reduce_dim_widening::<i32, _>(&tensor, dim, 0, |acc, x| acc.wrapping_add(x)),
         DType::I64 => reduce_dim_impl::<i64, _>(&tensor, dim, 0, |acc, x| acc + x),
         _ => panic!("sum_dim: unsupported dtype {:?}", tensor.dtype()),
     }
@@ -199,6 +248,10 @@ pub fn sum_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
 /// Mean along a dimension, keeping the dimension with size 1.
 pub fn mean_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
     let dim_size = tensor.layout().shape().dims[dim];
+    assert!(
+        dim_size > 0,
+        "mean_dim: cannot take mean of empty dimension"
+    );
     let dtype = tensor.dtype();
     let sum_result = sum_dim(tensor, dim);
 
@@ -239,9 +292,9 @@ pub fn prod(tensor: EmberTensor) -> EmberTensor {
         DType::F64 => prod_impl::<f64>(&tensor),
         DType::F16 => reduce_scalar_half(&tensor, |a, b| a * b, 1.0, f16::to_f32, f16::from_f32),
         DType::BF16 => reduce_scalar_half(&tensor, |a, b| a * b, 1.0, bf16::to_f32, bf16::from_f32),
-        DType::I8 => prod_impl::<i8>(&tensor),
-        DType::I16 => prod_impl::<i16>(&tensor),
-        DType::I32 => prod_impl::<i32>(&tensor),
+        DType::I8 => prod_impl_widening::<i8>(&tensor),
+        DType::I16 => prod_impl_widening::<i16>(&tensor),
+        DType::I32 => prod_impl_widening::<i32>(&tensor),
         DType::I64 => prod_impl::<i64>(&tensor),
         _ => panic!("prod: unsupported dtype {:?}", tensor.dtype()),
     }
@@ -292,9 +345,9 @@ pub fn prod_dim(tensor: EmberTensor, dim: usize) -> EmberTensor {
             bf16::to_f32,
             bf16::from_f32,
         ),
-        DType::I8 => reduce_dim_impl::<i8, _>(&tensor, dim, 1, |acc, x| acc * x),
-        DType::I16 => reduce_dim_impl::<i16, _>(&tensor, dim, 1, |acc, x| acc * x),
-        DType::I32 => reduce_dim_impl::<i32, _>(&tensor, dim, 1, |acc, x| acc * x),
+        DType::I8 => reduce_dim_widening::<i8, _>(&tensor, dim, 1, |acc, x| acc.wrapping_mul(x)),
+        DType::I16 => reduce_dim_widening::<i16, _>(&tensor, dim, 1, |acc, x| acc.wrapping_mul(x)),
+        DType::I32 => reduce_dim_widening::<i32, _>(&tensor, dim, 1, |acc, x| acc.wrapping_mul(x)),
         DType::I64 => reduce_dim_impl::<i64, _>(&tensor, dim, 1, |acc, x| acc * x),
         _ => panic!("prod_dim: unsupported dtype {:?}", tensor.dtype()),
     }
@@ -697,6 +750,64 @@ where
                 }
                 result.push(acc);
             }
+        }
+    }
+
+    let bytes = Bytes::from_elems(result);
+    EmberTensor::new(
+        bytes,
+        Layout::contiguous(Shape::from(out_shape)),
+        tensor.dtype(),
+    )
+}
+
+/// Widening dimension reduction for small integer types: accumulate in i64 to avoid overflow.
+fn reduce_dim_widening<E, F>(
+    tensor: &EmberTensor,
+    dim: usize,
+    init: i64,
+    reduce_fn: F,
+) -> EmberTensor
+where
+    E: Element + bytemuck::Pod,
+    i64: From<E>,
+    F: Fn(i64, i64) -> i64,
+{
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+
+    assert!(
+        dim < ndims,
+        "dim {} out of bounds for {} dimensions",
+        dim,
+        ndims
+    );
+
+    let dim_size = shape.dims[dim];
+    let mut out_shape: Vec<usize> = shape.dims.clone();
+    out_shape[dim] = 1;
+    let out_size: usize = out_shape.iter().product();
+
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+
+    let data: &[E] = tensor.storage();
+    let start_offset = tensor.layout().start_offset();
+
+    let mut result: Vec<E> = Vec::with_capacity(out_size);
+
+    for outer in 0..outer_size.max(1) {
+        for inner in 0..inner_size.max(1) {
+            let mut acc = init;
+            for d in 0..dim_size {
+                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
+                acc = reduce_fn(acc, i64::from(data[idx]));
+            }
+            // Truncate back to target type (wrapping, matches PyTorch)
+            let acc_bytes = acc.to_ne_bytes();
+            let val: E = bytemuck::cast_slice::<u8, E>(&acc_bytes[..core::mem::size_of::<E>()])[0];
+            result.push(val);
         }
     }
 

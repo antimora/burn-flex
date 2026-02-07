@@ -122,18 +122,21 @@ fn compute_src_index(
     slice_info: &[(usize, usize, isize)],
     out_indices: &[usize],
 ) -> usize {
-    let mut idx = layout.start_offset();
+    let mut idx = layout.start_offset() as isize;
     for (dim, &out_i) in out_indices.iter().enumerate() {
         let (start, _, step) = slice_info[dim];
         let src_i = if step > 0 {
             start + out_i * step as usize
         } else {
             // Negative step: start from high index, go down
-            (start as isize - (out_i as isize) * (-step)) as usize
+            let result = start as isize - (out_i as isize) * (-step);
+            debug_assert!(result >= 0, "slice: negative source index at dim {dim}");
+            result as usize
         };
-        idx = (idx as isize + src_i as isize * layout.strides()[dim]) as usize;
+        idx += src_i as isize * layout.strides()[dim];
     }
-    idx
+    debug_assert!(idx >= 0, "slice: negative final index");
+    idx as usize
 }
 
 /// Normalize a potentially negative index to a positive one.

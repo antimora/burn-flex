@@ -27,11 +27,11 @@ impl QTensorOps<Ember> for Ember {
         _scheme: &QuantScheme,
         _qparams: QuantizationParametersPrimitive<Ember>,
     ) -> QuantizedTensor<Ember> {
-        todo!("quantize")
+        unimplemented!("Ember: quantized tensor quantize not yet supported")
     }
 
     fn dequantize(_tensor: QuantizedTensor<Ember>) -> FloatTensor<Ember> {
-        todo!("dequantize")
+        unimplemented!("Ember: quantized tensor dequantize not yet supported")
     }
 
     fn q_device(_tensor: &QuantizedTensor<Ember>) -> Device<Ember> {
@@ -68,15 +68,15 @@ impl QTensorOps<Ember> for Ember {
     }
 
     fn q_permute(_tensor: QuantizedTensor<Ember>, _axes: &[usize]) -> QuantizedTensor<Ember> {
-        todo!("q_permute")
+        unimplemented!("Ember: quantized tensor permute not yet supported")
     }
 
     fn q_flip(_tensor: QuantizedTensor<Ember>, _axes: &[usize]) -> QuantizedTensor<Ember> {
-        todo!("q_flip")
+        unimplemented!("Ember: quantized tensor flip not yet supported")
     }
 
     fn q_expand(_tensor: QuantizedTensor<Ember>, _shape: Shape) -> QuantizedTensor<Ember> {
-        todo!("q_expand")
+        unimplemented!("Ember: quantized tensor expand not yet supported")
     }
 
     fn q_select(
@@ -84,13 +84,13 @@ impl QTensorOps<Ember> for Ember {
         _dim: usize,
         _indices: burn_backend::tensor::IntTensor<Ember>,
     ) -> QuantizedTensor<Ember> {
-        todo!("q_select")
+        unimplemented!("Ember: quantized tensor select not yet supported")
     }
 
     fn q_slice(
         _tensor: QuantizedTensor<Ember>,
         _slices: &[burn_std::Slice],
     ) -> QuantizedTensor<Ember> {
-        todo!("q_slice")
+        unimplemented!("Ember: quantized tensor slice not yet supported")
     }
 }

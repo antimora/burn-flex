@@ -197,6 +197,7 @@ impl IntTensorOps<Ember> for Ember {
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| ((a % b) + b) % b)
     }
 
+    // i64/u64 > 2^24 lose precision when converted to f32 (matches PyTorch).
     fn int_into_float(tensor: IntTensor<Ember>) -> FloatTensor<Ember> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
@@ -334,6 +335,7 @@ impl IntTensorOps<Ember> for Ember {
         int_scalar_op(tensor, 0, |a, _| !a)
     }
 
+    // Shift amounts masked to type width via wrapping_shl/wrapping_shr.
     fn bitwise_left_shift(lhs: IntTensor<Ember>, rhs: IntTensor<Ember>) -> IntTensor<Ember> {
         int_binary_op(lhs, rhs, |a, b| a.wrapping_shl(b as u32))
     }
@@ -471,22 +473,38 @@ impl IntTensorOps<Ember> for Ember {
     }
 
     fn int_clamp(tensor: IntTensor<Ember>, min: Scalar, max: Scalar) -> IntTensor<Ember> {
+        if tensor.dtype() == DType::U64 {
+            let min_val = min.to_u64().unwrap();
+            let max_val = max.to_u64().unwrap();
+            return scalar_op_typed(tensor, 0u64, move |x: u64, _| x.clamp(min_val, max_val));
+        }
         let min_val = min.to_i64().unwrap();
         let max_val = max.to_i64().unwrap();
         int_scalar_op(tensor, 0i64, move |x, _| x.clamp(min_val, max_val))
     }
 
     fn int_clamp_min(tensor: IntTensor<Ember>, min: Scalar) -> IntTensor<Ember> {
+        if tensor.dtype() == DType::U64 {
+            let min_val = min.to_u64().unwrap();
+            return scalar_op_typed(tensor, 0u64, move |x: u64, _| x.max(min_val));
+        }
         let min_val = min.to_i64().unwrap();
         int_scalar_op(tensor, 0i64, move |x, _| x.max(min_val))
     }
 
     fn int_clamp_max(tensor: IntTensor<Ember>, max: Scalar) -> IntTensor<Ember> {
+        if tensor.dtype() == DType::U64 {
+            let max_val = max.to_u64().unwrap();
+            return scalar_op_typed(tensor, 0u64, move |x: u64, _| x.min(max_val));
+        }
         let max_val = max.to_i64().unwrap();
         int_scalar_op(tensor, 0i64, move |x, _| x.min(max_val))
     }
 
     fn int_sign(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
+        if tensor.dtype() == DType::U64 {
+            return scalar_op_typed(tensor, 0u64, |x: u64, _| if x > 0 { 1 } else { 0 });
+        }
         int_scalar_op(tensor, 0i64, |x, _| {
             if x > 0 {
                 1
@@ -500,6 +518,7 @@ impl IntTensorOps<Ember> for Ember {
 
     fn int_mean(tensor: IntTensor<Ember>) -> IntTensor<Ember> {
         let n = tensor.layout().num_elements();
+        assert!(n > 0, "int_mean: cannot take mean of empty tensor");
         let sum_result = crate::ops::reduce::sum(tensor);
         let data: &[i64] = sum_result.storage();
         let mean_val = data[0] / n as i64;

@@ -150,7 +150,9 @@ impl Layout {
             }
         }
 
-        let new_start = (self.start_offset as isize + offset_adjustment) as usize;
+        let new_start_isize = self.start_offset as isize + offset_adjustment;
+        debug_assert!(new_start_isize >= 0, "flip: negative offset");
+        let new_start = new_start_isize as usize;
 
         Self {
             shape: self.shape.clone(),
@@ -171,7 +173,9 @@ impl Layout {
         let mut dims = self.shape.dims.clone();
         dims[dim] = len;
 
-        let new_offset = (self.start_offset as isize + self.strides[dim] * start as isize) as usize;
+        let new_offset_isize = self.start_offset as isize + self.strides[dim] * start as isize;
+        debug_assert!(new_offset_isize >= 0, "narrow: negative offset");
+        let new_offset = new_offset_isize as usize;
 
         Self {
             shape: Shape::from(dims),
@@ -243,6 +247,8 @@ impl Layout {
             }
         }
 
+        debug_assert!(new_offset >= 0, "slice: negative offset");
+
         (
             Self {
                 shape: Shape::from(new_dims),
@@ -275,6 +281,7 @@ impl Layout {
         for (i, &idx) in indices.iter().enumerate() {
             offset += idx as isize * self.strides[i];
         }
+        debug_assert!(offset >= 0, "index: negative offset");
         offset as usize
     }
 

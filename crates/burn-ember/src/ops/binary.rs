@@ -301,6 +301,7 @@ where
 }
 
 /// Apply a scalar operation to each element of an integer tensor.
+/// Note: scalar is truncated to target dtype (matches PyTorch).
 pub fn int_scalar_op<Op>(tensor: EmberTensor, scalar: i64, op: Op) -> EmberTensor
 where
     Op: Fn(i64, i64) -> i64 + Copy,

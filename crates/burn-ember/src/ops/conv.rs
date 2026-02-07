@@ -1275,10 +1275,8 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
                                                     let w_val = w_data[w_idx];
 
                                                     // Multiply and accumulate
-                                                    let x_f32: f32 =
-                                                        bytemuck::cast_slice(&[x_val])[0];
-                                                    let w_f32: f32 =
-                                                        bytemuck::cast_slice(&[w_val])[0];
+                                                    let x_f32: f32 = bytemuck::cast(x_val);
+                                                    let w_f32: f32 = bytemuck::cast(w_val);
                                                     let prod = x_f32 * w_f32;
 
                                                     let out_idx =
@@ -1323,7 +1321,7 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
                     .map(|a| {
                         let bits = a.load(Ordering::Relaxed);
                         let f = f32::from_bits(bits);
-                        bytemuck::cast_slice::<f32, T>(&[f])[0]
+                        bytemuck::cast::<f32, T>(f)
                     })
                     .collect::<Vec<T>>()
             } else {

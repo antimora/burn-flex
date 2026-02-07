@@ -11,6 +11,16 @@ use rayon::prelude::*;
 
 use crate::{EmberTensor, Layout};
 
+/// Validate an index is non-negative and within bounds, panicking with a clear message otherwise.
+#[inline(always)]
+fn checked_index(raw: i64, dim_size: usize, op_name: &str) -> usize {
+    assert!(
+        raw >= 0 && (raw as usize) < dim_size,
+        "{op_name}: index {raw} out of bounds for dimension of size {dim_size}"
+    );
+    raw as usize
+}
+
 /// Gather values from tensor along a dimension using indices.
 ///
 /// For a 2D tensor with dim=1:
@@ -74,13 +84,13 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     // General N-D case with pre-allocated coordinates
     let dim_stride = tensor_strides[dim];
 
+    let gather_dim_size = tensor_shape.dims[dim];
+
     #[cfg(feature = "rayon")]
     let result: Vec<E> = (0..output_size)
         .into_par_iter()
         .map(|out_idx| {
-            let raw = indices_data[out_idx];
-            debug_assert!(raw >= 0, "gather: negative index {raw}");
-            let index_val = raw as usize;
+            let index_val = checked_index(indices_data[out_idx], gather_dim_size, "gather");
             let src_idx = compute_gather_index(
                 out_idx,
                 index_val,
@@ -97,9 +107,7 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     #[cfg(not(feature = "rayon"))]
     let result: Vec<E> = (0..output_size)
         .map(|out_idx| {
-            let raw = indices_data[out_idx];
-            debug_assert!(raw >= 0, "gather: negative index {raw}");
-            let index_val = raw as usize;
+            let index_val = checked_index(indices_data[out_idx], gather_dim_size, "gather");
             let src_idx = compute_gather_index(
                 out_idx,
                 index_val,
@@ -122,13 +130,14 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
 fn gather_2d<E: Element + Pod + Default + Copy + Send + Sync>(
     tensor_data: &[E],
     indices_data: &[i64],
-    _tensor_rows: usize,
+    tensor_rows: usize,
     tensor_cols: usize,
     indices_rows: usize,
     indices_cols: usize,
     dim: usize,
 ) -> Vec<E> {
     let output_size = indices_rows * indices_cols;
+    let dim_size = if dim == 0 { tensor_rows } else { tensor_cols };
 
     // Threshold: only parallelize if output has >= 256K elements
     const PARALLEL_THRESHOLD: usize = 256 * 1024;
@@ -137,14 +146,14 @@ fn gather_2d<E: Element + Pod + Default + Copy + Send + Sync>(
 
     #[cfg(feature = "rayon")]
     if output_size >= PARALLEL_THRESHOLD {
-        // Parallel for large tensors
         if dim == 0 {
             result
                 .par_chunks_mut(indices_cols)
                 .enumerate()
                 .for_each(|(i, row)| {
                     for j in 0..indices_cols {
-                        let src_row = indices_data[i * indices_cols + j] as usize;
+                        let src_row =
+                            checked_index(indices_data[i * indices_cols + j], dim_size, "gather");
                         row[j] = tensor_data[src_row * tensor_cols + j];
                     }
                 });
@@ -154,26 +163,24 @@ fn gather_2d<E: Element + Pod + Default + Copy + Send + Sync>(
                 .enumerate()
                 .for_each(|(i, row)| {
                     for j in 0..indices_cols {
-                        let src_col = indices_data[i * indices_cols + j] as usize;
+                        let src_col =
+                            checked_index(indices_data[i * indices_cols + j], dim_size, "gather");
                         row[j] = tensor_data[i * tensor_cols + src_col];
                     }
                 });
         }
-    } else {
-        // Sequential for small tensors
-        if dim == 0 {
-            for i in 0..indices_rows {
-                for j in 0..indices_cols {
-                    let src_row = indices_data[i * indices_cols + j] as usize;
-                    result[i * indices_cols + j] = tensor_data[src_row * tensor_cols + j];
-                }
+    } else if dim == 0 {
+        for i in 0..indices_rows {
+            for j in 0..indices_cols {
+                let src_row = checked_index(indices_data[i * indices_cols + j], dim_size, "gather");
+                result[i * indices_cols + j] = tensor_data[src_row * tensor_cols + j];
             }
-        } else {
-            for i in 0..indices_rows {
-                for j in 0..indices_cols {
-                    let src_col = indices_data[i * indices_cols + j] as usize;
-                    result[i * indices_cols + j] = tensor_data[i * tensor_cols + src_col];
-                }
+        }
+    } else {
+        for i in 0..indices_rows {
+            for j in 0..indices_cols {
+                let src_col = checked_index(indices_data[i * indices_cols + j], dim_size, "gather");
+                result[i * indices_cols + j] = tensor_data[i * tensor_cols + src_col];
             }
         }
     }
@@ -183,14 +190,16 @@ fn gather_2d<E: Element + Pod + Default + Copy + Send + Sync>(
         if dim == 0 {
             for i in 0..indices_rows {
                 for j in 0..indices_cols {
-                    let src_row = indices_data[i * indices_cols + j] as usize;
+                    let src_row =
+                        checked_index(indices_data[i * indices_cols + j], dim_size, "gather");
                     result[i * indices_cols + j] = tensor_data[src_row * tensor_cols + j];
                 }
             }
         } else {
             for i in 0..indices_rows {
                 for j in 0..indices_cols {
-                    let src_col = indices_data[i * indices_cols + j] as usize;
+                    let src_col =
+                        checked_index(indices_data[i * indices_cols + j], dim_size, "gather");
                     result[i * indices_cols + j] = tensor_data[i * tensor_cols + src_col];
                 }
             }
@@ -281,6 +290,7 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
             &mut result,
             indices_data,
             value_data,
+            tensor_shape.dims[0],
             tensor_shape.dims[1],
             indices_shape.dims[0],
             indices_shape.dims[1],
@@ -289,10 +299,9 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
     } else {
         // General N-D case (sequential due to potential index conflicts)
         let dim_stride = tensor_strides[dim];
+        let scatter_dim_size = tensor_shape.dims[dim];
         for idx in 0..num_elements {
-            let raw = indices_data[idx];
-            debug_assert!(raw >= 0, "scatter_add: negative index {raw}");
-            let index_val = raw as usize;
+            let index_val = checked_index(indices_data[idx], scatter_dim_size, "scatter_add");
             let dst_idx = compute_gather_index(
                 idx,
                 index_val,
@@ -312,30 +321,31 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
 
 /// Optimized 2D scatter_add implementation.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn scatter_add_2d<E: Copy + core::ops::AddAssign>(
     result: &mut [E],
     indices_data: &[i64],
     value_data: &[E],
+    tensor_rows: usize,
     tensor_cols: usize,
     indices_rows: usize,
     indices_cols: usize,
     dim: usize,
 ) {
+    let dim_size = if dim == 0 { tensor_rows } else { tensor_cols };
     if dim == 0 {
-        // Scattering along rows
         for i in 0..indices_rows {
             for j in 0..indices_cols {
                 let idx = i * indices_cols + j;
-                let dst_row = indices_data[idx] as usize;
+                let dst_row = checked_index(indices_data[idx], dim_size, "scatter_add");
                 result[dst_row * tensor_cols + j] += value_data[idx];
             }
         }
     } else {
-        // Scattering along cols
         for i in 0..indices_rows {
             for j in 0..indices_cols {
                 let idx = i * indices_cols + j;
-                let dst_col = indices_data[idx] as usize;
+                let dst_col = checked_index(indices_data[idx], dim_size, "scatter_add");
                 result[i * tensor_cols + dst_col] += value_data[idx];
             }
         }
@@ -403,6 +413,8 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
     // Calculate slice size (elements after dim)
     let slice_size: usize = tensor_strides[dim];
 
+    let select_dim_size = tensor_shape.dims[dim];
+
     // If dim is the last dimension or we can use bulk copies
     if dim == ndims - 1 || slice_size == 1 {
         // Element-wise with parallelism
@@ -416,7 +428,8 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
                     let coord = remaining / output_strides[d];
                     remaining %= output_strides[d];
                     if d == dim {
-                        let index_val = indices_data[coord] as usize;
+                        let index_val =
+                            checked_index(indices_data[coord], select_dim_size, "select");
                         src_idx += index_val * tensor_strides[d];
                     } else {
                         src_idx += coord * tensor_strides[d];
@@ -436,7 +449,8 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
                     let coord = remaining / output_strides[d];
                     remaining %= output_strides[d];
                     if d == dim {
-                        let index_val = indices_data[coord] as usize;
+                        let index_val =
+                            checked_index(indices_data[coord], select_dim_size, "select");
                         src_idx += index_val * tensor_strides[d];
                     } else {
                         src_idx += coord * tensor_strides[d];
@@ -466,7 +480,8 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
         let outer_offset_output = outer * output_strides[if dim == 0 { 0 } else { dim - 1 }];
 
         for (i, &idx) in indices_data.iter().enumerate() {
-            let src_start = outer_offset_tensor + (idx as usize) * tensor_strides[dim];
+            let index_val = checked_index(idx, select_dim_size, "select");
+            let src_start = outer_offset_tensor + index_val * tensor_strides[dim];
             let dst_start = outer_offset_output + i * output_strides[dim];
             result[dst_start..dst_start + slice_size]
                 .copy_from_slice(&tensor_data[src_start..src_start + slice_size]);
@@ -487,9 +502,7 @@ fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
     num_indices: usize,
     dim: usize,
 ) -> Vec<E> {
-    // Output shape: replace dim with num_indices
-    // dim=0: output is [num_indices, tensor_cols]
-    // dim=1: output is [tensor_rows, num_indices]
+    let dim_size = if dim == 0 { tensor_rows } else { tensor_cols };
     let (output_rows, output_cols) = if dim == 0 {
         (num_indices, tensor_cols)
     } else {
@@ -497,29 +510,25 @@ fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
     };
     let output_size = output_rows * output_cols;
 
-    // Threshold: only parallelize if output has >= 256K elements
-    // Below this, rayon overhead exceeds benefit
     const PARALLEL_THRESHOLD: usize = 256 * 1024;
 
     if dim == 0 {
-        // Selecting rows: use bulk copy
         let mut result = vec![E::default(); output_size];
 
         #[cfg(feature = "rayon")]
         if output_size >= PARALLEL_THRESHOLD {
-            // Parallel bulk copies for large tensors
             result
                 .par_chunks_mut(tensor_cols)
                 .enumerate()
                 .for_each(|(i, dst_row)| {
-                    let src_row_idx = indices_data[i] as usize;
+                    let src_row_idx = checked_index(indices_data[i], dim_size, "select");
                     let src_start = src_row_idx * tensor_cols;
                     dst_row.copy_from_slice(&tensor_data[src_start..src_start + tensor_cols]);
                 });
         } else {
-            // Sequential for small tensors
             for (i, &idx) in indices_data.iter().enumerate() {
-                let src_start = (idx as usize) * tensor_cols;
+                let src_row_idx = checked_index(idx, dim_size, "select");
+                let src_start = src_row_idx * tensor_cols;
                 let dst_start = i * tensor_cols;
                 result[dst_start..dst_start + tensor_cols]
                     .copy_from_slice(&tensor_data[src_start..src_start + tensor_cols]);
@@ -529,7 +538,8 @@ fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
         #[cfg(not(feature = "rayon"))]
         {
             for (i, &idx) in indices_data.iter().enumerate() {
-                let src_start = (idx as usize) * tensor_cols;
+                let src_row_idx = checked_index(idx, dim_size, "select");
+                let src_start = src_row_idx * tensor_cols;
                 let dst_start = i * tensor_cols;
                 result[dst_start..dst_start + tensor_cols]
                     .copy_from_slice(&tensor_data[src_start..src_start + tensor_cols]);
@@ -538,25 +548,24 @@ fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
 
         result
     } else {
-        // Selecting columns: element-wise
         let mut result = vec![E::default(); output_size];
 
         #[cfg(feature = "rayon")]
         if output_size >= PARALLEL_THRESHOLD {
-            // Parallel for large tensors
             result
                 .par_chunks_mut(output_cols)
                 .enumerate()
                 .for_each(|(row, dst_row)| {
                     for (j, &idx) in indices_data.iter().enumerate() {
-                        dst_row[j] = tensor_data[row * tensor_cols + idx as usize];
+                        let src_col = checked_index(idx, dim_size, "select");
+                        dst_row[j] = tensor_data[row * tensor_cols + src_col];
                     }
                 });
         } else {
-            // Sequential for small tensors
             for row in 0..output_rows {
                 for (j, &idx) in indices_data.iter().enumerate() {
-                    result[row * output_cols + j] = tensor_data[row * tensor_cols + idx as usize];
+                    let src_col = checked_index(idx, dim_size, "select");
+                    result[row * output_cols + j] = tensor_data[row * tensor_cols + src_col];
                 }
             }
         }
@@ -565,7 +574,8 @@ fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
         {
             for row in 0..output_rows {
                 for (j, &idx) in indices_data.iter().enumerate() {
-                    result[row * output_cols + j] = tensor_data[row * tensor_cols + idx as usize];
+                    let src_col = checked_index(idx, dim_size, "select");
+                    result[row * output_cols + j] = tensor_data[row * tensor_cols + src_col];
                 }
             }
         }
@@ -643,6 +653,7 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
     // General N-D case
     let tensor_strides: Vec<usize> = compute_strides(&tensor_shape.dims);
     let value_strides: Vec<usize> = compute_strides(&value_shape.dims);
+    let select_add_dim_size = tensor_shape.dims[dim];
 
     for (val_idx, &val) in value_data.iter().enumerate() {
         let mut remaining = val_idx;
@@ -651,7 +662,8 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
             let coord = remaining / value_strides[d];
             remaining %= value_strides[d];
             if d == dim {
-                let index_val = indices_data[coord] as usize;
+                let index_val =
+                    checked_index(indices_data[coord], select_add_dim_size, "select_add");
                 dst_idx += index_val * tensor_strides[d];
             } else {
                 dst_idx += coord * tensor_strides[d];
@@ -675,10 +687,10 @@ fn select_add_2d<E: Copy + core::ops::AddAssign>(
     num_indices: usize,
     dim: usize,
 ) {
+    let dim_size = if dim == 0 { tensor_rows } else { tensor_cols };
     if dim == 0 {
-        // Adding to rows
         for (i, &idx) in indices_data.iter().enumerate() {
-            let dst_row = idx as usize;
+            let dst_row = checked_index(idx, dim_size, "select_add");
             let dst_start = dst_row * tensor_cols;
             let src_start = i * tensor_cols;
             for j in 0..tensor_cols {
@@ -686,10 +698,9 @@ fn select_add_2d<E: Copy + core::ops::AddAssign>(
             }
         }
     } else {
-        // Adding to columns
         for row in 0..tensor_rows {
             for (j, &idx) in indices_data.iter().enumerate() {
-                let dst_col = idx as usize;
+                let dst_col = checked_index(idx, dim_size, "select_add");
                 result[row * tensor_cols + dst_col] += value_data[row * num_indices + j];
             }
         }
@@ -842,6 +853,8 @@ pub fn scatter_or(
 
     let num_elements = indices_shape.num_elements();
 
+    let scatter_or_dim_size = tensor_shape.dims[dim];
+
     // Use 2D specialized path
     if ndims == 2 {
         let tensor_cols = tensor_shape.dims[1];
@@ -852,7 +865,8 @@ pub fn scatter_or(
             for i in 0..indices_rows {
                 for j in 0..indices_cols {
                     let idx = i * indices_cols + j;
-                    let dst_row = indices_data[idx] as usize;
+                    let dst_row =
+                        checked_index(indices_data[idx], scatter_or_dim_size, "scatter_or");
                     result[dst_row * tensor_cols + j] |= value_data[idx];
                 }
             }
@@ -860,7 +874,8 @@ pub fn scatter_or(
             for i in 0..indices_rows {
                 for j in 0..indices_cols {
                     let idx = i * indices_cols + j;
-                    let dst_col = indices_data[idx] as usize;
+                    let dst_col =
+                        checked_index(indices_data[idx], scatter_or_dim_size, "scatter_or");
                     result[i * tensor_cols + dst_col] |= value_data[idx];
                 }
             }
@@ -868,7 +883,7 @@ pub fn scatter_or(
     } else {
         let dim_stride = tensor_strides[dim];
         for idx in 0..num_elements {
-            let index_val = indices_data[idx] as usize;
+            let index_val = checked_index(indices_data[idx], scatter_or_dim_size, "scatter_or");
             let dst_idx = compute_gather_index(
                 idx,
                 index_val,

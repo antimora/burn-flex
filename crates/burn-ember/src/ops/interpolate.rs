@@ -165,6 +165,10 @@ where
     let channels = shape.dims[1];
     let in_height = shape.dims[2];
     let in_width = shape.dims[3];
+    assert!(
+        in_height > 0 && in_width > 0,
+        "interpolate: input spatial dimensions must be > 0"
+    );
     let [out_height, out_width] = output_size;
 
     let y_ratio = in_height as f64 / out_height as f64;
@@ -246,6 +250,10 @@ where
     let channels = shape.dims[1];
     let in_height = shape.dims[2];
     let in_width = shape.dims[3];
+    assert!(
+        in_height > 0 && in_width > 0,
+        "interpolate: input spatial dimensions must be > 0"
+    );
     let [out_height, out_width] = output_size;
 
     let y_ratio = (in_height as f64 - 1.0) / (out_height.max(1) - 1).max(1) as f64;
@@ -362,6 +370,10 @@ where
     let channels = shape.dims[1];
     let in_height = shape.dims[2];
     let in_width = shape.dims[3];
+    assert!(
+        in_height > 0 && in_width > 0,
+        "interpolate: input spatial dimensions must be > 0"
+    );
     let [out_height, out_width] = output_size;
 
     let y_ratio = (in_height as f64 - 1.0) / (out_height.max(1) - 1).max(1) as f64;
@@ -564,6 +576,10 @@ where
     let channels = shape.dims[1];
     let in_height = shape.dims[2];
     let in_width = shape.dims[3];
+    assert!(
+        in_height > 0 && in_width > 0,
+        "interpolate: input spatial dimensions must be > 0"
+    );
     let [out_height, out_width] = output_size;
 
     let y_ratio = in_height as f64 / out_height as f64;
@@ -617,6 +633,10 @@ where
     let channels = shape.dims[1];
     let in_height = shape.dims[2];
     let in_width = shape.dims[3];
+    assert!(
+        in_height > 0 && in_width > 0,
+        "interpolate: input spatial dimensions must be > 0"
+    );
     let [out_height, out_width] = output_size;
 
     let y_ratio = (in_height as f64 - 1.0) / (out_height.max(1) - 1).max(1) as f64;
@@ -689,6 +709,10 @@ where
     let channels = shape.dims[1];
     let in_height = shape.dims[2];
     let in_width = shape.dims[3];
+    assert!(
+        in_height > 0 && in_width > 0,
+        "interpolate: input spatial dimensions must be > 0"
+    );
     let [out_height, out_width] = output_size;
 
     let y_ratio = (in_height as f64 - 1.0) / (out_height.max(1) - 1).max(1) as f64;
