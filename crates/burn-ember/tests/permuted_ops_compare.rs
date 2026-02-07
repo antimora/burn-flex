@@ -51,6 +51,11 @@ fn compare(name: &str, ember_data: &TensorData, ndarray_data: &TensorData) -> (f
     let status = if max_diff > TOL { "FAIL" } else { "ok" };
     eprintln!("  {status:>4} {name}: max_diff={max_diff:.2e}, mean_diff={mean_diff:.2e}");
 
+    assert!(
+        max_diff <= TOL,
+        "{name}: max_diff {max_diff:.2e} exceeds tolerance {TOL:.2e}"
+    );
+
     (max_diff, mean_diff)
 }
 
