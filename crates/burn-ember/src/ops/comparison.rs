@@ -54,7 +54,12 @@ where
 
 /// Specialized comparison for f32 with SIMD fast path.
 #[cfg(feature = "simd")]
-fn compare_f32<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp, simd_hint: Option<CompareOp>) -> EmberTensor
+fn compare_f32<Cmp>(
+    lhs: EmberTensor,
+    rhs: &EmberTensor,
+    cmp: Cmp,
+    simd_hint: Option<CompareOp>,
+) -> EmberTensor
 where
     Cmp: Fn(f32, f32) -> bool,
 {
@@ -211,7 +216,12 @@ fn swap_cmp_op(op: simd::CmpOp) -> simd::CmpOp {
 
 /// Fallback when SIMD is disabled.
 #[cfg(not(feature = "simd"))]
-fn compare_f32<Cmp>(lhs: EmberTensor, rhs: &EmberTensor, cmp: Cmp, _simd_hint: Option<CompareOp>) -> EmberTensor
+fn compare_f32<Cmp>(
+    lhs: EmberTensor,
+    rhs: &EmberTensor,
+    cmp: Cmp,
+    _simd_hint: Option<CompareOp>,
+) -> EmberTensor
 where
     Cmp: Fn(f32, f32) -> bool,
 {
@@ -266,7 +276,12 @@ where
 
 /// Specialized scalar comparison for f32 with SIMD fast path.
 #[cfg(feature = "simd")]
-fn compare_elem_f32<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp, simd_hint: Option<CompareOp>) -> EmberTensor
+fn compare_elem_f32<Cmp>(
+    lhs: EmberTensor,
+    rhs: f32,
+    cmp: Cmp,
+    simd_hint: Option<CompareOp>,
+) -> EmberTensor
 where
     Cmp: Fn(f32, f32) -> bool,
 {
@@ -290,7 +305,12 @@ where
 
 /// Fallback when SIMD is disabled.
 #[cfg(not(feature = "simd"))]
-fn compare_elem_f32<Cmp>(lhs: EmberTensor, rhs: f32, cmp: Cmp, _simd_hint: Option<CompareOp>) -> EmberTensor
+fn compare_elem_f32<Cmp>(
+    lhs: EmberTensor,
+    rhs: f32,
+    cmp: Cmp,
+    _simd_hint: Option<CompareOp>,
+) -> EmberTensor
 where
     Cmp: Fn(f32, f32) -> bool,
 {
@@ -369,19 +389,43 @@ fn make_bool_tensor(data: Vec<u8>, shape: Shape) -> EmberTensor {
 // Specific comparison functions
 
 pub fn greater(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a > b, |a, b| a > b, Some(CompareOp::Greater))
+    compare(
+        lhs,
+        rhs,
+        |a, b| a > b,
+        |a, b| a > b,
+        Some(CompareOp::Greater),
+    )
 }
 
 pub fn greater_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a > b, |a, b| a > b, Some(CompareOp::Greater))
+    compare_elem(
+        lhs,
+        rhs,
+        |a, b| a > b,
+        |a, b| a > b,
+        Some(CompareOp::Greater),
+    )
 }
 
 pub fn greater_equal(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a >= b, |a, b| a >= b, Some(CompareOp::GreaterEqual))
+    compare(
+        lhs,
+        rhs,
+        |a, b| a >= b,
+        |a, b| a >= b,
+        Some(CompareOp::GreaterEqual),
+    )
 }
 
 pub fn greater_equal_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a >= b, |a, b| a >= b, Some(CompareOp::GreaterEqual))
+    compare_elem(
+        lhs,
+        rhs,
+        |a, b| a >= b,
+        |a, b| a >= b,
+        Some(CompareOp::GreaterEqual),
+    )
 }
 
 pub fn lower(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
@@ -393,27 +437,63 @@ pub fn lower_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
 }
 
 pub fn lower_equal(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a <= b, |a, b| a <= b, Some(CompareOp::LowerEqual))
+    compare(
+        lhs,
+        rhs,
+        |a, b| a <= b,
+        |a, b| a <= b,
+        Some(CompareOp::LowerEqual),
+    )
 }
 
 pub fn lower_equal_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a <= b, |a, b| a <= b, Some(CompareOp::LowerEqual))
+    compare_elem(
+        lhs,
+        rhs,
+        |a, b| a <= b,
+        |a, b| a <= b,
+        Some(CompareOp::LowerEqual),
+    )
 }
 
 pub fn equal(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a == b, |a, b| a == b, Some(CompareOp::Equal))
+    compare(
+        lhs,
+        rhs,
+        |a, b| a == b,
+        |a, b| a == b,
+        Some(CompareOp::Equal),
+    )
 }
 
 pub fn equal_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a == b, |a, b| a == b, Some(CompareOp::Equal))
+    compare_elem(
+        lhs,
+        rhs,
+        |a, b| a == b,
+        |a, b| a == b,
+        Some(CompareOp::Equal),
+    )
 }
 
 pub fn not_equal(lhs: EmberTensor, rhs: EmberTensor) -> EmberTensor {
-    compare(lhs, rhs, |a, b| a != b, |a, b| a != b, Some(CompareOp::NotEqual))
+    compare(
+        lhs,
+        rhs,
+        |a, b| a != b,
+        |a, b| a != b,
+        Some(CompareOp::NotEqual),
+    )
 }
 
 pub fn not_equal_elem(lhs: EmberTensor, rhs: f64) -> EmberTensor {
-    compare_elem(lhs, rhs, |a, b| a != b, |a, b| a != b, Some(CompareOp::NotEqual))
+    compare_elem(
+        lhs,
+        rhs,
+        |a, b| a != b,
+        |a, b| a != b,
+        Some(CompareOp::NotEqual),
+    )
 }
 
 // Integer comparison functions
@@ -940,5 +1020,35 @@ mod tests {
         let result = lower(lhs, rhs);
         let data: &[u8] = result.bytes();
         assert_eq!(data, &[0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn test_any_float_dim_transposed() {
+        // [[0, 1], [0, 0]] transposed -> [[0, 0], [1, 0]]
+        // any_dim along dim 1: [false, true] -> [0, 1]
+        // Before the C2 fix, to_contiguous was called inside reduce_bool_dim_with
+        // AFTER taking a reference to the original non-contiguous storage,
+        // causing stale pointer reads.
+        let tensor = tensor_2d(vec![0.0, 1.0, 0.0, 0.0], 2, 2);
+        let transposed = tensor.transpose(0, 1);
+        assert!(!transposed.is_contiguous());
+
+        let result = any_float_dim(transposed, 1);
+        let data: &[u8] = result.bytes();
+        assert_eq!(data, &[0, 1]); // row 0: all zeros; row 1: has a 1
+    }
+
+    #[test]
+    fn test_any_float_dim_narrowed() {
+        // [0, 5, 0, 3, 0, 0] narrowed to [[5, 0], [3, 0]] (shape [2,2])
+        // any_dim along dim 1: [true, true] -> [1, 1]
+        let tensor = EmberTensor::from_data(TensorData::new(
+            vec![0.0f32, 5.0, 0.0, 3.0, 0.0, 0.0],
+            [3, 2],
+        ));
+        let narrowed = tensor.narrow(0, 0, 2); // first 2 rows: [[0, 5], [0, 3]]
+        let result = any_float_dim(narrowed, 1);
+        let data: &[u8] = result.bytes();
+        assert_eq!(data, &[1, 1]);
     }
 }

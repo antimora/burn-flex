@@ -415,4 +415,49 @@ mod tests {
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1.0, 3.0, 3.0, 4.0, 4.0, 5.0]);
     }
+
+    #[test]
+    fn test_cummin_nan_propagation() {
+        // [3.0, NaN, 1.0, 2.0] -> [3.0, NaN, NaN, NaN]
+        // Once NaN is encountered, it should propagate to all subsequent positions
+        let tensor = EmberTensor::from_data(TensorData::new(
+            vec![3.0f32, f32::NAN, 1.0, 2.0],
+            [4],
+        ));
+        let result = cummin_f32(tensor, 0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data[0], 3.0);
+        assert!(data[1].is_nan());
+        assert!(data[2].is_nan());
+        assert!(data[3].is_nan());
+    }
+
+    #[test]
+    fn test_cummax_nan_propagation() {
+        // [1.0, NaN, 5.0, 2.0] -> [1.0, NaN, NaN, NaN]
+        let tensor = EmberTensor::from_data(TensorData::new(
+            vec![1.0f32, f32::NAN, 5.0, 2.0],
+            [4],
+        ));
+        let result = cummax_f32(tensor, 0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data[0], 1.0);
+        assert!(data[1].is_nan());
+        assert!(data[2].is_nan());
+        assert!(data[3].is_nan());
+    }
+
+    #[test]
+    fn test_cummin_nan_at_start() {
+        // [NaN, 1.0, 2.0] -> [NaN, NaN, NaN]
+        let tensor = EmberTensor::from_data(TensorData::new(
+            vec![f32::NAN, 1.0, 2.0],
+            [3],
+        ));
+        let result = cummin_f32(tensor, 0);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert!(data[0].is_nan());
+        assert!(data[1].is_nan());
+        assert!(data[2].is_nan());
+    }
 }

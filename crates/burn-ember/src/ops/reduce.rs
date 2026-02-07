@@ -1476,6 +1476,37 @@ mod tests {
     }
 
     #[test]
+    fn test_mean_dim_i8_large_dimension() {
+        // dim_size=200 exceeds i8::MAX (127). Before the fix, 200 as i8 = -56,
+        // causing wrong results (or 256 as i8 = 0 causing div-by-zero).
+        // Use shape [1, 200] with mostly zeros so sum doesn't overflow i8.
+        let mut data: Vec<i8> = vec![0i8; 200];
+        // Put one non-zero value to test: sum = 100, mean = 100 / 200 = 0
+        data[0] = 100;
+        let tensor = EmberTensor::from_data(TensorData::new(data, [1, 200]));
+        let result = mean_dim(tensor, 1);
+
+        let result_data = result.into_data();
+        let values: Vec<i8> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        // integer division: 100 / 200 = 0
+        assert_eq!(values, vec![0]);
+    }
+
+    #[test]
+    fn test_mean_dim_i16_large_dimension() {
+        // dim_size=40000 exceeds i16::MAX (32767).
+        // sum = 32000, mean = 32000 / 40000 = 0 (integer division)
+        let mut data: Vec<i16> = vec![0i16; 40000];
+        data[0] = 32000;
+        let tensor = EmberTensor::from_data(TensorData::new(data, [1, 40000]));
+        let result = mean_dim(tensor, 1);
+
+        let result_data = result.into_data();
+        let values: Vec<i16> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        assert_eq!(values, vec![0]);
+    }
+
+    #[test]
     fn test_argmax_1d() {
         let data: Vec<f32> = vec![1.0, 5.0, 3.0, 2.0, 4.0];
         let tensor = EmberTensor::from_data(TensorData::new(data, [5]));
