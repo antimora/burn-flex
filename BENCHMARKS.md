@@ -3,7 +3,7 @@
 All benchmarks run on Apple M3 Max, comparing burn-ember against burn-ndarray. Default features
 enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
-**Date**: 2026-02-06
+**Date**: 2026-02-07
 
 ## How to Read
 
@@ -298,31 +298,31 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 | Shape     | Dim | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ------- | ------- | -------- | --------- | ----------- |
-| 256x256   | 0   | 21.7 us | 158 us  | **7.3x** | 131 KB    | 787 KB      |
-| 256x256   | 1   | 22.3 us | 102 us  | **4.6x** | 131 KB    | 787 KB      |
-| 1024x1024 | 1   | 158 us  | 1.53 ms | **9.7x** | 2.1 MB    | 12.6 MB     |
+| 256x256   | 0   | 34.2 us | 156 us  | **4.6x** | 131 KB    | 787 KB      |
+| 256x256   | 1   | 33.2 us | 103 us  | **3.1x** | 131 KB    | 787 KB      |
+| 1024x1024 | 1   | 159 us  | 1.56 ms | **9.8x** | 2.1 MB    | 12.6 MB     |
 
 ### Scatter Add
 
 | Shape     | Dim | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ------- | ------- | -------- | --------- | ----------- |
-| 256x256   | 1   | 24.2 us | 211 us  | **8.7x** | 262 KB    | 918 KB      |
-| 1024x1024 | 1   | 365 us  | 3.13 ms | **8.6x** | 4.2 MB    | 14.7 MB     |
+| 256x256   | 1   | 32.5 us | 210 us  | **6.5x** | 262 KB    | 918 KB      |
+| 1024x1024 | 1   | 490 us  | 3.12 ms | **6.4x** | 4.2 MB    | 14.7 MB     |
 
 ### Select
 
 | Shape     | Dim | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
 | --------- | --- | ------- | ------- | -------- | --------- | ----------- |
-| 256x256   | 0   | 3.0 us  | 23.3 us | **7.8x** | 131 KB    | 525 KB      |
-| 256x256   | 1   | 15.9 us | 41.0 us | **2.6x** | 131 KB    | 525 KB      |
-| 1024x1024 | 0   | 109 us  | 211 us  | **1.9x** | 2.1 MB    | 8.4 MB      |
+| 256x256   | 0   | 3.3 us  | 24.2 us | **7.3x** | 131 KB    | 525 KB      |
+| 256x256   | 1   | 26.0 us | 41.8 us | **1.6x** | 131 KB    | 525 KB      |
+| 1024x1024 | 0   | 108 us  | 214 us  | **2.0x** | 2.1 MB    | 8.4 MB      |
 
 ### Select Add
 
-| Shape     | Dim | Ember  | NdArray | Speedup  | Ember Mem | NdArray Mem |
-| --------- | --- | ------ | ------- | -------- | --------- | ----------- |
-| 256x256   | 0   | 7.3 us | 22.2 us | **3.0x** | 262 KB    | 657 KB      |
-| 1024x1024 | 0   | 106 us | 276 us  | **2.6x** | 4.2 MB    | 10.5 MB     |
+| Shape     | Dim | Ember   | NdArray | Speedup  | Ember Mem | NdArray Mem |
+| --------- | --- | ------- | ------- | -------- | --------- | ----------- |
+| 256x256   | 0   | 7.4 us  | 23.4 us | **3.2x** | 262 KB    | 657 KB      |
+| 1024x1024 | 0   | 102 us  | 274 us  | **2.7x** | 4.2 MB    | 10.5 MB     |
 
 ---
 
