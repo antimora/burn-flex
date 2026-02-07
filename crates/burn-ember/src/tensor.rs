@@ -240,8 +240,8 @@ impl EmberTensor {
         match self.dtype {
             DType::F64 => self.copy_contiguous::<f64>(),
             DType::F32 => self.copy_contiguous::<f32>(),
-            DType::F16 => self.copy_contiguous_f16(),
-            DType::BF16 => self.copy_contiguous_bf16(),
+            DType::F16 => self.copy_contiguous::<f16>(),
+            DType::BF16 => self.copy_contiguous::<bf16>(),
             DType::I64 => self.copy_contiguous::<i64>(),
             DType::I32 => self.copy_contiguous::<i32>(),
             DType::I16 => self.copy_contiguous::<i16>(),
@@ -272,66 +272,6 @@ impl EmberTensor {
             }
         } else {
             // General fallback using strided iterator
-            for idx in crate::strided_index::StridedIter::new(&self.layout) {
-                dst.push(src[idx]);
-            }
-        }
-
-        let bytes = Bytes::from_elems(dst);
-        let layout = Layout::contiguous(self.layout.shape().clone());
-        Self {
-            data: Arc::new(bytes),
-            layout,
-            dtype: self.dtype,
-        }
-    }
-
-    fn copy_contiguous_f16(&self) -> Self {
-        let src: &[f16] = bytemuck::cast_slice(&self.data);
-        let n = self.layout.num_elements();
-        let mut dst = Vec::with_capacity(n);
-
-        // Fast path for 2D tensors
-        if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
-            let offset = self.layout.start_offset() as isize;
-            for row in 0..rows {
-                let row_start = offset + row as isize * row_stride;
-                for col in 0..cols {
-                    let idx = (row_start + col as isize * col_stride) as usize;
-                    dst.push(src[idx]);
-                }
-            }
-        } else {
-            for idx in crate::strided_index::StridedIter::new(&self.layout) {
-                dst.push(src[idx]);
-            }
-        }
-
-        let bytes = Bytes::from_elems(dst);
-        let layout = Layout::contiguous(self.layout.shape().clone());
-        Self {
-            data: Arc::new(bytes),
-            layout,
-            dtype: self.dtype,
-        }
-    }
-
-    fn copy_contiguous_bf16(&self) -> Self {
-        let src: &[bf16] = bytemuck::cast_slice(&self.data);
-        let n = self.layout.num_elements();
-        let mut dst = Vec::with_capacity(n);
-
-        // Fast path for 2D tensors
-        if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
-            let offset = self.layout.start_offset() as isize;
-            for row in 0..rows {
-                let row_start = offset + row as isize * row_stride;
-                for col in 0..cols {
-                    let idx = (row_start + col as isize * col_stride) as usize;
-                    dst.push(src[idx]);
-                }
-            }
-        } else {
             for idx in crate::strided_index::StridedIter::new(&self.layout) {
                 dst.push(src[idx]);
             }
