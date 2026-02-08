@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::{
     DType, Distribution, ExecutionError, FloatDType, Scalar, TensorData,
-    ops::FloatTensorOps,
+    ops::{FloatTensorOps, GridSampleOptions},
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
 use burn_std::{Bytes, Shape, Slice, bf16, f16};
@@ -49,6 +49,10 @@ impl FloatTensorOps<Flex> for Flex {
 
     fn float_to_device(tensor: FloatTensor<Flex>, _device: &Device<Flex>) -> FloatTensor<Flex> {
         // CPU backend: no-op, tensors are always on CPU
+        tensor
+    }
+
+    fn float_detach(tensor: FloatTensor<Flex>) -> FloatTensor<Flex> {
         tensor
     }
 
@@ -214,6 +218,10 @@ impl FloatTensorOps<Flex> for Flex {
 
     fn float_flip(tensor: FloatTensor<Flex>, axes: &[usize]) -> FloatTensor<Flex> {
         crate::ops::flip::flip(tensor, axes)
+    }
+
+    fn float_cat(tensors: Vec<FloatTensor<Flex>>, dim: usize) -> FloatTensor<Flex> {
+        crate::ops::cat::cat(tensors, dim)
     }
 
     fn float_reshape(tensor: FloatTensor<Flex>, shape: Shape) -> FloatTensor<Flex> {
@@ -458,8 +466,16 @@ impl FloatTensorOps<Flex> for Flex {
         crate::ops::reduce::mean(tensor)
     }
 
+    fn float_max(tensor: FloatTensor<Flex>) -> FloatTensor<Flex> {
+        crate::ops::reduce::max(tensor)
+    }
+
     fn float_max_dim(tensor: FloatTensor<Flex>, dim: usize) -> FloatTensor<Flex> {
         crate::ops::reduce::max_dim(tensor, dim)
+    }
+
+    fn float_min(tensor: FloatTensor<Flex>) -> FloatTensor<Flex> {
+        crate::ops::reduce::min(tensor)
     }
 
     fn float_min_dim(tensor: FloatTensor<Flex>, dim: usize) -> FloatTensor<Flex> {
@@ -760,6 +776,14 @@ impl FloatTensorOps<Flex> for Flex {
     ) -> FloatTensor<Flex> {
         // unfold is now type-agnostic (zero-copy strided view)
         crate::ops::unfold::unfold(tensor, dim, size, step)
+    }
+
+    fn float_grid_sample_2d(
+        tensor: FloatTensor<Flex>,
+        grid: FloatTensor<Flex>,
+        options: GridSampleOptions,
+    ) -> FloatTensor<Flex> {
+        crate::ops::grid_sample::grid_sample_2d(tensor, grid, options)
     }
 }
 

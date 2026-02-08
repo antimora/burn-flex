@@ -28,6 +28,10 @@ impl BoolTensorOps<Flex> for Flex {
         tensor
     }
 
+    fn bool_cat(tensors: Vec<BoolTensor<Flex>>, dim: usize) -> BoolTensor<Flex> {
+        crate::ops::cat::cat(tensors, dim)
+    }
+
     fn bool_reshape(tensor: BoolTensor<Flex>, shape: Shape) -> BoolTensor<Flex> {
         tensor.reshape(shape)
     }
@@ -293,6 +297,31 @@ impl BoolTensorOps<Flex> for Flex {
 
     fn bool_all_dim(tensor: BoolTensor<Flex>, dim: usize) -> BoolTensor<Flex> {
         crate::ops::comparison::all_bool_dim(tensor, dim)
+    }
+
+    fn bool_select(
+        tensor: BoolTensor<Flex>,
+        dim: usize,
+        indices: IntTensor<Flex>,
+    ) -> BoolTensor<Flex> {
+        crate::ops::gather_scatter::select::<u8>(tensor, dim, indices)
+    }
+
+    fn bool_select_or(
+        tensor: BoolTensor<Flex>,
+        dim: usize,
+        indices: IntTensor<Flex>,
+        value: BoolTensor<Flex>,
+    ) -> BoolTensor<Flex> {
+        let mut result = crate::ops::gather_scatter::select_add::<u8>(tensor, dim, indices, value);
+        // Clamp to 0/1: select_add sums u8 values, but bool OR saturates at 1
+        let storage: &mut [u8] = result.storage_mut();
+        for v in storage.iter_mut() {
+            if *v > 1 {
+                *v = 1;
+            }
+        }
+        result
     }
 }
 

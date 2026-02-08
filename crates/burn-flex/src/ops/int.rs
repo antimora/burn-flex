@@ -30,6 +30,10 @@ impl IntTensorOps<Flex> for Flex {
         tensor
     }
 
+    fn int_cat(tensors: Vec<IntTensor<Flex>>, dim: usize) -> IntTensor<Flex> {
+        crate::ops::cat::cat(tensors, dim)
+    }
+
     fn int_reshape(tensor: IntTensor<Flex>, shape: Shape) -> IntTensor<Flex> {
         tensor.reshape(shape)
     }
@@ -530,8 +534,16 @@ impl IntTensorOps<Flex> for Flex {
         )
     }
 
+    fn int_max(tensor: IntTensor<Flex>) -> IntTensor<Flex> {
+        crate::ops::reduce::max(tensor)
+    }
+
     fn int_max_dim(tensor: IntTensor<Flex>, dim: usize) -> IntTensor<Flex> {
         crate::ops::reduce::max_dim(tensor, dim)
+    }
+
+    fn int_min(tensor: IntTensor<Flex>) -> IntTensor<Flex> {
+        crate::ops::reduce::min(tensor)
     }
 
     fn int_min_dim(tensor: IntTensor<Flex>, dim: usize) -> IntTensor<Flex> {
@@ -566,6 +578,35 @@ impl IntTensorOps<Flex> for Flex {
 
     fn int_all_dim(tensor: IntTensor<Flex>, dim: usize) -> BoolTensor<Flex> {
         crate::ops::comparison::all_int_dim(tensor, dim)
+    }
+
+    fn int_powi(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> IntTensor<Flex> {
+        int_binary_op(lhs, rhs, |a, b| a.wrapping_pow(b as u32))
+    }
+
+    fn int_powf(lhs: IntTensor<Flex>, rhs: FloatTensor<Flex>) -> IntTensor<Flex> {
+        // Convert both to f32, compute powf, convert back to i64
+        let lhs = lhs.to_contiguous();
+        let rhs = rhs.to_contiguous();
+
+        let lhs_data: &[i64] = lhs.storage();
+        let rhs_data: &[f32] = rhs.storage();
+        let result: Vec<i64> = lhs_data
+            .iter()
+            .zip(rhs_data.iter())
+            .map(|(&a, &b)| (a as f64).powf(b as f64).round() as i64)
+            .collect();
+
+        FlexTensor::new(
+            Bytes::from_elems(result),
+            Layout::contiguous(lhs.layout().shape().clone()),
+            DType::I64,
+        )
+    }
+
+    fn int_powf_scalar(lhs: IntTensor<Flex>, rhs: Scalar) -> IntTensor<Flex> {
+        let exp = rhs.to_f64().unwrap() as u32;
+        int_scalar_op(lhs, 0, move |a, _| a.wrapping_pow(exp))
     }
 }
 

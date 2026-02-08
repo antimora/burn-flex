@@ -42,6 +42,7 @@ impl<T> SendMutPtr<T> {
 mod activation;
 pub mod binary;
 mod bool;
+pub mod cat;
 pub mod comparison;
 pub mod conv;
 pub mod cumulative;
@@ -50,6 +51,7 @@ pub mod expand;
 pub mod flip;
 mod float;
 pub mod gather_scatter;
+pub mod grid_sample;
 mod int;
 pub mod interpolate;
 pub mod mask;

@@ -98,3 +98,7 @@ harness = false
 [[bench]]
 name = "quantization_ops"
 harness = false
+
+[[bench]]
+name = "cat_max_min_ops"
+harness = false
