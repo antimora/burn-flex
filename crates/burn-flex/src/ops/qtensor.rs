@@ -269,6 +269,34 @@ impl QTensorOps<Flex> for Flex {
     fn q_slice(tensor: QuantizedTensor<Flex>, slices: &[Slice]) -> QuantizedTensor<Flex> {
         block_safe_layout_op(tensor, |t| crate::ops::slice::slice(t, slices))
     }
+
+    fn q_argmax(tensor: QuantizedTensor<Flex>, dim: usize) -> IntTensor<Flex> {
+        crate::ops::reduce::argmax(tensor.tensor, dim)
+    }
+
+    fn q_argmin(tensor: QuantizedTensor<Flex>, dim: usize) -> IntTensor<Flex> {
+        crate::ops::reduce::argmin(tensor.tensor, dim)
+    }
+
+    fn q_gather(
+        dim: usize,
+        tensor: QuantizedTensor<Flex>,
+        indices: IntTensor<Flex>,
+    ) -> QuantizedTensor<Flex> {
+        match tensor.scheme.level {
+            QuantLevel::Tensor => FlexQTensor {
+                tensor: crate::ops::gather_scatter::gather::<i8>(tensor.tensor, dim, indices),
+                scheme: tensor.scheme,
+                scales: tensor.scales,
+            },
+            QuantLevel::Block(_) => {
+                let scheme = tensor.scheme;
+                let float_tensor = Flex::dequantize(tensor);
+                let result = crate::ops::gather_scatter::gather::<f32>(float_tensor, dim, indices);
+                Flex::quantize_dynamic(result, &scheme)
+            }
+        }
+    }
 }
 
 /// Apply a layout operation to a quantized tensor.
@@ -670,6 +698,71 @@ mod tests {
         for (exp, deq) in expected.iter().zip(result_vals.iter()) {
             assert!((exp - deq).abs() < 0.5, "expected={exp}, dequantized={deq}");
         }
+    }
+
+    #[test]
+    fn test_q_argmax() {
+        let values = vec![-1.0f32, 3.0, 0.5, 2.0, -0.5, 5.0];
+        let tensor = FlexTensor::from_data(TensorData::new(values, [2, 3]));
+
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q8S)
+            .with_store(QuantStore::Native);
+
+        let qtensor = Flex::quantize_dynamic(tensor, &scheme);
+
+        // argmax along dim 1: row0 max at idx 1 (3.0), row1 max at idx 2 (5.0)
+        let result = Flex::q_argmax(qtensor.clone(), 1);
+        let result_vals: &[i64] = result.storage();
+        assert_eq!(result_vals, &[1, 2]);
+
+        // argmax along dim 0: col0 max at row1 (2.0), col1 max at row0 (3.0), col2 max at row1 (5.0)
+        let result = Flex::q_argmax(qtensor, 0);
+        let result_vals: &[i64] = result.storage();
+        assert_eq!(result_vals, &[1, 0, 1]);
+    }
+
+    #[test]
+    fn test_q_argmin() {
+        let values = vec![-1.0f32, 3.0, 0.5, 2.0, -0.5, 5.0];
+        let tensor = FlexTensor::from_data(TensorData::new(values, [2, 3]));
+
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q8S)
+            .with_store(QuantStore::Native);
+
+        let qtensor = Flex::quantize_dynamic(tensor, &scheme);
+
+        // argmin along dim 1: row0 min at idx 0 (-1.0), row1 min at idx 1 (-0.5)
+        let result = Flex::q_argmin(qtensor.clone(), 1);
+        let result_vals: &[i64] = result.storage();
+        assert_eq!(result_vals, &[0, 1]);
+
+        // argmin along dim 0: col0 min at row0 (-1.0), col1 min at row1 (-0.5), col2 min at row0 (0.5)
+        let result = Flex::q_argmin(qtensor, 0);
+        let result_vals: &[i64] = result.storage();
+        assert_eq!(result_vals, &[0, 1, 0]);
+    }
+
+    #[test]
+    fn test_q_gather() {
+        let values = vec![10i8, 20, 30, 40, 50, 60];
+        let scale = 0.1f32;
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q8S)
+            .with_store(QuantStore::Native);
+        let data = TensorData::quantized(values, [2, 3], scheme, &[scale]);
+        let qtensor = Flex::q_from_data(data, &Default::default());
+
+        // Gather along dim 1 with indices [[2, 0], [1, 2]]
+        let indices = FlexTensor::from_data(TensorData::new(vec![2i64, 0, 1, 2], [2, 2]));
+        let gathered = Flex::q_gather(1, qtensor, indices);
+        assert_eq!(gathered.tensor.shape().dims, vec![2, 2]);
+
+        let gathered_contiguous = gathered.tensor.to_contiguous();
+        let gathered_vals: &[i8] = gathered_contiguous.storage();
+        // Row 0: indices [2,0] -> [30, 10], Row 1: indices [1,2] -> [50, 60]
+        assert_eq!(gathered_vals, &[30, 10, 50, 60]);
     }
 
     #[test]
