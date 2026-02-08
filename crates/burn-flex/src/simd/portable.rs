@@ -3,9 +3,7 @@
 //! Replaces platform-specific implementations (neon.rs) with a single
 //! portable implementation that auto-dispatches to NEON/AVX2/SSE/SIMD128/scalar.
 
-use macerator::{
-    Arch, Scalar, Simd, VBitAnd, VBitOr, VBitXor, WithSimd, vload_unaligned, vstore_unaligned,
-};
+use macerator::{Scalar, Simd, VBitAnd, VBitOr, VBitXor, VOrd, vload_unaligned, vstore_unaligned};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -18,17 +16,12 @@ const PARALLEL_THRESHOLD: usize = 4 * 1024 * 1024;
 #[cfg(feature = "rayon")]
 const CHUNK_SIZE: usize = 4096;
 
-#[inline]
-fn arch() -> Arch {
-    Arch::new()
-}
-
 // ============================================================================
 // f32 in-place binary ops
 // ============================================================================
 
 macro_rules! define_inplace_f32_op {
-    ($pub_fn:ident, $seq_fn:ident, $par_fn:ident, $kernel:ident, $op:tt) => {
+    ($pub_fn:ident, $seq_fn:ident, $par_fn:ident, $op:tt) => {
         #[inline]
         pub fn $pub_fn(a: &mut [f32], b: &[f32]) {
             debug_assert_eq!(a.len(), b.len());
@@ -42,40 +35,25 @@ macro_rules! define_inplace_f32_op {
             $seq_fn(a, b);
         }
 
-        #[inline]
-        fn $seq_fn(a: &mut [f32], b: &[f32]) {
-            arch().dispatch($kernel { a, b });
-        }
-
-        struct $kernel<'a> {
-            a: &'a mut [f32],
-            b: &'a [f32],
-        }
-
+        #[macerator::with_simd]
         #[allow(clippy::assign_op_pattern)]
-        impl WithSimd for $kernel<'_> {
-            type Output = ();
+        fn $seq_fn<S: Simd>(a: &mut [f32], b: &[f32]) {
+            let lanes = S::lanes32();
+            let len = a.len();
+            let simd_len = len / lanes * lanes;
 
-            #[inline(always)]
-            fn with_simd<S: Simd>(self) -> Self::Output {
-                let Self { a, b } = self;
-                let lanes = S::lanes32();
-                let len = a.len();
-                let simd_len = len / lanes * lanes;
-
-                let mut i = 0;
-                while i < simd_len {
-                    unsafe {
-                        let va = vload_unaligned::<S, f32>(a.as_ptr().add(i));
-                        let vb = vload_unaligned::<S, f32>(b.as_ptr().add(i));
-                        vstore_unaligned::<S, f32>(a.as_mut_ptr().add(i), va $op vb);
-                    }
-                    i += lanes;
+            let mut i = 0;
+            while i < simd_len {
+                unsafe {
+                    let va = vload_unaligned(a.as_ptr().add(i));
+                    let vb = vload_unaligned(b.as_ptr().add(i));
+                    vstore_unaligned::<S, _>(a.as_mut_ptr().add(i), va $op vb);
                 }
+                i += lanes;
+            }
 
-                for j in simd_len..len {
-                    a[j] = a[j] $op b[j];
-                }
+            for j in simd_len..len {
+                a[j] = a[j] $op b[j];
             }
         }
 
@@ -90,10 +68,10 @@ macro_rules! define_inplace_f32_op {
     };
 }
 
-define_inplace_f32_op!(add_inplace_f32, add_inplace_f32_seq, add_inplace_f32_par, AddInplaceF32, +);
-define_inplace_f32_op!(sub_inplace_f32, sub_inplace_f32_seq, sub_inplace_f32_par, SubInplaceF32, -);
-define_inplace_f32_op!(mul_inplace_f32, mul_inplace_f32_seq, mul_inplace_f32_par, MulInplaceF32, *);
-define_inplace_f32_op!(div_inplace_f32, div_inplace_f32_seq, div_inplace_f32_par, DivInplaceF32, /);
+define_inplace_f32_op!(add_inplace_f32, add_inplace_f32_seq, add_inplace_f32_par, +);
+define_inplace_f32_op!(sub_inplace_f32, sub_inplace_f32_seq, sub_inplace_f32_par, -);
+define_inplace_f32_op!(mul_inplace_f32, mul_inplace_f32_seq, mul_inplace_f32_par, *);
+define_inplace_f32_op!(div_inplace_f32, div_inplace_f32_seq, div_inplace_f32_par, /);
 
 // ============================================================================
 // f32 comparison ops
@@ -120,69 +98,47 @@ pub fn cmp_f32(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
         return;
     }
 
-    cmp_f32_seq(a, b, out, op);
+    cmp_seq(a, b, out, op);
 }
 
-#[inline]
-fn cmp_f32_seq(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
-    arch().dispatch(CmpF32 { a, b, out, op });
-}
+#[macerator::with_simd]
+fn cmp_seq<S: Simd, T: VOrd + PartialOrd>(a: &[T], b: &[T], out: &mut [u8], op: CmpOp) {
+    let lanes = T::lanes::<S>();
+    let len = a.len();
+    let simd_len = len / lanes * lanes;
 
-struct CmpF32<'a> {
-    a: &'a [f32],
-    b: &'a [f32],
-    out: &'a mut [u8],
-    op: CmpOp,
-}
+    let mut i = 0;
+    while i < simd_len {
+        unsafe {
+            let va = vload_unaligned::<S, _>(a.as_ptr().add(i));
+            let vb = vload_unaligned::<S, _>(b.as_ptr().add(i));
 
-impl WithSimd for CmpF32<'_> {
-    type Output = ();
-
-    #[inline(always)]
-    fn with_simd<S: Simd>(self) -> Self::Output {
-        let Self { a, b, out, op } = self;
-        let lanes = S::lanes32();
-        let len = a.len();
-        let simd_len = len / lanes * lanes;
-
-        let mut i = 0;
-        while i < simd_len {
-            unsafe {
-                let va = vload_unaligned::<S, f32>(a.as_ptr().add(i));
-                let vb = vload_unaligned::<S, f32>(b.as_ptr().add(i));
-
-                // mask_store_as_bool writes `bool` (1 byte per lane, 0 or 1)
-                // which has the same repr as u8 0/1
-                let out_ptr = out.as_mut_ptr().add(i) as *mut bool;
-                match op {
-                    CmpOp::Gt => f32::mask_store_as_bool::<S>(out_ptr, va.gt(vb)),
-                    CmpOp::Ge => f32::mask_store_as_bool::<S>(out_ptr, va.ge(vb)),
-                    CmpOp::Lt => f32::mask_store_as_bool::<S>(out_ptr, va.lt(vb)),
-                    CmpOp::Le => f32::mask_store_as_bool::<S>(out_ptr, va.le(vb)),
-                    CmpOp::Eq => f32::mask_store_as_bool::<S>(out_ptr, va.eq(vb)),
-                    CmpOp::Ne => {
-                        f32::mask_store_as_bool::<S>(out_ptr, va.eq(vb));
-                        // Flip: eq gave us 1 where equal, we want 1 where not equal
-                        for j in 0..lanes {
-                            *out.get_unchecked_mut(i + j) ^= 1;
-                        }
-                    }
-                }
-            }
-            i += lanes;
-        }
-
-        // Scalar tail
-        for j in simd_len..len {
-            out[j] = match op {
-                CmpOp::Gt => (a[j] > b[j]) as u8,
-                CmpOp::Ge => (a[j] >= b[j]) as u8,
-                CmpOp::Lt => (a[j] < b[j]) as u8,
-                CmpOp::Le => (a[j] <= b[j]) as u8,
-                CmpOp::Eq => (a[j] == b[j]) as u8,
-                CmpOp::Ne => (a[j] != b[j]) as u8,
+            let out_ptr = out.as_mut_ptr().add(i) as *mut bool;
+            let out_mask = match op {
+                CmpOp::Gt => va.gt(vb),
+                CmpOp::Ge => va.ge(vb),
+                CmpOp::Lt => va.lt(vb),
+                CmpOp::Le => va.le(vb),
+                CmpOp::Eq => va.eq(vb),
+                CmpOp::Ne => va.ne(vb),
             };
+            // mask_store_as_bool writes `bool` (1 byte per lane, 0 or 1)
+            // which has the same repr as u8 0/1
+            out_mask.store_as_bool(out_ptr);
         }
+        i += lanes;
+    }
+
+    // Scalar tail
+    for j in simd_len..len {
+        out[j] = match op {
+            CmpOp::Gt => (a[j] > b[j]) as u8,
+            CmpOp::Ge => (a[j] >= b[j]) as u8,
+            CmpOp::Lt => (a[j] < b[j]) as u8,
+            CmpOp::Le => (a[j] <= b[j]) as u8,
+            CmpOp::Eq => (a[j] == b[j]) as u8,
+            CmpOp::Ne => (a[j] != b[j]) as u8,
+        };
     }
 }
 
@@ -193,7 +149,7 @@ fn cmp_f32_par(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
         .for_each(|(chunk_idx, out_chunk)| {
             let start = chunk_idx * CHUNK_SIZE;
             let end = (start + CHUNK_SIZE).min(a.len());
-            cmp_f32_seq(&a[start..end], &b[start..end], out_chunk, op);
+            cmp_seq(&a[start..end], &b[start..end], out_chunk, op);
         });
 }
 
@@ -207,65 +163,44 @@ pub fn cmp_scalar_f32(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
         return;
     }
 
-    cmp_scalar_f32_seq(a, scalar, out, op);
+    cmp_scalar_seq(a, scalar, out, op);
 }
 
-#[inline]
-fn cmp_scalar_f32_seq(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
-    arch().dispatch(CmpScalarF32 { a, scalar, out, op });
-}
+#[macerator::with_simd]
+fn cmp_scalar_seq<S: Simd, T: VOrd + PartialOrd>(a: &[T], scalar: T, out: &mut [u8], op: CmpOp) {
+    let lanes = T::lanes::<S>();
+    let len = a.len();
+    let simd_len = len / lanes * lanes;
 
-struct CmpScalarF32<'a> {
-    a: &'a [f32],
-    scalar: f32,
-    out: &'a mut [u8],
-    op: CmpOp,
-}
+    let vs = scalar.splat::<S>();
 
-impl WithSimd for CmpScalarF32<'_> {
-    type Output = ();
-
-    #[inline(always)]
-    fn with_simd<S: Simd>(self) -> Self::Output {
-        let Self { a, scalar, out, op } = self;
-        let lanes = S::lanes32();
-        let len = a.len();
-        let simd_len = len / lanes * lanes;
-
-        let vs = scalar.splat::<S>();
-
-        let mut i = 0;
-        while i < simd_len {
-            unsafe {
-                let va = vload_unaligned::<S, f32>(a.as_ptr().add(i));
-                let out_ptr = out.as_mut_ptr().add(i) as *mut bool;
-                match op {
-                    CmpOp::Gt => f32::mask_store_as_bool::<S>(out_ptr, va.gt(vs)),
-                    CmpOp::Ge => f32::mask_store_as_bool::<S>(out_ptr, va.ge(vs)),
-                    CmpOp::Lt => f32::mask_store_as_bool::<S>(out_ptr, va.lt(vs)),
-                    CmpOp::Le => f32::mask_store_as_bool::<S>(out_ptr, va.le(vs)),
-                    CmpOp::Eq => f32::mask_store_as_bool::<S>(out_ptr, va.eq(vs)),
-                    CmpOp::Ne => {
-                        f32::mask_store_as_bool::<S>(out_ptr, va.eq(vs));
-                        for j in 0..lanes {
-                            *out.get_unchecked_mut(i + j) ^= 1;
-                        }
-                    }
-                }
-            }
-            i += lanes;
-        }
-
-        for j in simd_len..len {
-            out[j] = match op {
-                CmpOp::Gt => (a[j] > scalar) as u8,
-                CmpOp::Ge => (a[j] >= scalar) as u8,
-                CmpOp::Lt => (a[j] < scalar) as u8,
-                CmpOp::Le => (a[j] <= scalar) as u8,
-                CmpOp::Eq => (a[j] == scalar) as u8,
-                CmpOp::Ne => (a[j] != scalar) as u8,
+    let mut i = 0;
+    while i < simd_len {
+        unsafe {
+            let va = vload_unaligned::<S, _>(a.as_ptr().add(i));
+            let out_ptr = out.as_mut_ptr().add(i) as *mut bool;
+            let out_mask = match op {
+                CmpOp::Gt => va.gt(vs),
+                CmpOp::Ge => va.ge(vs),
+                CmpOp::Lt => va.lt(vs),
+                CmpOp::Le => va.le(vs),
+                CmpOp::Eq => va.eq(vs),
+                CmpOp::Ne => va.ne(vs),
             };
+            out_mask.store_as_bool(out_ptr);
         }
+        i += lanes;
+    }
+
+    for j in simd_len..len {
+        out[j] = match op {
+            CmpOp::Gt => (a[j] > scalar) as u8,
+            CmpOp::Ge => (a[j] >= scalar) as u8,
+            CmpOp::Lt => (a[j] < scalar) as u8,
+            CmpOp::Le => (a[j] <= scalar) as u8,
+            CmpOp::Eq => (a[j] == scalar) as u8,
+            CmpOp::Ne => (a[j] != scalar) as u8,
+        };
     }
 }
 
@@ -276,7 +211,7 @@ fn cmp_scalar_f32_par(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
         .for_each(|(chunk_idx, out_chunk)| {
             let start = chunk_idx * CHUNK_SIZE;
             let end = (start + CHUNK_SIZE).min(a.len());
-            cmp_scalar_f32_seq(&a[start..end], scalar, out_chunk, op);
+            cmp_scalar_seq(&a[start..end], scalar, out_chunk, op);
         });
 }
 
@@ -285,8 +220,8 @@ fn cmp_scalar_f32_par(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
 // ============================================================================
 
 macro_rules! define_bool_binary_u8_op {
-    ($pub_fn:ident, $seq_fn:ident, $par_fn:ident, $kernel:ident,
-     $inplace_pub:ident, $inplace_seq:ident, $inplace_par:ident, $inplace_kernel:ident,
+    ($pub_fn:ident, $seq_fn:ident, $par_fn:ident,
+     $inplace_pub:ident, $inplace_seq:ident, $inplace_par:ident,
      $trait:ident, $method:ident, $op:tt) => {
         #[inline]
         pub fn $pub_fn(a: &[u8], b: &[u8], out: &mut [u8]) {
@@ -302,43 +237,27 @@ macro_rules! define_bool_binary_u8_op {
             $seq_fn(a, b, out);
         }
 
-        #[inline]
-        fn $seq_fn(a: &[u8], b: &[u8], out: &mut [u8]) {
-            arch().dispatch($kernel { a, b, out });
-        }
+        #[macerator::with_simd]
+        fn $seq_fn<S: Simd>(a: &[u8], b: &[u8], out: &mut [u8]) {
+            let lanes = S::lanes8();
+            let len = a.len();
+            let simd_len = len / lanes * lanes;
 
-        struct $kernel<'a> {
-            a: &'a [u8],
-            b: &'a [u8],
-            out: &'a mut [u8],
-        }
-
-        impl WithSimd for $kernel<'_> {
-            type Output = ();
-
-            #[inline(always)]
-            fn with_simd<S: Simd>(self) -> Self::Output {
-                let Self { a, b, out } = self;
-                let lanes = S::lanes8();
-                let len = a.len();
-                let simd_len = len / lanes * lanes;
-
-                let mut i = 0;
-                while i < simd_len {
-                    unsafe {
-                        let va = vload_unaligned::<S, u8>(a.as_ptr().add(i));
-                        let vb = vload_unaligned::<S, u8>(b.as_ptr().add(i));
-                        vstore_unaligned::<S, u8>(
-                            out.as_mut_ptr().add(i),
-                            <u8 as $trait>::$method::<S>(va, vb),
-                        );
-                    }
-                    i += lanes;
+            let mut i = 0;
+            while i < simd_len {
+                unsafe {
+                    let va = vload_unaligned::<S, u8>(a.as_ptr().add(i));
+                    let vb = vload_unaligned::<S, u8>(b.as_ptr().add(i));
+                    vstore_unaligned::<S, u8>(
+                        out.as_mut_ptr().add(i),
+                        <u8 as $trait>::$method::<S>(va, vb),
+                    );
                 }
+                i += lanes;
+            }
 
-                for j in simd_len..len {
-                    out[j] = a[j] $op b[j];
-                }
+            for j in simd_len..len {
+                out[j] = a[j] $op b[j];
             }
         }
 
@@ -366,43 +285,28 @@ macro_rules! define_bool_binary_u8_op {
             $inplace_seq(a, b);
         }
 
-        #[inline]
-        fn $inplace_seq(a: &mut [u8], b: &[u8]) {
-            arch().dispatch($inplace_kernel { a, b });
-        }
-
-        struct $inplace_kernel<'a> {
-            a: &'a mut [u8],
-            b: &'a [u8],
-        }
-
         #[allow(clippy::assign_op_pattern)]
-        impl WithSimd for $inplace_kernel<'_> {
-            type Output = ();
+        #[macerator::with_simd]
+        fn $inplace_seq<S: Simd>(a: &mut [u8], b: &[u8]) {
+            let lanes = S::lanes8();
+            let len = a.len();
+            let simd_len = len / lanes * lanes;
 
-            #[inline(always)]
-            fn with_simd<S: Simd>(self) -> Self::Output {
-                let Self { a, b } = self;
-                let lanes = S::lanes8();
-                let len = a.len();
-                let simd_len = len / lanes * lanes;
-
-                let mut i = 0;
-                while i < simd_len {
-                    unsafe {
-                        let va = vload_unaligned::<S, u8>(a.as_ptr().add(i));
-                        let vb = vload_unaligned::<S, u8>(b.as_ptr().add(i));
-                        vstore_unaligned::<S, u8>(
-                            a.as_mut_ptr().add(i),
-                            <u8 as $trait>::$method::<S>(va, vb),
-                        );
-                    }
-                    i += lanes;
+            let mut i = 0;
+            while i < simd_len {
+                unsafe {
+                    let va = vload_unaligned::<S, u8>(a.as_ptr().add(i));
+                    let vb = vload_unaligned::<S, u8>(b.as_ptr().add(i));
+                    vstore_unaligned::<S, u8>(
+                        a.as_mut_ptr().add(i),
+                        <u8 as $trait>::$method::<S>(va, vb),
+                    );
                 }
+                i += lanes;
+            }
 
-                for j in simd_len..len {
-                    a[j] = a[j] $op b[j];
-                }
+            for j in simd_len..len {
+                a[j] = a[j] $op b[j];
             }
         }
 
@@ -418,16 +322,16 @@ macro_rules! define_bool_binary_u8_op {
 }
 
 define_bool_binary_u8_op!(
-    bool_and_u8, bool_and_u8_seq, bool_and_u8_par, BoolAndU8,
-    bool_and_inplace_u8, bool_and_inplace_u8_seq, bool_and_inplace_u8_par, BoolAndInplaceU8,
+    bool_and_u8, bool_and_u8_seq, bool_and_u8_par,
+    bool_and_inplace_u8, bool_and_inplace_u8_seq, bool_and_inplace_u8_par,
     VBitAnd, vbitand, &);
 define_bool_binary_u8_op!(
-    bool_or_u8, bool_or_u8_seq, bool_or_u8_par, BoolOrU8,
-    bool_or_inplace_u8, bool_or_inplace_u8_seq, bool_or_inplace_u8_par, BoolOrInplaceU8,
+    bool_or_u8, bool_or_u8_seq, bool_or_u8_par,
+    bool_or_inplace_u8, bool_or_inplace_u8_seq, bool_or_inplace_u8_par,
     VBitOr, vbitor, |);
 define_bool_binary_u8_op!(
-    bool_xor_u8, bool_xor_u8_seq, bool_xor_u8_par, BoolXorU8,
-    bool_xor_inplace_u8, bool_xor_inplace_u8_seq, bool_xor_inplace_u8_par, BoolXorInplaceU8,
+    bool_xor_u8, bool_xor_u8_seq, bool_xor_u8_par,
+    bool_xor_inplace_u8, bool_xor_inplace_u8_seq, bool_xor_inplace_u8_par,
     VBitXor, vbitxor, ^);
 
 // Boolean NOT is special (unary), implemented separately.
@@ -445,41 +349,26 @@ pub fn bool_not_u8(a: &[u8], out: &mut [u8]) {
     bool_not_u8_seq(a, out);
 }
 
-#[inline]
-fn bool_not_u8_seq(a: &[u8], out: &mut [u8]) {
-    arch().dispatch(BoolNotU8 { a, out });
-}
+#[macerator::with_simd]
+fn bool_not_u8_seq<S: Simd>(a: &[u8], out: &mut [u8]) {
+    let lanes = S::lanes8();
+    let len = a.len();
+    let simd_len = len / lanes * lanes;
 
-struct BoolNotU8<'a> {
-    a: &'a [u8],
-    out: &'a mut [u8],
-}
+    let zeros = 0u8.splat::<S>();
 
-impl WithSimd for BoolNotU8<'_> {
-    type Output = ();
-
-    #[inline(always)]
-    fn with_simd<S: Simd>(self) -> Self::Output {
-        let Self { a, out } = self;
-        let lanes = S::lanes8();
-        let len = a.len();
-        let simd_len = len / lanes * lanes;
-
-        let zeros = 0u8.splat::<S>();
-
-        let mut i = 0;
-        while i < simd_len {
-            unsafe {
-                let va = vload_unaligned::<S, u8>(a.as_ptr().add(i));
-                let mask = va.eq(zeros);
-                u8::mask_store_as_bool::<S>(out.as_mut_ptr().add(i) as *mut bool, mask);
-            }
-            i += lanes;
+    let mut i = 0;
+    while i < simd_len {
+        unsafe {
+            let va = vload_unaligned::<S, u8>(a.as_ptr().add(i));
+            let mask = va.eq(zeros);
+            mask.store_as_bool(out.as_mut_ptr().add(i) as *mut bool);
         }
+        i += lanes;
+    }
 
-        for j in simd_len..len {
-            out[j] = (a[j] == 0) as u8;
-        }
+    for j in simd_len..len {
+        out[j] = (a[j] == 0) as u8;
     }
 }
 
@@ -505,40 +394,26 @@ pub fn bool_not_inplace_u8(a: &mut [u8]) {
     bool_not_inplace_u8_seq(a);
 }
 
-#[inline]
-fn bool_not_inplace_u8_seq(a: &mut [u8]) {
-    arch().dispatch(BoolNotInplaceU8 { a });
-}
+#[macerator::with_simd]
+fn bool_not_inplace_u8_seq<S: Simd>(a: &mut [u8]) {
+    let lanes = S::lanes8();
+    let len = a.len();
+    let simd_len = len / lanes * lanes;
 
-struct BoolNotInplaceU8<'a> {
-    a: &'a mut [u8],
-}
+    let zeros = 0u8.splat::<S>();
 
-impl WithSimd for BoolNotInplaceU8<'_> {
-    type Output = ();
-
-    #[inline(always)]
-    fn with_simd<S: Simd>(self) -> Self::Output {
-        let Self { a } = self;
-        let lanes = S::lanes8();
-        let len = a.len();
-        let simd_len = len / lanes * lanes;
-
-        let zeros = 0u8.splat::<S>();
-
-        let mut i = 0;
-        while i < simd_len {
-            unsafe {
-                let va = vload_unaligned::<S, u8>(a.as_ptr().add(i));
-                let mask = va.eq(zeros);
-                u8::mask_store_as_bool::<S>(a.as_mut_ptr().add(i) as *mut bool, mask);
-            }
-            i += lanes;
+    let mut i = 0;
+    while i < simd_len {
+        unsafe {
+            let va = vload_unaligned::<S, u8>(a.as_ptr().add(i));
+            let mask = va.eq(zeros);
+            mask.store_as_bool(a.as_mut_ptr().add(i) as *mut bool);
         }
+        i += lanes;
+    }
 
-        for v in &mut a[simd_len..len] {
-            *v = (*v == 0) as u8;
-        }
+    for v in &mut a[simd_len..len] {
+        *v = (*v == 0) as u8;
     }
 }
 

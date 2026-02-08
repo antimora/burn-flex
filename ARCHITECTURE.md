@@ -54,11 +54,11 @@ production. This includes:
 default = ["std", "simd", "rayon"]
 ```
 
-| Feature | Default | Description                                            |
-| ------- | ------- | ------------------------------------------------------ |
-| `std`   | Yes     | Standard library support                               |
+| Feature | Default | Description                                                      |
+| ------- | ------- | ---------------------------------------------------------------- |
+| `std`   | Yes     | Standard library support                                         |
 | `simd`  | Yes     | Portable SIMD via macerator (enables `macerator`, `aligned-vec`) |
-| `rayon` | Yes     | Parallel execution for large tensors                   |
+| `rayon` | Yes     | Parallel execution for large tensors                             |
 
 `gemm` is an always-on required dependency (not behind a feature flag).
 
@@ -360,20 +360,16 @@ Portable SIMD via macerator, with automatic dispatch per architecture (NEON, AVX
 a scalar fallback module for unsupported platforms:
 
 ```rust
-use macerator::{Arch, Simd, WithSimd, vload_unaligned, vstore_unaligned};
+use macerator::{Simd, with_simd, vload_unaligned, vstore_unaligned};
 
-struct MyKernel<'a> { src: &'a [f32], dst: &'a mut [f32] }
-
-impl WithSimd for MyKernel<'_> {
-    type Output = ();
-    fn with_simd<S: Simd>(self) -> Self::Output {
-        let lanes = S::lanes32();
-        // load/store vectors, use operator overloading for arithmetic
-    }
+#[with_simd]
+fn my_kernel<S: Simd>(src: &[f32], dst: &mut [f32]) {
+    let lanes = f32::lanes::<S>();
+    // load/store vectors, use operator overloading for arithmetic
 }
 
 // Dispatch: detects CPU features at runtime
-Arch::new().dispatch(MyKernel { src, dst });
+my_kernel(src, dst);
 ```
 
 The `simd/` module is organized as:
@@ -647,7 +643,7 @@ Logical view:
 
 **Performance**
 
-| Metric          | Flex                        | NdArray                        |
+| Metric          | Flex                         | NdArray                        |
 | --------------- | ---------------------------- | ------------------------------ |
 | Time complexity | O(1)                         | O(output_elements)             |
 | Memory          | 56-136 bytes (metadata only) | Megabytes (copies all windows) |
@@ -665,13 +661,13 @@ directly on strided tensors via `StridedIter`.
 
 ### Implemented
 
-| Optimization               | Benefit                             | Notes                                        |
-| -------------------------- | ----------------------------------- | -------------------------------------------- |
-| **Arc-based COW**          | O(1) clone, 2.6-4.2x faster ops     | `is_unique()` enables true in-place mutation |
-| **Portable SIMD (macerator)** | ~1.5-1.7x for contiguous ops     | Auto-dispatches to NEON/AVX2/SSE/SIMD128    |
-| **Rayon parallelism**      | Scales with cores for large tensors | Threshold: 4M elements (memory-bound ops)    |
-| **Row-based 2D iteration** | 5.9x faster for transposed tensors  | Replaces per-element StridedIter             |
-| **In-place mutation**      | Eliminates allocation               | When tensor is unique and contiguous         |
+| Optimization                  | Benefit                             | Notes                                        |
+| ----------------------------- | ----------------------------------- | -------------------------------------------- |
+| **Arc-based COW**             | O(1) clone, 2.6-4.2x faster ops     | `is_unique()` enables true in-place mutation |
+| **Portable SIMD (macerator)** | ~1.5-1.7x for contiguous ops        | Auto-dispatches to NEON/AVX2/SSE/SIMD128     |
+| **Rayon parallelism**         | Scales with cores for large tensors | Threshold: 4M elements (memory-bound ops)    |
+| **Row-based 2D iteration**    | 5.9x faster for transposed tensors  | Replaces per-element StridedIter             |
+| **In-place mutation**         | Eliminates allocation               | When tensor is unique and contiguous         |
 
 ### Considered but Skipped
 
@@ -679,7 +675,7 @@ directly on strided tensors via `StridedIter`.
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cache blocking / loop tiling** | Requires architecture-specific tile sizes. M3 has 128KB L1, but optimal tile size varies by operation, data type, and cache hierarchy. Adds complexity without portable benefit.              |
 | **Software prefetching**         | ARM64 `_prefetch` intrinsic is unstable (requires nightly Rust). Apple Silicon has excellent hardware prefetchers that detect strided access patterns automatically. Benefit likely marginal. |
-| **Kernel fusion**                | Outside burn-flex scope. Fusion is handled at the Burn framework level via `burn-fusion`. This backend focuses on single-operation efficiency.                                               |
+| **Kernel fusion**                | Outside burn-flex scope. Fusion is handled at the Burn framework level via `burn-fusion`. This backend focuses on single-operation efficiency.                                                |
 | **Hand-tuned intrinsics**        | Portable SIMD via macerator covers NEON/AVX2/SSE/SIMD128 with a single implementation. Hand-tuned per-arch intrinsics add maintenance burden with marginal benefit for memory-bound ops.      |
 
 ### Why Element-wise Ops are Memory-Bound

@@ -677,7 +677,7 @@ fn reduce_middle_dim_f32(
     {
         // Use aligned allocation for optimal SIMD scatter-add
         let mut result = aligned::alloc_aligned_zeroed::<f32>(out_size);
-        kernels::scatter_add_batched_f32(
+        kernels::scatter_add_batched(
             &data[start_offset..],
             &mut result,
             outer_size,
