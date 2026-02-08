@@ -8,6 +8,9 @@ A fast, memory-efficient CPU backend for Burn with multi-threading, SIMD, and op
 multiplication. Runs on std, no_std, and WebAssembly. Supports f16/bf16, zero-copy data loading, and
 is thread-safe by design.
 
+> **[Detailed comparison with burn-ndarray](COMPARISON.md)**: Full architecture, feature coverage,
+> operation-by-operation analysis, and migration path.
+
 ### Features
 
 - **Zero-Copy Operations**: Many operations return strided views without copying data:
@@ -88,6 +91,7 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 
 ### Documentation
 
+- [COMPARISON.md](COMPARISON.md) - Comprehensive comparison with burn-ndarray
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Design decisions, memory strategy, and implementation
   patterns
 - [BENCHMARKS.md](BENCHMARKS.md) - Full benchmark results (Flex vs NdArray)
