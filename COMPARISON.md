@@ -288,13 +288,13 @@ Both backends support zero-copy loading from external sources (burnpack files, m
 
 ## 7. SIMD
 
-| Aspect       | burn-flex                                         | burn-ndarray                                   |
-| ------------ | ------------------------------------------------- | ---------------------------------------------- |
-| Library      | macerator (required with `simd` feature)          | macerator (optional with `simd` feature)       |
-| Dispatch     | `Arch::new().dispatch(kernel)`                    | Same macerator dispatch                        |
-| ISAs         | NEON, AVX2, AVX512, SSE, SIMD128, scalar fallback | NEON, AVX2, SSE, SIMD128, scalar fallback      |
-| Coverage     | Binary ops, comparisons, boolean ops, reductions  | Binary ops, comparisons, unary ops, conv, pool |
-| Without SIMD | Scalar fallback module (`simd/scalar.rs`)         | Falls back to ndarray operations               |
+| Aspect       | burn-flex                                                   | burn-ndarray                                   |
+| ------------ | ----------------------------------------------------------- | ---------------------------------------------- |
+| Library      | macerator (required with `simd` feature)                    | macerator (optional with `simd` feature)       |
+| Dispatch     | `Arch::new().dispatch(kernel)`                              | Same macerator dispatch                        |
+| ISAs         | NEON, AVX2, AVX512, SSE, SIMD128, scalar fallback           | NEON, AVX2, SSE, SIMD128, scalar fallback      |
+| Coverage     | Binary ops, comparisons, boolean ops, reductions, unary ops | Binary ops, comparisons, unary ops, conv, pool |
+| Without SIMD | Scalar fallback module (`simd/scalar.rs`)                   | Falls back to ndarray operations               |
 
 Both use macerator for portable SIMD. NdArray additionally has SIMD-optimized conv and pool kernels.
 Flex relies on the gemm crate's built-in SIMD for matmul/conv performance.
@@ -471,7 +471,7 @@ All benchmarks on Apple M3 Max, default features enabled.
 | Conv1d           | **4.3-9.6x faster**       | Unified 3D avoids overhead                |
 | Pooling          | **1.2-3.1x faster**       | Unified 3D, better parallelism            |
 | Interpolation    | **1.2-3.6x faster**       | Direct computation vs intermediates       |
-| Reductions       | **1.2-3.9x faster**       | Zero-alloc single-pass                    |
+| Reductions       | **1.6-5.1x faster**       | Zero-alloc SIMD single-pass               |
 | Cumulative       | **3.1-97x faster**        | Blocked scan, scalar accumulator          |
 | Gather/scatter   | **1.6-9.8x faster**       | Direct indexing                           |
 | Unary            | **1.1-2.7x faster**       | In-place mutation when possible           |
@@ -494,6 +494,7 @@ All benchmarks on Apple M3 Max, default features enabled.
 | Transposed i64 add (large) | ~7% faster        | ndarray handles non-contiguous well         |
 | Deform conv (medium)       | ~30% faster       | NdArray has optimized deform conv path      |
 | Max pool 5x5               | ~17% faster       | Specific kernel size advantage              |
+
 These are specific edge cases where NdArray's ndarray-based internals have an advantage.
 
 ---
