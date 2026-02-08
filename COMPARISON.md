@@ -536,14 +536,10 @@ access patterns (1D cumsum is 93x faster).
    outperform gemm for very large matmuls on specific hardware. burn-flex relies solely on the gemm
    crate.
 
-2. **burn-autodiff integration**: burn-ndarray conditionally depends on burn-autodiff. burn-flex
-   works with burn-autodiff through the standard Burn `AutodiffBackend` wrapper (not a direct
-   dependency).
-
-3. **SIMD conv/pool kernels**: burn-ndarray has dedicated macerator-based SIMD kernels for
+2. **SIMD conv/pool kernels**: burn-ndarray has dedicated macerator-based SIMD kernels for
    convolution and pooling. burn-flex delegates to gemm's SIMD.
 
-4. **export_tests feature**: burn-ndarray serves as a reference implementation for some burn-cubecl
+3. **export_tests feature**: burn-ndarray serves as a reference implementation for some burn-cubecl
    kernels via `export_tests`.
 
 ---
