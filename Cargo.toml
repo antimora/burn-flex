@@ -18,6 +18,7 @@ invalid_html_tags = "deny"
 burn-backend = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-backend" }
 burn-std = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-std" }
 burn-tensor = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-tensor" }
+burn-ir = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-ir", default-features = false }
 burn-ndarray = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-ndarray" }
 half = { version = "2", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }

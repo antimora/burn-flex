@@ -277,6 +277,7 @@ version = "0.0.1"
 dependencies = [
  "aligned-vec",
  "burn-backend",
+ "burn-ir",
  "burn-ndarray",
  "burn-std",
  "burn-tensor",

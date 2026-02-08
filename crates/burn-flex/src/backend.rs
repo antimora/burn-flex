@@ -1,6 +1,7 @@
 use alloc::string::String;
 
 use burn_backend::{Backend, DType, DTypeUsage, DTypeUsageSet, DeviceId, DeviceOps};
+use burn_ir::{BackendIr, HandleKind, TensorHandle};
 use burn_std::device::Device;
 use burn_std::rand::{SeedableRng, StdRng};
 use burn_std::stub::Mutex;
@@ -95,6 +96,54 @@ impl Backend for Flex {
             DType::QFloat(_) => DTypeUsage::Storage.into(),
             _ => DTypeUsageSet::empty(),
         }
+    }
+}
+
+impl BackendIr for Flex {
+    type Handle = HandleKind<Self>;
+
+    fn float_tensor(handle: TensorHandle<Self::Handle>) -> FlexTensor {
+        match handle.handle {
+            HandleKind::Float(t) => t,
+            _ => panic!("Expected float handle, got {}", handle.handle.name()),
+        }
+    }
+
+    fn int_tensor(handle: TensorHandle<Self::Handle>) -> FlexTensor {
+        match handle.handle {
+            HandleKind::Int(t) => t,
+            _ => panic!("Expected int handle, got {}", handle.handle.name()),
+        }
+    }
+
+    fn bool_tensor(handle: TensorHandle<Self::Handle>) -> FlexTensor {
+        match handle.handle {
+            HandleKind::Bool(t) => t,
+            _ => panic!("Expected bool handle, got {}", handle.handle.name()),
+        }
+    }
+
+    fn quantized_tensor(handle: TensorHandle<Self::Handle>) -> FlexQTensor {
+        match handle.handle {
+            HandleKind::Quantized(t) => t,
+            _ => panic!("Expected quantized handle, got {}", handle.handle.name()),
+        }
+    }
+
+    fn float_tensor_handle(tensor: FlexTensor) -> Self::Handle {
+        HandleKind::Float(tensor)
+    }
+
+    fn int_tensor_handle(tensor: FlexTensor) -> Self::Handle {
+        HandleKind::Int(tensor)
+    }
+
+    fn bool_tensor_handle(tensor: FlexTensor) -> Self::Handle {
+        HandleKind::Bool(tensor)
+    }
+
+    fn quantized_tensor_handle(tensor: FlexQTensor) -> Self::Handle {
+        HandleKind::Quantized(tensor)
     }
 }
 

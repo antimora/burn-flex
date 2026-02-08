@@ -21,6 +21,7 @@ rayon = ["dep:rayon"]  # Enable parallel execution for large tensors
 
 [dependencies]
 burn-backend = { workspace = true }
+burn-ir = { workspace = true }
 burn-std = { workspace = true }
 half = { workspace = true }
 bytemuck = { workspace = true }
