@@ -6,7 +6,7 @@
 //! - wasm32 (SIMD128)
 //! - Scalar fallback for embedded/other platforms
 
-use std::{iter::Sum, ops::AddAssign};
+use core::{iter::Sum, ops::AddAssign};
 
 use macerator::{ReduceAdd, Simd, VAdd, vload_unaligned, vstore_unaligned};
 
