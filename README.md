@@ -74,6 +74,10 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
   - `std + rayon`
   - `std + simd + rayon` (default)
 - Burn's `burn-no-std-tests` integration suite passes (MNIST model inference in `#![no_std]`)
+- Builds for embedded and WebAssembly targets:
+  - `thumbv6m-none-eabi` (ARM Cortex-M0+, no atomic pointers)
+  - `thumbv7m-none-eabi` (ARM Cortex-M3)
+  - `wasm32-unknown-unknown`
 - Tested for edge-case robustness: integer overflow at type boundaries, large-float rounding,
   invalid pooling parameters, zero-sized dimensions. Safe for embedded devices.
 - All ONNX model checks in `burn-onnx` pass
