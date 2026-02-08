@@ -28,6 +28,10 @@ pub fn cumprod<E: Element + Pod + Default + Copy + Num>(
 }
 
 /// Generic cumulative operation along a dimension.
+///
+/// Uses blocked iteration for cache-friendly access: processes contiguous
+/// inner blocks together rather than striding across memory one element at
+/// a time.
 fn cumulative_op<E: Element + Pod + Default + Copy, F>(
     tensor: FlexTensor,
     dim: usize,
@@ -52,47 +56,37 @@ where
     let total_size = shape.num_elements();
     let mut result = vec![E::default(); total_size];
 
-    // Calculate strides for row-major order
-    let mut strides = vec![1usize; ndims];
-    for i in (0..ndims - 1).rev() {
-        strides[i] = strides[i + 1] * shape.dims[i + 1];
-    }
-
     let dim_size = shape.dims[dim];
-    let dim_stride = strides[dim];
+    // Contiguous block size after the cumulative dimension
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    // Number of outer blocks (dimensions before the cumulative dimension)
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let block_size = dim_size * inner_size;
 
-    // Calculate the number of "slices" (all dimensions except dim)
-    let num_slices = total_size / dim_size;
-
-    // For each slice along all other dimensions
-    for slice_idx in 0..num_slices {
-        // Calculate the starting position for this slice
-        let mut remaining = slice_idx;
-        let mut base_idx = 0;
-
-        #[allow(clippy::needless_range_loop)]
-        for d in 0..ndims {
-            if d == dim {
-                continue;
+    if inner_size == 1 {
+        // Scalar accumulator path: accumulator stays in a register.
+        for outer in 0..outer_size {
+            let base = outer * dim_size;
+            let mut acc = init;
+            for i in 0..dim_size {
+                acc = op(acc, data[base + i]);
+                result[base + i] = acc;
             }
-            // Number of complete cycles along dimensions after d (excluding dim)
-            let mut cycle_size = 1;
-            for dd in (d + 1)..ndims {
-                if dd != dim {
-                    cycle_size *= shape.dims[dd];
+        }
+    } else {
+        // Blocked path: process contiguous inner blocks together for
+        // cache-friendly access when the cumulative dim is not last.
+        let mut acc = vec![init; inner_size];
+        for outer in 0..outer_size {
+            let base = outer * block_size;
+            acc.fill(init);
+            for i in 0..dim_size {
+                let offset = base + i * inner_size;
+                for j in 0..inner_size {
+                    acc[j] = op(acc[j], data[offset + j]);
+                    result[offset + j] = acc[j];
                 }
             }
-            let coord = remaining / cycle_size;
-            remaining %= cycle_size;
-            base_idx += coord * strides[d];
-        }
-
-        // Scan along the dimension
-        let mut acc = init;
-        for i in 0..dim_size {
-            let idx = base_idx + i * dim_stride;
-            acc = op(acc, data[idx]);
-            result[idx] = acc;
         }
     }
 
@@ -127,40 +121,26 @@ where
     let total_size = shape.num_elements();
     let mut result = vec![E::default(); total_size];
 
-    let mut strides = vec![1usize; ndims];
-    for i in (0..ndims - 1).rev() {
-        strides[i] = strides[i + 1] * shape.dims[i + 1];
-    }
-
     let dim_size = shape.dims[dim];
-    let dim_stride = strides[dim];
-    let num_slices = total_size / dim_size;
+    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape.dims[..dim].iter().product();
+    let block_size = dim_size * inner_size;
 
-    for slice_idx in 0..num_slices {
-        let mut remaining = slice_idx;
-        let mut base_idx = 0;
+    // Accumulator buffer for f32 intermediate values
+    let mut acc = vec![init; inner_size];
 
-        #[allow(clippy::needless_range_loop)]
-        for d in 0..ndims {
-            if d == dim {
-                continue;
-            }
-            let mut cycle_size = 1;
-            for dd in (d + 1)..ndims {
-                if dd != dim {
-                    cycle_size *= shape.dims[dd];
-                }
-            }
-            let coord = remaining / cycle_size;
-            remaining %= cycle_size;
-            base_idx += coord * strides[d];
-        }
+    for outer in 0..outer_size {
+        let base = outer * block_size;
 
-        let mut acc = init;
+        // Reset accumulators
+        acc.fill(init);
+
         for i in 0..dim_size {
-            let idx = base_idx + i * dim_stride;
-            acc = op(acc, to_f32(data[idx]));
-            result[idx] = from_f32(acc);
+            let offset = base + i * inner_size;
+            for j in 0..inner_size {
+                acc[j] = op(acc[j], to_f32(data[offset + j]));
+                result[offset + j] = from_f32(acc[j]);
+            }
         }
     }
 

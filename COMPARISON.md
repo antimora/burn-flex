@@ -472,7 +472,7 @@ All benchmarks on Apple M3 Max, default features enabled.
 | Pooling          | **1.2-3.1x faster**       | Unified 3D, better parallelism            |
 | Interpolation    | **1.2-3.6x faster**       | Direct computation vs intermediates       |
 | Reductions       | **1.2-3.9x faster**       | Zero-alloc single-pass                    |
-| Cumulative       | **3.1-93x faster**        | Direct scan vs ndarray overhead           |
+| Cumulative       | **3.1-97x faster**        | Blocked scan, scalar accumulator          |
 | Gather/scatter   | **1.6-9.8x faster**       | Direct indexing                           |
 | Unary            | **1.1-2.7x faster**       | In-place mutation when possible           |
 | Comparisons      | **2.1-3.9x faster**       | SIMD + compact u8 output                  |
@@ -494,10 +494,7 @@ All benchmarks on Apple M3 Max, default features enabled.
 | Transposed i64 add (large) | ~7% faster        | ndarray handles non-contiguous well         |
 | Deform conv (medium)       | ~30% faster       | NdArray has optimized deform conv path      |
 | Max pool 5x5               | ~17% faster       | Specific kernel size advantage              |
-| cumsum dim=0 2D            | 5x faster         | NdArray's column-wise access pattern        |
-
-These are specific edge cases. Flex has a cumsum dim=0 regression on 2D tensors due to column-major
-access patterns (1D cumsum is 93x faster).
+These are specific edge cases where NdArray's ndarray-based internals have an advantage.
 
 ---
 
@@ -522,11 +519,6 @@ access patterns (1D cumsum is 93x faster).
 
 7. **Simpler type system**: `Flex` vs `NdArray<E, I, Q>`. No generic parameters, no element trait
    hierarchy (`FloatNdArrayElement`, `IntNdArrayElement`, `NdArrayElement`, `ExpElement`).
-
-8. **Embedded verification**: Tested on Cortex-M0+ (no atomic pointers), Cortex-M3, and WASM.
-   Edge-case robustness tested (integer overflow, rounding, zero-size).
-
-9. **Real model verification**: ALBERT and MiniLM inference confirmed correct.
 
 ---
 
