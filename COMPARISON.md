@@ -380,6 +380,7 @@ suite (MNIST model inference).
 | Dependency   | Purpose                             | Required           |
 | ------------ | ----------------------------------- | ------------------ |
 | burn-backend | Backend traits, types               | Always             |
+| burn-ir      | BackendIr trait                     | Always             |
 | burn-std     | Bytes, Shape, platform abstractions | Always             |
 | half         | f16/bf16 types                      | Always             |
 | bytemuck     | Zero-copy type casting              | Always             |
@@ -389,7 +390,7 @@ suite (MNIST model inference).
 | aligned-vec  | SIMD-aligned allocation             | Optional (`simd`)  |
 | rayon        | Parallelism                         | Optional (`rayon`) |
 
-**Total: 6 required + 3 optional**
+**Total: 7 required + 3 optional**
 
 ### burn-ndarray
 
@@ -539,15 +540,12 @@ access patterns (1D cumsum is 93x faster).
    works with burn-autodiff through the standard Burn `AutodiffBackend` wrapper (not a direct
    dependency).
 
-3. **BackendIr implementation**: burn-ndarray implements `BackendIr` for tensor handle management.
-   burn-flex does not currently implement this trait.
+3. **Tracing support**: burn-ndarray has a `tracing` feature flag. burn-flex does not.
 
-4. **Tracing support**: burn-ndarray has a `tracing` feature flag. burn-flex does not.
-
-5. **SIMD conv/pool kernels**: burn-ndarray has dedicated macerator-based SIMD kernels for
+4. **SIMD conv/pool kernels**: burn-ndarray has dedicated macerator-based SIMD kernels for
    convolution and pooling. burn-flex delegates to gemm's SIMD.
 
-6. **export_tests feature**: burn-ndarray serves as a reference implementation for some burn-cubecl
+5. **export_tests feature**: burn-ndarray serves as a reference implementation for some burn-cubecl
    kernels via `export_tests`.
 
 ---
@@ -577,5 +575,5 @@ passes the same test suite, and adds native f16/bf16 support, unlimited dimensio
 performance improvements.
 
 The only capabilities lost are optional BLAS acceleration (replaced by the gemm crate, which is
-faster in most benchmarks), the `export_tests` reference implementation feature, and the `BackendIr`
-/ `tracing` integrations (which can be added if needed).
+faster in most benchmarks), the `export_tests` reference implementation feature, and `tracing`
+support (which can be added if needed).
