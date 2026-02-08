@@ -44,6 +44,74 @@ impl QTensorOps<Flex> for Flex {
         }
     }
 
+    fn quantize_dynamic(tensor: FloatTensor<Flex>, scheme: &QuantScheme) -> QuantizedTensor<Flex> {
+        let shape = tensor.shape();
+        let tensor = tensor.to_contiguous();
+        let float_data: &[f32] = tensor.storage();
+        let (a, b) = scheme.value.range();
+        let range = b - a;
+
+        let (quantized, scales) = match scheme.level {
+            QuantLevel::Tensor => {
+                // Pass 1: find alpha = max(|min|, |max|)
+                let mut alpha: f32 = 0.0;
+                for &x in float_data {
+                    let abs = x.abs();
+                    if abs > alpha {
+                        alpha = abs;
+                    }
+                }
+                let scale = validated_scale(2.0 * alpha / range);
+                let inv_scale = 1.0 / scale;
+
+                // Pass 2: quantize
+                let quantized = float_data
+                    .iter()
+                    .map(|&x| (x * inv_scale).round().clamp(a, b) as i8)
+                    .collect::<Vec<i8>>();
+
+                (quantized, alloc::vec![scale])
+            }
+            QuantLevel::Block(block_size) => {
+                let block_elems = block_size.num_elements();
+                let num_blocks = float_data.len() / block_elems;
+                let mut scales = Vec::with_capacity(num_blocks);
+                let mut quantized = Vec::with_capacity(float_data.len());
+
+                for block in float_data.chunks(block_elems) {
+                    // Find alpha for this block
+                    let mut alpha: f32 = 0.0;
+                    for &x in block {
+                        let abs = x.abs();
+                        if abs > alpha {
+                            alpha = abs;
+                        }
+                    }
+                    let scale = validated_scale(2.0 * alpha / range);
+                    let inv_scale = 1.0 / scale;
+                    scales.push(scale);
+
+                    // Quantize this block
+                    for &x in block {
+                        quantized.push((x * inv_scale).round().clamp(a, b) as i8);
+                    }
+                }
+
+                (quantized, scales)
+            }
+        };
+
+        let bytes = Bytes::from_elems(quantized);
+        let layout = Layout::contiguous(shape);
+        let qt = FlexTensor::new(bytes, layout, DType::I8);
+
+        FlexQTensor {
+            tensor: qt,
+            scheme: scheme.with_store(QuantStore::Native),
+            scales,
+        }
+    }
+
     fn quantize(
         tensor: FloatTensor<Flex>,
         scheme: &QuantScheme,
@@ -401,6 +469,35 @@ mod tests {
         let slices = vec![Slice::new(0, Some(1), 1), Slice::new(1, Some(3), 1)];
         let sliced = Flex::q_slice(qtensor, &slices);
         assert_eq!(sliced.tensor.shape().dims, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_quantize_dynamic_roundtrip() {
+        let values = vec![-3.0f32, -1.5, 0.0, 1.5, 3.0, 4.5];
+        let tensor = FlexTensor::from_data(TensorData::new(values.clone(), [2, 3]));
+
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q8S)
+            .with_store(QuantStore::Native);
+
+        let qtensor = Flex::quantize_dynamic(tensor, &scheme);
+        assert_eq!(qtensor.tensor.shape().dims, vec![2, 3]);
+        assert_eq!(qtensor.scales.len(), 1);
+
+        // Scale should be 2 * 4.5 / 254
+        let expected_scale: f32 = 2.0 * 4.5 / 254.0;
+        assert!(
+            (qtensor.scales[0] - expected_scale).abs() < 1e-6,
+            "scale={}, expected={}",
+            qtensor.scales[0],
+            expected_scale
+        );
+
+        let result = Flex::dequantize(qtensor);
+        let result_vals: &[f32] = result.storage();
+        for (orig, deq) in values.iter().zip(result_vals.iter()) {
+            assert!((orig - deq).abs() < 0.1, "orig={orig}, dequantized={deq}");
+        }
     }
 
     #[test]

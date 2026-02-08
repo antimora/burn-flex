@@ -657,13 +657,13 @@ dequantize call, which dominates the cost.
 
 ### Quantize (float to i8)
 
-| Size | Flex    | NdArray | Speedup | Flex Mem | NdArray Mem |
-| ---- | ------- | ------- | ------- | -------- | ----------- |
-| 4K   | 35.1 us | 11.4 us | 0.3x    | 21 KB    | 103 KB      |
-| 64K  | 526 us  | 168 us  | 0.3x    | 328 KB   | 1.6 MB      |
-| 1M   | 8.39 ms | 2.63 ms | 0.3x    | 5.2 MB   | 26.2 MB     |
+| Size | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| ---- | ------- | ------- | -------- | -------- | ----------- |
+| 4K   | 6.87 us | 11.4 us | **1.7x** | 4.2 KB   | 103 KB      |
+| 64K  | 106 us  | 168 us  | **1.6x** | 65.6 KB  | 1.6 MB      |
+| 1M   | 1.69 ms | 2.63 ms | **1.6x** | 1.0 MB   | 26.2 MB     |
 
-NdArray wins on quantize_dynamic (one-time cost at model load). Flex uses 5x less memory.
+Fused 2-pass implementation: one pass for min/max, one for quantize. 25x less memory than NdArray.
 
 ### Dequantize (i8 to float)
 

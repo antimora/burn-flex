@@ -57,7 +57,7 @@ memory:
 | Unary (tanh, sin) | **1.3-2.7x**       |                                         |
 | Comparisons       | **2.1-3.9x**       |                                         |
 | Int casting       | **5.0-7.6x**       |                                         |
-| Quantized ops     | **11-232x**        | Dequant 232x, q_add 117x, q_matmul 12x |
+| Quantized ops     | **1.6-232x**       | Dequant 232x, q_add 117x, quantize 1.6x |
 | Slice/narrow      | **2.1-2100x**      | Zero-copy strided views                 |
 | Unfold            | **1,200-166,000x** | Zero-copy vs full materialization       |
 | Expand            | **550-2,600x**     | Zero-copy broadcast                     |

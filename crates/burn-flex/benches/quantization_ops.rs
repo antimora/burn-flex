@@ -7,10 +7,7 @@
 
 use burn_flex::Flex;
 use burn_ndarray::NdArray;
-use burn_tensor::{
-    Tensor, TensorData, backend::Backend,
-    quantization::QTensorPrimitive,
-};
+use burn_tensor::{Tensor, TensorData, backend::Backend, quantization::QTensorPrimitive};
 use divan::{AllocProfiler, Bencher};
 
 #[global_allocator]
@@ -27,7 +24,9 @@ const MEDIUM: usize = 256 * 256; // 64K elements
 const LARGE: usize = 1024 * 1024; // 1M elements
 
 fn make_tensor<B: Backend>(size: usize) -> Tensor<B, 1> {
-    let data: Vec<f32> = (0..size).map(|i| (i % 1000) as f32 / 1000.0 - 0.5).collect();
+    let data: Vec<f32> = (0..size)
+        .map(|i| (i % 1000) as f32 / 1000.0 - 0.5)
+        .collect();
     Tensor::from_data(TensorData::new(data, [size]), &Default::default())
 }
 
@@ -39,11 +38,13 @@ fn make_matrix<B: Backend>(rows: usize, cols: usize) -> Tensor<B, 2> {
 }
 
 fn make_qtensor<B: Backend>(size: usize) -> Tensor<B, 1> {
-    make_tensor::<B>(size).quantize_dynamic(&<B as Backend>::QuantizedTensorPrimitive::default_scheme())
+    make_tensor::<B>(size)
+        .quantize_dynamic(&<B as Backend>::QuantizedTensorPrimitive::default_scheme())
 }
 
 fn make_qmatrix<B: Backend>(rows: usize, cols: usize) -> Tensor<B, 2> {
-    make_matrix::<B>(rows, cols).quantize_dynamic(&<B as Backend>::QuantizedTensorPrimitive::default_scheme())
+    make_matrix::<B>(rows, cols)
+        .quantize_dynamic(&<B as Backend>::QuantizedTensorPrimitive::default_scheme())
 }
 
 macro_rules! bench_backend {
