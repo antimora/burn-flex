@@ -192,6 +192,68 @@ macro_rules! bench_backend {
                     bencher.bench(|| qt.clone().permute([1, 0]));
                 }
             }
+
+            #[divan::bench_group(name = "q_argmax")]
+            mod q_argmax {
+                use super::*;
+
+                #[divan::bench]
+                fn medium_256x256(bencher: Bencher) {
+                    let qt = make_qmatrix::<B>(256, 256);
+                    bencher.bench(|| qt.clone().argmax(1));
+                }
+
+                #[divan::bench]
+                fn large_1024x1024(bencher: Bencher) {
+                    let qt = make_qmatrix::<B>(1024, 1024);
+                    bencher.bench(|| qt.clone().argmax(1));
+                }
+            }
+
+            #[divan::bench_group(name = "q_argmin")]
+            mod q_argmin {
+                use super::*;
+
+                #[divan::bench]
+                fn medium_256x256(bencher: Bencher) {
+                    let qt = make_qmatrix::<B>(256, 256);
+                    bencher.bench(|| qt.clone().argmin(1));
+                }
+
+                #[divan::bench]
+                fn large_1024x1024(bencher: Bencher) {
+                    let qt = make_qmatrix::<B>(1024, 1024);
+                    bencher.bench(|| qt.clone().argmin(1));
+                }
+            }
+
+            #[divan::bench_group(name = "q_gather")]
+            mod q_gather {
+                use super::*;
+                use burn_tensor::Tensor;
+
+                fn make_indices<B: Backend>(
+                    rows: usize,
+                    cols: usize,
+                ) -> Tensor<B, 2, burn_tensor::Int> {
+                    let data: Vec<i64> = (0..rows * cols).map(|i| (i % cols) as i64).collect();
+                    Tensor::from_data(TensorData::new(data, [rows, cols]), &Default::default())
+                }
+
+                #[divan::bench]
+                fn medium_256x256(bencher: Bencher) {
+                    let qt = make_qmatrix::<B>(256, 256);
+                    let indices = make_indices::<B>(256, 256);
+                    bencher.bench(|| qt.clone().gather(1, indices.clone()));
+                }
+
+                #[divan::bench]
+                fn large_1024x1024(bencher: Bencher) {
+                    let qt = make_qmatrix::<B>(1024, 1024);
+                    let indices = make_indices::<B>(1024, 1024);
+                    bencher.bench(|| qt.clone().gather(1, indices.clone()));
+                }
+            }
         }
     };
 }

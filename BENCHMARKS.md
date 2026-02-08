@@ -708,6 +708,35 @@ The hot path for every quantized operation during inference.
 
 Flex: true zero-copy (only metadata allocated). NdArray copies the entire tensor.
 
+### q_argmax (operates on i8 directly)
+
+| Size      | Flex   | NdArray  | Speedup  | Flex Mem | NdArray Mem |
+| --------- | ------ | -------- | -------- | -------- | ----------- |
+| 256x256   | 35 us  | 102 us   | **2.9x** | 2.2 KB   | 131 KB      |
+| 1024x1024 | 558 us | 1.68 ms  | **3.0x** | 8.4 KB   | 2.1 MB      |
+
+Flex skips dequantization entirely (symmetric quant preserves element ordering). NdArray
+dequantizes to f32 first, then finds the argmax.
+
+### q_argmin (operates on i8 directly)
+
+| Size      | Flex   | NdArray  | Speedup  | Flex Mem | NdArray Mem |
+| --------- | ------ | -------- | -------- | -------- | ----------- |
+| 256x256   | 35 us  | 116 us   | **3.3x** | 2.2 KB   | 131 KB      |
+| 1024x1024 | 561 us | 1.70 ms  | **3.0x** | 8.4 KB   | 2.1 MB      |
+
+Same optimization as q_argmax.
+
+### q_gather (operates on i8 directly for tensor-level quant)
+
+| Size      | Flex   | NdArray  | Speedup  | Flex Mem | NdArray Mem |
+| --------- | ------ | -------- | -------- | -------- | ----------- |
+| 256x256   | 58 us  | 176 us   | **3.0x** | 65.8 KB  | 1.1 MB      |
+| 1024x1024 | 181 us | 2.73 ms  | **15x**  | 1.0 MB   | 17.8 MB     |
+
+Flex gathers directly on i8 data (single global scale is unchanged). NdArray dequantizes,
+gathers on f32, then requantizes. 16x less memory at 1M scale.
+
 ---
 
 ## Running Benchmarks
