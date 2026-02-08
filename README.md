@@ -30,8 +30,8 @@ is thread-safe by design.
 - **Parallel Execution**: Optional rayon for large tensors
 - **Quantization**: Full quantize/dequantize support with per-tensor and per-block symmetric
   schemes. All ~40 quantized ops (arithmetic, trig, reductions, sorting, etc.) work out of the box.
-  Layout ops on quantized tensors (permute, flip, expand, slice, select) are zero-copy. No
-  intermediate abstractions: applies `clamp(round(x/scale), a, b)` and `scale * x_q` directly.
+  Layout ops on quantized tensors (permute, flip, expand, slice, select) are zero-copy. Stores
+  scales separately for direct `scale * x_q` dequantization (135-232x faster than NdArray).
 - **Dtype Support**: f32, f64, f16 (native), bf16 (via f32 conversion), i8-i64, u8-u64
 - **Built on Burn**: Leverages Burn's native infrastructure (`Bytes`, `Shape`, `TensorData`,
   `Element` trait) from burn-backend and burn-std
@@ -57,6 +57,7 @@ memory:
 | Unary (tanh, sin) | **1.3-2.7x**       |                                         |
 | Comparisons       | **2.1-3.9x**       |                                         |
 | Int casting       | **5.0-7.6x**       |                                         |
+| Quantized ops     | **11-232x**        | Dequant 232x, q_add 117x, q_matmul 12x |
 | Slice/narrow      | **2.1-2100x**      | Zero-copy strided views                 |
 | Unfold            | **1,200-166,000x** | Zero-copy vs full materialization       |
 | Expand            | **550-2,600x**     | Zero-copy broadcast                     |

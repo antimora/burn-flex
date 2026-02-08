@@ -94,3 +94,7 @@ harness = false
 [[bench]]
 name = "deform_conv_ops"
 harness = false
+
+[[bench]]
+name = "quantization_ops"
+harness = false

@@ -649,6 +649,67 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ---
 
+## Quantized Tensor Operations
+
+All quantized ops (except layout ops) go through a dequantize-op-quantize cycle. Flex stores scales
+separately and applies `scale * x_q` directly; NdArray reparses `QuantizedBytes` on every
+dequantize call, which dominates the cost.
+
+### Quantize (float to i8)
+
+| Size | Flex    | NdArray | Speedup | Flex Mem | NdArray Mem |
+| ---- | ------- | ------- | ------- | -------- | ----------- |
+| 4K   | 35.1 us | 11.4 us | 0.3x    | 21 KB    | 103 KB      |
+| 64K  | 526 us  | 168 us  | 0.3x    | 328 KB   | 1.6 MB      |
+| 1M   | 8.39 ms | 2.63 ms | 0.3x    | 5.2 MB   | 26.2 MB     |
+
+NdArray wins on quantize_dynamic (one-time cost at model load). Flex uses 5x less memory.
+
+### Dequantize (i8 to float)
+
+| Size | Flex    | NdArray  | Speedup    | Flex Mem | NdArray Mem |
+| ---- | ------- | -------- | ---------- | -------- | ----------- |
+| 4K   | 378 ns  | 51.2 us  | **135x**   | 16.5 KB  | 28.8 KB     |
+| 64K  | 3.75 us | 802 us   | **214x**   | 262 KB   | 459 KB      |
+| 1M   | 55.5 us | 12.87 ms | **232x**   | 4.2 MB   | 7.3 MB      |
+
+The hot path for every quantized operation during inference.
+
+### q_add (dequant + add + requant)
+
+| Size | Flex   | NdArray  | Speedup    | Flex Mem | NdArray Mem |
+| ---- | ------ | -------- | ---------- | -------- | ----------- |
+| 4K   | 1.2 us | 102 us   | **85x**    | 33 KB    | 91 KB       |
+| 64K  | 15.5 us | 1.64 ms | **106x**   | 525 KB   | 1.4 MB      |
+| 1M   | 223 us | 26.1 ms  | **117x**   | 8.4 MB   | 23.1 MB     |
+
+### q_matmul (dequant + matmul + requant)
+
+| Size    | Flex   | NdArray  | Speedup  | Flex Mem | NdArray Mem |
+| ------- | ------ | -------- | -------- | -------- | ----------- |
+| 64x64   | 7.1 us | 141 us   | **20x**  | 67 KB    | 140 KB      |
+| 256x256 | 173 us | 1.92 ms  | **11x**  | 1.0 MB   | 2.2 MB      |
+| 512x512 | 642 us | 8.0 ms   | **12x**  | 4.2 MB   | 8.9 MB      |
+
+### q_sum (dequant + sum)
+
+| Size | Flex   | NdArray  | Speedup  | Flex Mem | NdArray Mem |
+| ---- | ------ | -------- | -------- | -------- | ----------- |
+| 4K   | 766 ns | 50.9 us  | **66x**  | 16.6 KB  | 45.3 KB     |
+| 64K  | 11.0 us | 812 us  | **74x**  | 262 KB   | 721 KB      |
+| 1M   | 140 us | 12.9 ms  | **92x**  | 4.2 MB   | 11.5 MB     |
+
+### q_permute (zero-copy layout op)
+
+| Size      | Flex  | NdArray | Speedup    | Flex Mem | NdArray Mem |
+| --------- | ----- | ------- | ---------- | -------- | ----------- |
+| 256x256   | 57 ns | 3.02 us | **53x**    | 68 B     | 131 KB      |
+| 1024x1024 | 68 ns | 28.5 us | **419x**   | 68 B     | 2.1 MB      |
+
+Flex: true zero-copy (only metadata allocated). NdArray copies the entire tensor.
+
+---
+
 ## Running Benchmarks
 
 ```bash
@@ -667,4 +728,5 @@ cargo bench --bench conv_transpose_ops
 cargo bench --bench interpolate_ops
 cargo bench --bench cross_unfold_ops
 cargo bench --bench deform_conv_ops
+cargo bench --bench quantization_ops
 ```
