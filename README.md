@@ -28,6 +28,10 @@ is thread-safe by design.
 - **Matrix Multiplication**: Optimized via [gemm](https://crates.io/crates/gemm) with native f16
   support (1.3-3.4x faster)
 - **Parallel Execution**: Optional rayon for large tensors
+- **Quantization**: Full quantize/dequantize support with per-tensor and per-block symmetric
+  schemes. All ~40 quantized ops (arithmetic, trig, reductions, sorting, etc.) work out of the box.
+  Layout ops on quantized tensors (permute, flip, expand, slice, select) are zero-copy. No
+  intermediate abstractions: applies `clamp(round(x/scale), a, b)` and `scale * x_q` directly.
 - **Dtype Support**: f32, f64, f16 (native), bf16 (via f32 conversion), i8-i64, u8-u64
 - **Built on Burn**: Leverages Burn's native infrastructure (`Bytes`, `Shape`, `TensorData`,
   `Element` trait) from burn-backend and burn-std
