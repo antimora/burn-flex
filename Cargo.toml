@@ -25,7 +25,7 @@ bytemuck = { version = "1", features = ["derive"] }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 
 gemm = "0.18"
-macerator = { version = "0.2" }
+macerator = { version = "0.3.0" }
 aligned-vec = { version = "0.6" }
 
 # benchmarks

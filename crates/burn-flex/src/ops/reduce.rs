@@ -360,7 +360,7 @@ pub fn prod_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 /// Max of all elements, returning a scalar tensor of shape [1].
 pub fn max(tensor: FlexTensor) -> FlexTensor {
     match tensor.dtype() {
-        DType::F32 => max_impl::<f32>(&tensor),
+        DType::F32 => max_f32_reduce(&tensor),
         DType::F64 => max_impl::<f64>(&tensor),
         DType::F16 => reduce_scalar_half(
             &tensor,
@@ -387,7 +387,7 @@ pub fn max(tensor: FlexTensor) -> FlexTensor {
 /// Min of all elements, returning a scalar tensor of shape [1].
 pub fn min(tensor: FlexTensor) -> FlexTensor {
     match tensor.dtype() {
-        DType::F32 => min_impl::<f32>(&tensor),
+        DType::F32 => min_f32_reduce(&tensor),
         DType::F64 => min_impl::<f64>(&tensor),
         DType::F16 => {
             reduce_scalar_half(&tensor, f32::min, f32::INFINITY, f16::to_f32, f16::from_f32)
@@ -404,6 +404,87 @@ pub fn min(tensor: FlexTensor) -> FlexTensor {
         DType::I32 => min_impl::<i32>(&tensor),
         DType::I64 => min_impl::<i64>(&tensor),
         _ => panic!("min: unsupported dtype {:?}", tensor.dtype()),
+    }
+}
+
+fn max_f32_reduce(tensor: &FlexTensor) -> FlexTensor {
+    let result = match tensor.layout().contiguous_offsets() {
+        Some((start, end)) => {
+            let data: &[f32] = tensor.storage();
+            max_f32_contiguous(&data[start..end])
+        }
+        None => {
+            let data: &[f32] = tensor.storage();
+            let elem_count = tensor.layout().num_elements();
+            if data.len() == elem_count {
+                // Non-contiguous but uses all elements (e.g., transposed)
+                max_f32_contiguous(data)
+            } else {
+                StridedIter::new(tensor.layout())
+                    .map(|idx| data[idx])
+                    .reduce(|a, b| if a >= b { a } else { b })
+                    .expect("max: tensor must not be empty")
+            }
+        }
+    };
+
+    let bytes = Bytes::from_elems(vec![result]);
+    FlexTensor::new(bytes, Layout::contiguous(Shape::from(vec![1])), DType::F32)
+}
+
+#[inline]
+fn max_f32_contiguous(data: &[f32]) -> f32 {
+    #[cfg(feature = "simd")]
+    {
+        kernels::max_f32(data)
+    }
+
+    #[cfg(not(feature = "simd"))]
+    {
+        data.iter()
+            .copied()
+            .reduce(|a, b| if a >= b { a } else { b })
+            .expect("max: tensor must not be empty")
+    }
+}
+
+fn min_f32_reduce(tensor: &FlexTensor) -> FlexTensor {
+    let result = match tensor.layout().contiguous_offsets() {
+        Some((start, end)) => {
+            let data: &[f32] = tensor.storage();
+            min_f32_contiguous(&data[start..end])
+        }
+        None => {
+            let data: &[f32] = tensor.storage();
+            let elem_count = tensor.layout().num_elements();
+            if data.len() == elem_count {
+                min_f32_contiguous(data)
+            } else {
+                StridedIter::new(tensor.layout())
+                    .map(|idx| data[idx])
+                    .reduce(|a, b| if a <= b { a } else { b })
+                    .expect("min: tensor must not be empty")
+            }
+        }
+    };
+
+    let bytes = Bytes::from_elems(vec![result]);
+    FlexTensor::new(bytes, Layout::contiguous(Shape::from(vec![1])), DType::F32)
+}
+
+#[inline]
+fn min_f32_contiguous(data: &[f32]) -> f32 {
+    #[cfg(feature = "simd")]
+    {
+        kernels::min_f32(data)
+    }
+
+    #[cfg(not(feature = "simd"))]
+    {
+        data.iter()
+            .copied()
+            .reduce(|a, b| if a <= b { a } else { b })
+            .expect("min: tensor must not be empty")
     }
 }
 
@@ -677,7 +758,7 @@ fn reduce_middle_dim_f32(
     {
         // Use aligned allocation for optimal SIMD scatter-add
         let mut result = aligned::alloc_aligned_zeroed::<f32>(out_size);
-        kernels::scatter_add_batched_f32(
+        kernels::scatter_add_batched(
             &data[start_offset..],
             &mut result,
             outer_size,

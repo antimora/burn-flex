@@ -3,7 +3,7 @@
 All benchmarks run on Apple M3 Max, comparing burn-flex against burn-ndarray. Default features
 enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
-**Date**: 2026-02-07
+**Date**: 2026-02-08
 
 ## How to Read
 
@@ -237,21 +237,21 @@ contiguous chunks directly.
 
 ### Full Tensor Max
 
-| Size | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| ---- | ------- | ------- | -------- | -------- | ----------- |
-| 1K   | 629 ns  | 851 ns  | **1.4x** | 100 B    | 8.3 KB      |
-| 64K  | 37.5 us | 43.4 us | **1.2x** | 100 B    | 524 KB      |
-| 1M   | 566 us  | 679 us  | **1.2x** | 100 B    | 8.4 MB      |
+| Size | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| ---- | ------ | ------- | -------- | -------- | ----------- |
+| 1K   | 267 ns | 847 ns  | **3.2x** | 100 B    | 8.3 KB      |
+| 64K  | 8.9 us | 45.4 us | **5.1x** | 100 B    | 524 KB      |
+| 1M   | 142 us | 697 us  | **4.9x** | 100 B    | 8.4 MB      |
 
-Flex: zero-alloc single-pass reduce. NdArray: allocates a copy via `into_owned`.
+Flex: zero-alloc SIMD reduce via macerator `VOrd`+`ReduceMax`. NdArray: allocates a copy via `into_owned`.
 
 ### Full Tensor Min
 
-| Size | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| ---- | ------- | ------- | -------- | -------- | ----------- |
-| 1K   | 686 ns  | 838 ns  | **1.2x** | 100 B    | 8.3 KB      |
-| 64K  | 35.6 us | 43.4 us | **1.2x** | 100 B    | 524 KB      |
-| 1M   | 602 us  | 680 us  | **1.1x** | 100 B    | 8.4 MB      |
+| Size | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| ---- | ------ | ------- | -------- | -------- | ----------- |
+| 1K   | 267 ns | 831 ns  | **3.1x** | 100 B    | 8.3 KB      |
+| 64K  | 9.2 us | 46.2 us | **5.0x** | 100 B    | 524 KB      |
+| 1M   | 151 us | 703 us  | **4.6x** | 100 B    | 8.4 MB      |
 
 ### Int Max
 

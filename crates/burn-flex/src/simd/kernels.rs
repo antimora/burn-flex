@@ -6,14 +6,13 @@
 //! - wasm32 (SIMD128)
 //! - Scalar fallback for embedded/other platforms
 
-use macerator::{Arch, Simd, WithSimd, vload_unaligned, vstore_unaligned};
+#[cfg(target_arch = "x86_64")]
+use core::iter::Sum;
+use core::ops::AddAssign;
 
-/// Get the architecture-specific SIMD dispatcher.
-/// This detects CPU features at runtime.
-#[inline]
-fn arch() -> Arch {
-    Arch::new()
-}
+#[cfg(target_arch = "x86_64")]
+use macerator::ReduceAdd;
+use macerator::{ReduceMax, ReduceMin, Simd, VAdd, VOrd, vload_unaligned, vstore_unaligned};
 
 // ============================================================================
 // Sum reduction
@@ -26,12 +25,17 @@ fn arch() -> Arch {
 /// due to lower overhead.
 #[inline]
 pub fn sum_f32(data: &[f32]) -> f32 {
-    unrolled_sum_f32(data)
+    #[cfg(target_arch = "x86_64")]
+    let res = macerator_sum(data);
+    #[cfg(not(target_arch = "x86_64"))]
+    let res = unrolled_sum_f32(data);
+    res
 }
 
 /// 8-fold unrolled sum that LLVM auto-vectorizes.
 /// This is the same approach used by ndarray's `unrolled_fold`.
 #[inline]
+#[cfg(not(target_arch = "x86_64"))]
 fn unrolled_sum_f32(mut xs: &[f32]) -> f32 {
     let (mut p0, mut p1, mut p2, mut p3, mut p4, mut p5, mut p6, mut p7) =
         (0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -58,6 +62,20 @@ fn unrolled_sum_f32(mut xs: &[f32]) -> f32 {
     sum
 }
 
+#[cfg(target_arch = "x86_64")]
+#[macerator::with_simd]
+fn macerator_sum<S: Simd, F: VAdd + Sum + ReduceAdd>(mut xs: &[F]) -> F {
+    let lanes = F::lanes::<S>();
+    let mut sum = F::default().splat::<S>();
+
+    while xs.len() >= lanes {
+        sum += unsafe { vload_unaligned(xs.as_ptr()) };
+        xs = &xs[lanes..];
+    }
+
+    sum.reduce_add() + xs.iter().copied().sum()
+}
+
 // ============================================================================
 // Scatter-add for dimension reductions
 // ============================================================================
@@ -71,145 +89,77 @@ fn unrolled_sum_f32(mut xs: &[f32]) -> f32 {
 /// * `num_rows` - Number of rows to sum
 /// * `row_len` - Length of each row (columns)
 /// * `src_row_stride` - Stride between source rows
-#[inline]
-pub fn scatter_add_f32(
-    src: &[f32],
-    dst: &mut [f32],
+#[macerator::with_simd]
+pub fn scatter_add_f32<S: Simd, F: VAdd + AddAssign>(
+    src: &[F],
+    dst: &mut [F],
     num_rows: usize,
     row_len: usize,
     src_row_stride: usize,
 ) {
-    arch().dispatch(ScatterAddF32 {
-        src,
-        dst,
-        num_rows,
-        row_len,
-        src_row_stride,
-    });
-}
+    let lanes = F::lanes::<S>();
 
-struct ScatterAddF32<'a> {
-    src: &'a [f32],
-    dst: &'a mut [f32],
-    num_rows: usize,
-    row_len: usize,
-    src_row_stride: usize,
-}
+    for row in 0..num_rows {
+        let row_start = row * src_row_stride;
+        let row_data = &src[row_start..row_start + row_len];
 
-impl WithSimd for ScatterAddF32<'_> {
-    type Output = ();
+        let simd_len = row_len / lanes * lanes;
 
-    #[inline(always)]
-    fn with_simd<S: Simd>(self) -> Self::Output {
-        let Self {
-            src,
-            dst,
-            num_rows,
-            row_len,
-            src_row_stride,
-        } = self;
-
-        let lanes = S::lanes32();
-
-        for row in 0..num_rows {
-            let row_start = row * src_row_stride;
-            let row_data = &src[row_start..row_start + row_len];
-
-            let simd_len = row_len / lanes * lanes;
-
-            // SIMD accumulate
-            let mut i = 0;
-            while i < simd_len {
-                unsafe {
-                    let s = vload_unaligned::<S, f32>(row_data.as_ptr().add(i));
-                    let d = vload_unaligned::<S, f32>(dst.as_ptr().add(i));
-                    vstore_unaligned::<S, f32>(dst.as_mut_ptr().add(i), d + s);
-                }
-                i += lanes;
+        // SIMD accumulate
+        let mut i = 0;
+        while i < simd_len {
+            unsafe {
+                let s = vload_unaligned(row_data.as_ptr().add(i));
+                let d = vload_unaligned(dst.as_ptr().add(i));
+                vstore_unaligned::<S, _>(dst.as_mut_ptr().add(i), d + s);
             }
+            i += lanes;
+        }
 
-            // Scalar tail
-            for j in simd_len..row_len {
-                dst[j] += row_data[j];
-            }
+        // Scalar tail
+        for j in simd_len..row_len {
+            dst[j] += row_data[j];
         }
     }
 }
 
 /// Batched scatter-add for middle-dim reductions.
 /// For tensors like [B, M, K] reducing dim=1.
-#[inline]
-pub fn scatter_add_batched_f32(
-    src: &[f32],
-    dst: &mut [f32],
+#[macerator::with_simd]
+pub fn scatter_add_batched<S: Simd, F: VAdd + AddAssign>(
+    src: &[F],
+    dst: &mut [F],
     num_batches: usize,
     num_rows: usize,
     row_len: usize,
     batch_stride: usize,
     row_stride: usize,
 ) {
-    arch().dispatch(ScatterAddBatchedF32 {
-        src,
-        dst,
-        num_batches,
-        num_rows,
-        row_len,
-        batch_stride,
-        row_stride,
-    });
-}
+    let lanes = F::lanes::<S>();
 
-struct ScatterAddBatchedF32<'a> {
-    src: &'a [f32],
-    dst: &'a mut [f32],
-    num_batches: usize,
-    num_rows: usize,
-    row_len: usize,
-    batch_stride: usize,
-    row_stride: usize,
-}
+    for batch in 0..num_batches {
+        let batch_src_start = batch * batch_stride;
+        let batch_dst_start = batch * row_len;
+        let batch_dst = &mut dst[batch_dst_start..batch_dst_start + row_len];
 
-impl WithSimd for ScatterAddBatchedF32<'_> {
-    type Output = ();
+        for row in 0..num_rows {
+            let row_start = batch_src_start + row * row_stride;
+            let row_data = &src[row_start..row_start + row_len];
 
-    #[inline(always)]
-    fn with_simd<S: Simd>(self) -> Self::Output {
-        let Self {
-            src,
-            dst,
-            num_batches,
-            num_rows,
-            row_len,
-            batch_stride,
-            row_stride,
-        } = self;
+            let simd_len = row_len / lanes * lanes;
 
-        let lanes = S::lanes32();
-
-        for batch in 0..num_batches {
-            let batch_src_start = batch * batch_stride;
-            let batch_dst_start = batch * row_len;
-            let batch_dst = &mut dst[batch_dst_start..batch_dst_start + row_len];
-
-            for row in 0..num_rows {
-                let row_start = batch_src_start + row * row_stride;
-                let row_data = &src[row_start..row_start + row_len];
-
-                let simd_len = row_len / lanes * lanes;
-
-                let mut i = 0;
-                while i < simd_len {
-                    unsafe {
-                        let s = vload_unaligned::<S, f32>(row_data.as_ptr().add(i));
-                        let d = vload_unaligned::<S, f32>(batch_dst.as_ptr().add(i));
-                        vstore_unaligned::<S, f32>(batch_dst.as_mut_ptr().add(i), d + s);
-                    }
-                    i += lanes;
+            let mut i = 0;
+            while i < simd_len {
+                unsafe {
+                    let s = vload_unaligned(row_data.as_ptr().add(i));
+                    let d = vload_unaligned(batch_dst.as_ptr().add(i));
+                    vstore_unaligned::<S, _>(batch_dst.as_mut_ptr().add(i), d + s);
                 }
+                i += lanes;
+            }
 
-                for j in simd_len..row_len {
-                    batch_dst[j] += row_data[j];
-                }
+            for j in simd_len..row_len {
+                batch_dst[j] += row_data[j];
             }
         }
     }
@@ -228,8 +178,71 @@ pub fn sum_rows_f32(src: &[f32], dst: &mut [f32], num_rows: usize, row_len: usiz
     for (row, dst_val) in dst.iter_mut().enumerate().take(num_rows) {
         let row_start = row * row_len;
         let row_data = &src[row_start..row_start + row_len];
-        *dst_val = unrolled_sum_f32(row_data);
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            *dst_val = unrolled_sum_f32(row_data);
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            *dst_val = macerator_sum(row_data);
+        }
     }
+}
+
+// ============================================================================
+// Max/Min reduction
+// ============================================================================
+
+/// Find the maximum element in a f32 slice using SIMD.
+#[inline]
+pub fn max_f32(data: &[f32]) -> f32 {
+    macerator_max(data, f32::NEG_INFINITY)
+}
+
+/// Find the minimum element in a f32 slice using SIMD.
+#[inline]
+pub fn min_f32(data: &[f32]) -> f32 {
+    macerator_min(data, f32::INFINITY)
+}
+
+#[macerator::with_simd]
+fn macerator_max<S: Simd, F: VOrd + ReduceMax + PartialOrd>(mut xs: &[F], init: F) -> F {
+    let lanes = F::lanes::<S>();
+    let mut acc = init.splat::<S>();
+
+    while xs.len() >= lanes {
+        let v = unsafe { vload_unaligned(xs.as_ptr()) };
+        acc = acc.max(v);
+        xs = &xs[lanes..];
+    }
+
+    let mut result = acc.reduce_max();
+    for &x in xs {
+        if x > result {
+            result = x;
+        }
+    }
+    result
+}
+
+#[macerator::with_simd]
+fn macerator_min<S: Simd, F: VOrd + ReduceMin + PartialOrd>(mut xs: &[F], init: F) -> F {
+    let lanes = F::lanes::<S>();
+    let mut acc = init.splat::<S>();
+
+    while xs.len() >= lanes {
+        let v = unsafe { vload_unaligned(xs.as_ptr()) };
+        acc = acc.min(v);
+        xs = &xs[lanes..];
+    }
+
+    let mut result = acc.reduce_min();
+    for &x in xs {
+        if x < result {
+            result = x;
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -284,5 +297,41 @@ mod tests {
         sum_rows_f32(&src, &mut dst, 3, 4);
 
         assert_eq!(dst, vec![10.0, 26.0, 42.0]);
+    }
+
+    #[test]
+    fn test_max_f32() {
+        let data: Vec<f32> = (0..1000).map(|i| i as f32).collect();
+        assert_eq!(max_f32(&data), 999.0);
+    }
+
+    #[test]
+    fn test_max_f32_small() {
+        let data = vec![3.0, 1.0, 4.0, 1.0, 5.0];
+        assert_eq!(max_f32(&data), 5.0);
+    }
+
+    #[test]
+    fn test_max_f32_negative() {
+        let data = vec![-3.0, -1.0, -4.0, -1.0, -5.0];
+        assert_eq!(max_f32(&data), -1.0);
+    }
+
+    #[test]
+    fn test_min_f32() {
+        let data: Vec<f32> = (0..1000).map(|i| i as f32).collect();
+        assert_eq!(min_f32(&data), 0.0);
+    }
+
+    #[test]
+    fn test_min_f32_small() {
+        let data = vec![3.0, 1.0, 4.0, 1.0, 5.0];
+        assert_eq!(min_f32(&data), 1.0);
+    }
+
+    #[test]
+    fn test_min_f32_negative() {
+        let data = vec![-3.0, -1.0, -4.0, -1.0, -5.0];
+        assert_eq!(min_f32(&data), -5.0);
     }
 }

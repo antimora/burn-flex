@@ -136,6 +136,18 @@ pub fn sqrt(tensor: FlexTensor) -> FlexTensor {
 
 /// Absolute value (float)
 pub fn abs(tensor: FlexTensor) -> FlexTensor {
+    #[cfg(feature = "simd")]
+    if tensor.dtype() == DType::F32
+        && tensor.is_unique()
+        && tensor.layout().is_contiguous()
+        && tensor.layout().start_offset() == 0
+    {
+        let n = tensor.layout().num_elements();
+        let mut tensor = tensor;
+        let storage: &mut [f32] = tensor.storage_mut();
+        crate::simd::abs_inplace_f32(&mut storage[..n]);
+        return tensor;
+    }
     unary_op(tensor, f32::abs, f64::abs)
 }
 
@@ -155,6 +167,18 @@ pub fn int_abs(tensor: FlexTensor) -> FlexTensor {
 
 /// Reciprocal: 1/x
 pub fn recip(tensor: FlexTensor) -> FlexTensor {
+    #[cfg(feature = "simd")]
+    if tensor.dtype() == DType::F32
+        && tensor.is_unique()
+        && tensor.layout().is_contiguous()
+        && tensor.layout().start_offset() == 0
+    {
+        let n = tensor.layout().num_elements();
+        let mut tensor = tensor;
+        let storage: &mut [f32] = tensor.storage_mut();
+        crate::simd::recip_inplace_f32(&mut storage[..n]);
+        return tensor;
+    }
     unary_op(tensor, |x| 1.0 / x, |x| 1.0 / x)
 }
 

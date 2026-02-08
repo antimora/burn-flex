@@ -360,20 +360,16 @@ Portable SIMD via macerator, with automatic dispatch per architecture (NEON, AVX
 a scalar fallback module for unsupported platforms:
 
 ```rust
-use macerator::{Arch, Simd, WithSimd, vload_unaligned, vstore_unaligned};
+use macerator::{Simd, with_simd, vload_unaligned, vstore_unaligned};
 
-struct MyKernel<'a> { src: &'a [f32], dst: &'a mut [f32] }
-
-impl WithSimd for MyKernel<'_> {
-    type Output = ();
-    fn with_simd<S: Simd>(self) -> Self::Output {
-        let lanes = S::lanes32();
-        // load/store vectors, use operator overloading for arithmetic
-    }
+#[with_simd]
+fn my_kernel<S: Simd>(src: &[f32], dst: &mut [f32]) {
+    let lanes = f32::lanes::<S>();
+    // load/store vectors, use operator overloading for arithmetic
 }
 
 // Dispatch: detects CPU features at runtime
-Arch::new().dispatch(MyKernel { src, dst });
+my_kernel(src, dst);
 ```
 
 The `simd/` module is organized as:

@@ -23,9 +23,9 @@ mod portable;
 
 #[cfg(feature = "simd")]
 pub use portable::{
-    CmpOp, add_inplace_f32, bool_and_inplace_u8, bool_and_u8, bool_not_inplace_u8, bool_not_u8,
-    bool_or_inplace_u8, bool_or_u8, bool_xor_inplace_u8, bool_xor_u8, cmp_f32, cmp_scalar_f32,
-    div_inplace_f32, mul_inplace_f32, sub_inplace_f32,
+    CmpOp, abs_inplace_f32, add_inplace_f32, bool_and_inplace_u8, bool_and_u8, bool_not_inplace_u8,
+    bool_not_u8, bool_or_inplace_u8, bool_or_u8, bool_xor_inplace_u8, bool_xor_u8, cmp_f32,
+    cmp_scalar_f32, div_inplace_f32, mul_inplace_f32, recip_inplace_f32, sub_inplace_f32,
 };
 
 // When simd feature disabled: use scalar fallback (bool ops + CmpOp only)
