@@ -15,10 +15,10 @@ is thread-safe by design.
 
 - **Zero-Copy Operations**: Many operations return strided views without copying data:
   - `transpose`, `permute`, `flip`, `narrow`, `slice`
-  - `unfold` (sliding windows as strided view, 1,300-156,000x faster than NdArray)
+  - `unfold` (sliding windows as strided view instead of materialization)
   - `expand` (broadcast via zero strides)
 - **Arc-based Copy-on-Write**: O(1) tensor cloning with automatic COW semantics. In-place mutation
-  when uniquely owned (2.6-4.2x faster binary ops).
+  when uniquely owned.
 - **Convolutions**: Unified 3D implementation with im2col + gemm. Conv1d/2d delegate to conv3d.
   Supports groups, dilation, padding.
 - **Pooling**: Max pool, avg pool, adaptive avg pool. All via unified 3D with backward pass support.
@@ -29,41 +29,66 @@ is thread-safe by design.
   - wasm32: SIMD128
   - Embedded/other: Scalar fallback
 - **Matrix Multiplication**: Optimized via [gemm](https://crates.io/crates/gemm) with native f16
-  support (1.3-3.4x faster)
+  support
 - **Parallel Execution**: Optional rayon for large tensors
 - **Quantization**: Full quantize/dequantize support with per-tensor and per-block symmetric
   schemes. All ~40 quantized ops (arithmetic, trig, reductions, sorting, etc.) work out of the box.
   Layout ops on quantized tensors (permute, flip, expand, slice, select) are zero-copy. Stores
-  scales separately for direct `scale * x_q` dequantization (135-232x faster than NdArray).
+  scales separately for direct `scale * x_q` dequantization instead of reparsing packed bytes.
 - **Dtype Support**: f32, f64, f16 (native), bf16 (via f32 conversion), i8-i64, u8-u64
 - **Built on Burn**: Leverages Burn's native infrastructure (`Bytes`, `Shape`, `TensorData`,
   `Element` trait) from burn-backend and burn-std
 
+### Why replace burn-ndarray?
+
+burn-ndarray depends on the [ndarray](https://crates.io/crates/ndarray) crate, which has been slow
+to accept contributions and evolve.
+
+burn-flex was built as a from-scratch replacement that addresses the gaps while maintaining full
+compatibility with Burn's backend test suite.
+
 ### Performance vs burn-ndarray (Apple M3 Max)
 
-burn-flex consistently outperforms burn-ndarray across the board, often using a fraction of the
-memory:
+#### Compute Performance
 
-| Category          | Speedup            | Highlights                              |
-| ----------------- | ------------------ | --------------------------------------- |
-| Binary ops (f32)  | **2.4-3.6x**       | 3x less memory allocation               |
-| Binary ops (i64)  | **1.5-6.4x**       | Smaller tensors see bigger gains        |
-| Matmul (square)   | **1.1-3.4x**       | Up to 2.3x at 1024x1024                 |
-| Matmul (batched)  | **1.8-3.2x**       | 3.2x on multi-head attention shapes     |
-| Conv2d (3x3)      | **1.4-4.0x**       | Larger kernels and batches benefit most |
-| Conv1d            | **4.3-9.6x**       |                                         |
-| Pooling           | **1.2-3.1x**       |                                         |
-| Interpolation     | **1.2-3.6x**       | All modes: nearest, bilinear, bicubic   |
-| Reductions        | **1.6-5.1x**       | Near-zero allocation for scalar results |
-| Cumulative ops    | **3.1-93x**        | 1D cumsum: 93x faster                   |
-| Gather/scatter    | **1.9-9.7x**       |                                         |
-| Unary (tanh, sin) | **1.3-2.7x**       |                                         |
-| Comparisons       | **2.1-3.9x**       |                                         |
-| Int casting       | **5.0-7.6x**       |                                         |
-| Quantized ops     | **1.6-232x**       | Dequant 232x, q_add 117x, quantize 1.6x |
-| Slice/narrow      | **2.1-2100x**      | Zero-copy strided views                 |
-| Unfold            | **1,200-166,000x** | Zero-copy vs full materialization       |
-| Expand            | **550-2,600x**     | Zero-copy broadcast                     |
+Genuine algorithmic and library improvements (gemm over matrixmultiply, SIMD reductions, Arc COW for
+buffer reuse):
+
+| Category          | Speedup      | Highlights                              |
+| ----------------- | ------------ | --------------------------------------- |
+| Binary ops (f32)  | **2.4-3.6x** | 3x less memory allocation               |
+| Binary ops (i64)  | **1.5-6.4x** | Smaller tensors see bigger gains        |
+| Matmul (square)   | **1.1-3.4x** | Up to 2.3x at 1024x1024                 |
+| Matmul (batched)  | **1.8-3.2x** | 3.2x on multi-head attention shapes     |
+| Conv2d (3x3)      | **1.4-4.0x** | Larger kernels and batches benefit most |
+| Conv1d            | **4.3-9.6x** |                                         |
+| Pooling           | **1.2-3.1x** |                                         |
+| Interpolation     | **1.2-3.6x** | All modes: nearest, bilinear, bicubic   |
+| Reductions        | **1.6-5.1x** | Near-zero allocation for scalar results |
+| Cumulative ops    | **3.1-93x**  | 1D cumsum: 93x faster                   |
+| Gather/scatter    | **1.9-9.7x** |                                         |
+| Unary (tanh, sin) | **1.3-2.7x** |                                         |
+| Comparisons       | **2.1-3.9x** |                                         |
+| Int casting       | **5.0-7.6x** |                                         |
+| Quantize          | **1.6x**     | Fused 2-pass implementation             |
+
+#### Structural Improvements
+
+These reflect better _operation representation_, not faster computation. burn-ndarray eagerly
+materializes data for these operations; burn-flex avoids the work entirely through zero-copy views
+and separated storage layouts.
+
+| Category      | Improvement        | What changed                                                 |
+| ------------- | ------------------ | ------------------------------------------------------------ |
+| Dequantize    | **135-232x**       | Direct `scale * x_q` vs reparsing `QuantizedBytes` each call |
+| Quantized ops | **2.9-117x**       | Dominated by fast dequantize path above                      |
+| Slice/narrow  | **2.1-2,100x**     | Zero-copy strided view vs potential data copy                |
+| Unfold        | **1,200-166,000x** | O(1) strided view vs O(n) full materialization               |
+| Expand        | **550-2,600x**     | Zero-copy broadcast (stride=0) vs data copy                  |
+
+> **Note on quantization**: burn-ndarray simulates quantization by dequantizing to f32 for most
+> operations. The quantized speedups reflect the difference between simulated and native execution,
+> not equivalent algorithms running at different speeds.
 
 See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 

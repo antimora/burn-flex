@@ -5,11 +5,23 @@ to demonstrate full coverage and the architectural differences between the two.
 
 ## Executive Summary
 
-burn-flex is a from-scratch CPU backend designed to replace burn-ndarray. It passes all
-`burn-backend-tests` across all feature flag combinations, all ONNX model checks, and real model
-inference (ALBERT, MiniLM). It is 1.1x to 166,000x faster depending on the operation, uses
-significantly less memory, supports f16/bf16 natively, runs on no_std/WASM/embedded, and has no
-dimension limit.
+burn-flex is a from-scratch CPU backend built to replace burn-ndarray. The
+[ndarray](https://crates.io/crates/ndarray) crate has been slow to evolve: it lacks f16/bf16
+support, is limited to 6 dimensions, uses unsigned-only strides (preventing zero-copy flip), and
+simulates quantization rather than executing natively. burn-flex addresses all of these while
+passing the full `burn-backend-tests` suite, all ONNX model checks, and real model inference
+(ALBERT, MiniLM).
+
+Performance improvements fall into two categories:
+
+- **Compute gains** (1.1-9.7x): Better algorithms and libraries (gemm over matrixmultiply, Arc COW
+  for buffer reuse, SIMD reductions).
+- **Structural improvements** (up to 166,000x): Operations that burn-ndarray eagerly materializes
+  (unfold, expand, slice, dequantize) are represented as zero-copy views or direct lookups in
+  burn-flex, avoiding the work entirely.
+
+burn-flex uses significantly less memory, supports f16/bf16 natively, runs on no_std/WASM/embedded,
+and has no dimension limit.
 
 ---
 
@@ -461,29 +473,45 @@ burn-flex has roughly 2x the code. This is because:
 
 All benchmarks on Apple M3 Max, default features enabled.
 
-| Category         | Flex vs NdArray           | Why                                       |
-| ---------------- | ------------------------- | ----------------------------------------- |
-| Binary ops (f32) | **2.4-3.9x faster**       | Arc COW avoids allocation; 3x less memory |
-| Binary ops (i64) | **1.5-6.4x faster**       | Same COW benefits                         |
-| Matmul (square)  | **1.1-3.4x faster**       | gemm > matrixmultiply                     |
-| Matmul (batched) | **1.8-3.2x faster**       | Better batch parallelism                  |
-| Conv2d           | **1.2-4.0x faster**       | im2col+gemm vs direct                     |
-| Conv1d           | **4.3-9.6x faster**       | Unified 3D avoids overhead                |
-| Pooling          | **1.2-3.1x faster**       | Unified 3D, better parallelism            |
-| Interpolation    | **1.2-3.6x faster**       | Direct computation vs intermediates       |
-| Reductions       | **1.6-5.1x faster**       | Zero-alloc SIMD single-pass               |
-| Cumulative       | **3.1-97x faster**        | Blocked scan, scalar accumulator          |
-| Gather/scatter   | **1.6-9.8x faster**       | Direct indexing                           |
-| Unary            | **1.1-2.7x faster**       | In-place mutation when possible           |
-| Comparisons      | **2.1-3.9x faster**       | SIMD + compact u8 output                  |
-| Int cast         | **5.0-7.6x faster**       | Direct byte reinterpretation              |
-| Quantize         | **1.6x faster**           | Fused 2-pass implementation               |
-| Dequantize       | **135-232x faster**       | Direct scale multiply vs byte reparsing   |
-| Quantized ops    | **2.9-117x faster**       | Fast dequantize dominates                 |
-| Slice/narrow     | **2.1-2,100x faster**     | Zero-copy strided view                    |
-| Unfold           | **1,200-166,000x faster** | O(1) view vs O(n) copy                    |
-| Expand           | **550-2,600x faster**     | Zero-copy broadcast                       |
-| Concatenation    | **3.6-16.3x faster**      | Direct memcpy vs slice_assign             |
+### Compute Performance
+
+Genuine algorithmic and library improvements:
+
+| Category         | Flex vs NdArray      | Why                                       |
+| ---------------- | -------------------- | ----------------------------------------- |
+| Binary ops (f32) | **2.4-3.9x faster**  | Arc COW avoids allocation; 3x less memory |
+| Binary ops (i64) | **1.5-6.4x faster**  | Same COW benefits                         |
+| Matmul (square)  | **1.1-3.4x faster**  | gemm > matrixmultiply                     |
+| Matmul (batched) | **1.8-3.2x faster**  | Better batch parallelism                  |
+| Conv2d           | **1.2-4.0x faster**  | im2col+gemm vs direct                     |
+| Conv1d           | **4.3-9.6x faster**  | Unified 3D avoids overhead                |
+| Pooling          | **1.2-3.1x faster**  | Unified 3D, better parallelism            |
+| Interpolation    | **1.2-3.6x faster**  | Direct computation vs intermediates       |
+| Reductions       | **1.6-5.1x faster**  | Zero-alloc SIMD single-pass               |
+| Cumulative       | **3.1-97x faster**   | Blocked scan, scalar accumulator          |
+| Gather/scatter   | **1.6-9.8x faster**  | Direct indexing                           |
+| Unary            | **1.1-2.7x faster**  | In-place mutation when possible           |
+| Comparisons      | **2.1-3.9x faster**  | SIMD + compact u8 output                  |
+| Int cast         | **5.0-7.6x faster**  | Direct byte reinterpretation              |
+| Quantize         | **1.6x faster**      | Fused 2-pass implementation               |
+| Concatenation    | **3.6-16.3x faster** | Direct memcpy vs slice_assign             |
+
+### Structural Improvements
+
+These reflect changes in how operations are _represented and executed_, not pure compute speedups.
+burn-ndarray eagerly materializes data where burn-flex uses zero-copy views or separated storage.
+
+| Category      | Improvement        | What changed                                                 |
+| ------------- | ------------------ | ------------------------------------------------------------ |
+| Dequantize    | **135-232x**       | Direct `scale * x_q` vs reparsing `QuantizedBytes` each call |
+| Quantized ops | **2.9-117x**       | Dominated by fast dequantize path                            |
+| Slice/narrow  | **2.1-2,100x**     | Zero-copy strided view vs potential data copy                |
+| Unfold        | **1,200-166,000x** | O(1) strided view vs O(n) full materialization               |
+| Expand        | **550-2,600x**     | Zero-copy broadcast (stride=0) vs data copy                  |
+
+> **Note on quantization**: burn-ndarray simulates quantization by dequantizing to f32 for most
+> operations. The quantized speedups reflect the difference between simulated and native execution,
+> not equivalent algorithms running at different speeds.
 
 ### Where NdArray Wins
 
@@ -499,7 +527,24 @@ These are specific edge cases where NdArray's ndarray-based internals have an ad
 
 ---
 
-## 16. What burn-flex Adds Over burn-ndarray
+## 16. Why Replace burn-ndarray?
+
+The [ndarray](https://crates.io/crates/ndarray) crate has been slow to accept contributions and
+evolve. Burn's CPU backend inherits these constraints:
+
+- **No f16/bf16**: Models using half-precision weights must convert to f32. An f16 PR has been open
+  for a long time with no clear timeline.
+- **6-dimension limit**: Hard-coded in reshape macros, cannot be fixed without upstream changes.
+- **Unsigned strides**: `usize`-only strides make zero-copy flip impossible.
+- **Simulated quantization**: No native quantized storage; dequantize/requantize on every op.
+- **COW limitations**: `NdArrayStorage::Borrowed` always returns false for `is_unique()`, preventing
+  in-place mutation of externally loaded data.
+
+burn-flex was built to address these gaps without waiting on upstream. It is not intended to compete
+with CubeCL CPU, which targets optimized graph compilation. The goal is to provide a lightweight,
+portable replacement for burn-ndarray that works today.
+
+## 17. What burn-flex Adds
 
 1. **f16/bf16 support**: Native arithmetic on half-precision types. Enables running models that use
    f16 weights without conversion.
@@ -512,10 +557,10 @@ These are specific edge cases where NdArray's ndarray-based internals have an ad
 4. **Unified 3D conv/pool**: Single implementation covers 1D/2D/3D, reducing code paths and
    potential for inconsistencies.
 
-5. **Fast quantization**: 135-232x faster dequantization through separated scale storage. Zero-copy
-   layout ops on quantized tensors.
+5. **Native quantization**: Stores scales separately for direct `scale * x_q` dequantization instead
+   of reparsing packed bytes on every access. Zero-copy layout ops on quantized tensors.
 
-6. **Fewer dependencies**: 6 required deps vs 12. No ndarray, no matrixmultiply, no paste, no
+6. **Fewer dependencies**: 7 required deps vs 12. No ndarray, no matrixmultiply, no paste, no
    const-random, no BLAS bindings.
 
 7. **Simpler type system**: `Flex` vs `NdArray<E, I, Q>`. No generic parameters, no element trait
@@ -523,7 +568,7 @@ These are specific edge cases where NdArray's ndarray-based internals have an ad
 
 ---
 
-## 17. What burn-ndarray Has That burn-flex Does Not
+## 18. What burn-ndarray Has That burn-flex Does Not
 
 1. **BLAS acceleration**: Feature flags for Accelerate (macOS), OpenBLAS, and Netlib BLAS. These can
    outperform gemm for very large matmuls on specific hardware. burn-flex relies solely on the gemm
@@ -537,7 +582,7 @@ These are specific edge cases where NdArray's ndarray-based internals have an ad
 
 ---
 
-## 18. Migration Path
+## 19. Migration Path
 
 For Burn users switching from burn-ndarray to burn-flex:
 
@@ -554,12 +599,17 @@ For Burn users switching from burn-ndarray to burn-flex:
 
 ---
 
-## 19. Conclusion
+## 20. Conclusion
 
-burn-flex is a complete replacement for burn-ndarray. It implements all required Backend traits
-(FloatTensorOps, IntTensorOps, BoolTensorOps, QTensorOps, ModuleOps, ActivationOps, TransactionOps),
-passes the same test suite, and adds native f16/bf16 support, unlimited dimensions, and significant
-performance improvements.
+burn-flex is a from-scratch replacement for burn-ndarray, motivated by ndarray's lack of f16/bf16
+support, 6-dimension limit, simulated quantization, and slow pace of upstream development. It
+implements all required Backend traits (FloatTensorOps, IntTensorOps, BoolTensorOps, QTensorOps,
+ModuleOps, ActivationOps, TransactionOps) and passes the same test suite.
+
+Performance gains come in two forms: compute improvements (1.1-9.7x) from better libraries and
+algorithms, and structural improvements (up to 166,000x) from representing operations as zero-copy
+views instead of eagerly materializing data. Memory usage is significantly reduced through Arc-based
+COW and in-place mutation.
 
 The only capabilities lost are optional BLAS acceleration (replaced by the gemm crate, which is
 faster in most benchmarks) and the `export_tests` reference implementation feature.
