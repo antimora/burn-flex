@@ -541,8 +541,9 @@ evolve. Burn's CPU backend inherits these constraints:
   in-place mutation of externally loaded data.
 
 burn-flex was built to address these gaps without waiting on upstream. It is not intended to compete
-with CubeCL CPU, which targets optimized graph compilation. The goal is to provide a lightweight,
-portable replacement for burn-ndarray that works today.
+with CubeCL CPU, which targets high-performance computation through operator fusion and just-in-time
+compilation via LLVM. The goal is to provide a lightweight, portable replacement for burn-ndarray
+that works today on platforms CubeCL CPU cannot target (no_std, WASM, embedded).
 
 ## 17. What burn-flex Adds
 
