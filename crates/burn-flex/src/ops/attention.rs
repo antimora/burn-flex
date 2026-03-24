@@ -8,8 +8,8 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
-use burn_backend::ops::AttentionModuleOptions;
 use burn_backend::DType;
+use burn_backend::ops::AttentionModuleOptions;
 use burn_std::Bytes;
 use bytemuck::Pod;
 use num_traits::Float;
@@ -128,7 +128,13 @@ where
     let scores = crate::ops::matmul::matmul(query, transposed_key);
 
     // Step 2: Fused scale + softcap + mask + bias + softmax
-    let weights = fused_softmax::<T>(scores, mask.as_ref(), attn_bias.as_ref(), &options, head_dim);
+    let weights = fused_softmax::<T>(
+        scores,
+        mask.as_ref(),
+        attn_bias.as_ref(),
+        &options,
+        head_dim,
+    );
 
     // Step 3: weights @ V
     crate::ops::matmul::matmul(weights, value)
@@ -205,6 +211,13 @@ where
         None
     };
 
+    let params = SoftmaxParams {
+        scale,
+        softcap,
+        neg_inf,
+        causal_offset,
+    };
+
     let mut output = vec![T::zero(); scores_data.len()];
 
     for row_idx in 0..num_rows_total {
@@ -216,17 +229,7 @@ where
         let mask_row = mask_data.map(|m| &m[row_start..row_start + seq_k]);
         let bias_row = bias_data.map(|b| &b[row_start..row_start + seq_k]);
 
-        fused_softmax_row(
-            scores_row,
-            out_row,
-            mask_row,
-            bias_row,
-            scale,
-            softcap,
-            neg_inf,
-            causal_offset,
-            q_pos,
-        );
+        fused_softmax_row(scores_row, out_row, mask_row, bias_row, &params, q_pos);
     }
 
     FlexTensor::new(
@@ -236,84 +239,80 @@ where
     )
 }
 
+/// Parameters shared across all rows during fused softmax.
+struct SoftmaxParams<T> {
+    scale: T,
+    softcap: Option<T>,
+    neg_inf: T,
+    causal_offset: Option<isize>,
+}
+
 /// Process a single row of attention scores through the fused pipeline.
 ///
-/// Applies (in logical order):
-///   1. Scale: x *= scale
-///   2. Softcap (optional): x = softcap * tanh(x / softcap)
-///   3. Bool mask: x = -inf where mask\[k\] != 0
-///   4. Causal mask: x = -inf where k > q_pos + causal_offset
-///   5. Additive bias: x += bias\[k\]
-///   6. Softmax: exp(x - max) / sum(exp(x - max))
+/// Applies: scale, softcap, bool mask, causal mask, additive bias, then softmax.
 #[inline]
 fn fused_softmax_row<T>(
     scores: &[T],
     output: &mut [T],
     mask: Option<&[u8]>,
     bias: Option<&[T]>,
-    scale: T,
-    softcap: Option<T>,
-    neg_inf: T,
-    causal_offset: Option<isize>,
+    params: &SoftmaxParams<T>,
     q_pos: usize,
 ) where
     T: Float + Copy + core::ops::AddAssign,
 {
-    let seq_k = scores.len();
-
     // Pass 1: apply transformations and find row max
-    let mut row_max = neg_inf;
+    let mut row_max = params.neg_inf;
 
-    for k in 0..seq_k {
-        let mut val = scores[k] * scale;
+    for (k, (out, &score)) in output.iter_mut().zip(scores.iter()).enumerate() {
+        let mut val = score * params.scale;
 
-        if let Some(cap) = softcap {
+        if let Some(cap) = params.softcap {
             val = cap * (val / cap).tanh();
         }
 
-        if let Some(m) = mask {
-            if m[k] != 0 {
-                val = neg_inf;
-            }
+        if let Some(m) = mask
+            && m[k] != 0
+        {
+            val = params.neg_inf;
         }
 
-        if let Some(offset) = causal_offset {
-            if (k as isize) > (q_pos as isize) + offset {
-                val = neg_inf;
-            }
+        if let Some(offset) = params.causal_offset
+            && (k as isize) > (q_pos as isize) + offset
+        {
+            val = params.neg_inf;
         }
 
         if let Some(b) = bias {
-            val = val + b[k];
+            val += b[k];
         }
 
-        output[k] = val;
+        *out = val;
         if val > row_max {
             row_max = val;
         }
     }
 
-    // Handle all-masked rows: if every position was masked, row_max stays -inf
-    // and exp(-inf - -inf) = exp(NaN) = NaN. Output zeros instead.
-    if row_max == neg_inf {
-        for k in 0..seq_k {
-            output[k] = T::zero();
+    // Handle all-masked rows: output zeros instead of NaN
+    if row_max == params.neg_inf {
+        for out in output.iter_mut() {
+            *out = T::zero();
         }
         return;
     }
 
     // Pass 2: exp(x - max) and sum
     let mut sum = T::zero();
-    for k in 0..seq_k {
-        let e = (output[k] - row_max).exp();
-        output[k] = e;
+    for out in output.iter_mut() {
+        let e = (*out - row_max).exp();
+        *out = e;
         sum += e;
     }
 
     // Normalize
     let inv_sum = T::one() / sum;
-    for k in 0..seq_k {
-        output[k] = output[k] * inv_sum;
+    for out in output.iter_mut() {
+        *out = *out * inv_sum;
     }
 }
 
@@ -397,13 +396,10 @@ mod tests {
 
         let dev = Default::default();
         use burn_tensor::Bool;
-        let mask: Tensor<Flex, 4, Bool> = Tensor::from_data(
-            TensorData::from([[[[true, false], [true, false]]]]),
-            &dev,
-        );
+        let mask: Tensor<Flex, 4, Bool> =
+            Tensor::from_data(TensorData::from([[[[true, false], [true, false]]]]), &dev);
 
-        let result =
-            burn_tensor::module::attention(q, k, v, Some(mask), None, Default::default());
+        let result = burn_tensor::module::attention(q, k, v, Some(mask), None, Default::default());
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
 
         // Position 0 masked for all queries, output = V[1] = 20.0
@@ -426,8 +422,7 @@ mod tests {
             &dev,
         );
 
-        let result =
-            burn_tensor::module::attention(q, k, v, None, Some(bias), Default::default());
+        let result = burn_tensor::module::attention(q, k, v, None, Some(bias), Default::default());
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
 
         // Output ~ V[1] = 20.0
@@ -503,7 +498,10 @@ mod tests {
             &dev,
         );
         let k: Tensor<Flex, 4> = Tensor::from_data(
-            TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0, 0.5, 0.5, 0.5, 0.5], [1, 1, 4, 2]),
+            TensorData::new(
+                vec![1.0f32, 0.0, 0.0, 1.0, 0.5, 0.5, 0.5, 0.5],
+                [1, 1, 4, 2],
+            ),
             &dev,
         );
         let v: Tensor<Flex, 4> = Tensor::from_data(
@@ -519,8 +517,7 @@ mod tests {
             burn_tensor::module::attention(q.clone(), k.clone(), v.clone(), None, None, opts);
         let data_causal: Vec<f32> = result_causal.into_data().to_vec().unwrap();
 
-        let result_full =
-            burn_tensor::module::attention(q, k, v, None, None, Default::default());
+        let result_full = burn_tensor::module::attention(q, k, v, None, None, Default::default());
         let data_full: Vec<f32> = result_full.into_data().to_vec().unwrap();
 
         // With causal offset = seq_k - seq_q = 2:
