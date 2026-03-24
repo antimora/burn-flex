@@ -46,7 +46,12 @@ macro_rules! interpolate_bf16 {
 /// Generates an interpolation backward typed dispatcher.
 macro_rules! interpolate_backward_typed {
     ($fn_name:ident, $impl_fn:ident, $T:ty) => {
-        pub fn $fn_name(x: FlexTensor, grad: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor {
+        pub fn $fn_name(
+            x: FlexTensor,
+            grad: FlexTensor,
+            output_size: [usize; 2],
+            align_corners: bool,
+        ) -> FlexTensor {
             $impl_fn::<$T>(x, grad, output_size, align_corners)
         }
     };
@@ -55,7 +60,12 @@ macro_rules! interpolate_backward_typed {
 /// Generates an interpolation bf16 backward wrapper via f32 conversion.
 macro_rules! interpolate_backward_bf16 {
     ($bf16_fn:ident, $f32_fn:ident) => {
-        pub fn $bf16_fn(x: FlexTensor, grad: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor {
+        pub fn $bf16_fn(
+            x: FlexTensor,
+            grad: FlexTensor,
+            output_size: [usize; 2],
+            align_corners: bool,
+        ) -> FlexTensor {
             let x_f32 = convert_bf16_to_f32(&x);
             let grad_f32 = convert_bf16_to_f32(&grad);
             let result_f32 = $f32_fn(x_f32, grad_f32, output_size, align_corners);
@@ -180,7 +190,11 @@ fn map_coord(out_coord: usize, ratio: f64, align_corners: bool) -> f64 {
 
 /// Nearest neighbor interpolation.
 /// Maps output coordinates to input using floor(ratio * out_coord).
-fn interpolate_nearest_impl<T>(x: FlexTensor, output_size: [usize; 2], _align_corners: bool) -> FlexTensor
+fn interpolate_nearest_impl<T>(
+    x: FlexTensor,
+    output_size: [usize; 2],
+    _align_corners: bool,
+) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
 {
@@ -265,7 +279,11 @@ where
 
 /// Bilinear interpolation.
 /// Uses 4-point weighted average based on distance to neighbors.
-fn interpolate_bilinear_impl<T>(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor
+fn interpolate_bilinear_impl<T>(
+    x: FlexTensor,
+    output_size: [usize; 2],
+    align_corners: bool,
+) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
 {
@@ -385,7 +403,11 @@ where
 }
 
 /// Bicubic interpolation using cubic convolution.
-fn interpolate_bicubic_impl<T>(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor
+fn interpolate_bicubic_impl<T>(
+    x: FlexTensor,
+    output_size: [usize; 2],
+    align_corners: bool,
+) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
 {
@@ -605,7 +627,11 @@ fn lanczos3_weight(x: f64) -> f64 {
 /// excluded and weights are renormalized. This avoids edge ringing artifacts
 /// from replicated boundary pixels (unlike bicubic which clamps to edge).
 /// Matches the ndarray reference implementation.
-fn interpolate_lanczos3_impl<T>(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor
+fn interpolate_lanczos3_impl<T>(
+    x: FlexTensor,
+    output_size: [usize; 2],
+    align_corners: bool,
+) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
 {
@@ -723,8 +749,9 @@ where
 
                         for ow in 0..out_width {
                             let x_in = map_coord(ow, x_ratio, align_corners);
-                            output[out_base + oh * out_width + ow] =
-                                lanczos3_sample(input, in_base, in_width, y_in, y0, x_in, max_h, max_w);
+                            output[out_base + oh * out_width + ow] = lanczos3_sample(
+                                input, in_base, in_width, y_in, y0, x_in, max_h, max_w,
+                            );
                         }
                     }
                 }
@@ -748,7 +775,8 @@ where
 fn interpolate_nearest_backward_impl<T>(
     x: FlexTensor,
     grad: FlexTensor,
-    output_size: [usize; 2], _align_corners: bool,
+    output_size: [usize; 2],
+    _align_corners: bool,
 ) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod,
@@ -805,7 +833,8 @@ where
 fn interpolate_bilinear_backward_impl<T>(
     x: FlexTensor,
     grad: FlexTensor,
-    output_size: [usize; 2], align_corners: bool,
+    output_size: [usize; 2],
+    align_corners: bool,
 ) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod,
@@ -881,7 +910,8 @@ where
 fn interpolate_bicubic_backward_impl<T>(
     x: FlexTensor,
     grad: FlexTensor,
-    output_size: [usize; 2], align_corners: bool,
+    output_size: [usize; 2],
+    align_corners: bool,
 ) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod,
