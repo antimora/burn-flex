@@ -84,7 +84,7 @@ macro_rules! conv3d_typed {
             options: &ConvOptions<3>,
         ) -> FlexTensor {
             let w_shape = weight.layout().shape();
-            if is_1x1_conv(w_shape.dims[2], w_shape.dims[3], w_shape.dims[4], options) {
+            if is_1x1_conv(w_shape[2], w_shape[3], w_shape[4], options) {
                 return $fn_1x1(x, weight, bias, options);
             }
             conv3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
@@ -142,22 +142,10 @@ fn expand_1d_to_3d(
     options: &ConvOptions<1>,
 ) -> (FlexTensor, FlexTensor, ConvOptions<3>) {
     let x_shape = x.layout().shape();
-    let x_3d = x.reshape(Shape::from(vec![
-        x_shape.dims[0],
-        x_shape.dims[1],
-        1,
-        1,
-        x_shape.dims[2],
-    ]));
+    let x_3d = x.reshape(Shape::from(vec![x_shape[0], x_shape[1], 1, 1, x_shape[2]]));
 
     let w_shape = weight.layout().shape();
-    let weight_3d = weight.reshape(Shape::from(vec![
-        w_shape.dims[0],
-        w_shape.dims[1],
-        1,
-        1,
-        w_shape.dims[2],
-    ]));
+    let weight_3d = weight.reshape(Shape::from(vec![w_shape[0], w_shape[1], 1, 1, w_shape[2]]));
 
     let options_3d = ConvOptions::new(
         [1, 1, options.stride[0]],
@@ -171,11 +159,7 @@ fn expand_1d_to_3d(
 
 fn squeeze_3d_to_1d(tensor: FlexTensor) -> FlexTensor {
     let shape = tensor.layout().shape();
-    tensor.reshape(Shape::from(vec![
-        shape.dims[0],
-        shape.dims[1],
-        shape.dims[4],
-    ]))
+    tensor.reshape(Shape::from(vec![shape[0], shape[1], shape[4]]))
 }
 
 // ============================================================================
@@ -215,20 +199,12 @@ fn expand_2d_to_3d(
 ) -> (FlexTensor, FlexTensor, ConvOptions<3>) {
     let x_shape = x.layout().shape();
     let x_3d = x.reshape(Shape::from(vec![
-        x_shape.dims[0],
-        x_shape.dims[1],
-        1,
-        x_shape.dims[2],
-        x_shape.dims[3],
+        x_shape[0], x_shape[1], 1, x_shape[2], x_shape[3],
     ]));
 
     let w_shape = weight.layout().shape();
     let weight_3d = weight.reshape(Shape::from(vec![
-        w_shape.dims[0],
-        w_shape.dims[1],
-        1,
-        w_shape.dims[2],
-        w_shape.dims[3],
+        w_shape[0], w_shape[1], 1, w_shape[2], w_shape[3],
     ]));
 
     let options_3d = ConvOptions::new(
@@ -243,12 +219,7 @@ fn expand_2d_to_3d(
 
 fn squeeze_3d_to_2d(tensor: FlexTensor) -> FlexTensor {
     let shape = tensor.layout().shape();
-    tensor.reshape(Shape::from(vec![
-        shape.dims[0],
-        shape.dims[1],
-        shape.dims[3],
-        shape.dims[4],
-    ]))
+    tensor.reshape(Shape::from(vec![shape[0], shape[1], shape[3], shape[4]]))
 }
 
 // ============================================================================
@@ -307,17 +278,17 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
     let x_shape = x.layout().shape();
     let w_shape = weight.layout().shape();
 
-    let batch_size = x_shape.dims[0];
-    let channels_in = x_shape.dims[1];
-    let in_d = x_shape.dims[2];
-    let in_h = x_shape.dims[3];
-    let in_w = x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let channels_in = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
 
-    let channels_out = w_shape.dims[0];
-    let channels_per_group = w_shape.dims[1];
-    let kernel_d = w_shape.dims[2];
-    let kernel_h = w_shape.dims[3];
-    let kernel_w = w_shape.dims[4];
+    let channels_out = w_shape[0];
+    let channels_per_group = w_shape[1];
+    let kernel_d = w_shape[2];
+    let kernel_h = w_shape[3];
+    let kernel_w = w_shape[4];
 
     let [stride_d, stride_h, stride_w] = options.stride;
     let [pad_d, pad_h, pad_w] = options.padding;
@@ -711,12 +682,12 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
     let x_shape = x.layout().shape();
     let w_shape = weight.layout().shape();
 
-    let batch_size = x_shape.dims[0];
-    let channels_in = x_shape.dims[1];
-    let spatial = x_shape.dims[2] * x_shape.dims[3] * x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let channels_in = x_shape[1];
+    let spatial = x_shape[2] * x_shape[3] * x_shape[4];
 
-    let channels_out = w_shape.dims[0];
-    let channels_per_group = w_shape.dims[1];
+    let channels_out = w_shape[0];
+    let channels_per_group = w_shape[1];
     let groups = options.groups;
     let out_channels_per_group = channels_out / groups;
 
@@ -820,9 +791,9 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
         let out_shape = Shape::from(vec![
             batch_size,
             channels_out,
-            x_shape.dims[2],
-            x_shape.dims[3],
-            x_shape.dims[4],
+            x_shape[2],
+            x_shape[3],
+            x_shape[4],
         ]);
         FlexTensor::new(
             Bytes::from_elems(output),
@@ -833,9 +804,9 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
         let out_shape = Shape::from(vec![
             batch_size,
             channels_out,
-            x_shape.dims[2],
-            x_shape.dims[3],
-            x_shape.dims[4],
+            x_shape[2],
+            x_shape[3],
+            x_shape[4],
         ]);
         FlexTensor::new(
             Bytes::from_elems(output),
@@ -924,23 +895,11 @@ fn expand_transpose_1d_to_3d(
 ) -> (FlexTensor, FlexTensor, ConvTransposeOptions<3>) {
     // x: [N, C_in, L] -> [N, C_in, 1, 1, L]
     let x_shape = x.layout().shape();
-    let x_3d = x.reshape(Shape::from(vec![
-        x_shape.dims[0],
-        x_shape.dims[1],
-        1,
-        1,
-        x_shape.dims[2],
-    ]));
+    let x_3d = x.reshape(Shape::from(vec![x_shape[0], x_shape[1], 1, 1, x_shape[2]]));
 
     // weight: [C_in, C_out, K] -> [C_in, C_out, 1, 1, K]
     let w_shape = weight.layout().shape();
-    let weight_3d = weight.reshape(Shape::from(vec![
-        w_shape.dims[0],
-        w_shape.dims[1],
-        1,
-        1,
-        w_shape.dims[2],
-    ]));
+    let weight_3d = weight.reshape(Shape::from(vec![w_shape[0], w_shape[1], 1, 1, w_shape[2]]));
 
     let options_3d = ConvTransposeOptions::new(
         [1, 1, options.stride[0]],
@@ -996,21 +955,13 @@ fn expand_transpose_2d_to_3d(
     // x: [N, C_in, H, W] -> [N, C_in, 1, H, W]
     let x_shape = x.layout().shape();
     let x_3d = x.reshape(Shape::from(vec![
-        x_shape.dims[0],
-        x_shape.dims[1],
-        1,
-        x_shape.dims[2],
-        x_shape.dims[3],
+        x_shape[0], x_shape[1], 1, x_shape[2], x_shape[3],
     ]));
 
     // weight: [C_in, C_out, Kh, Kw] -> [C_in, C_out, 1, Kh, Kw]
     let w_shape = weight.layout().shape();
     let weight_3d = weight.reshape(Shape::from(vec![
-        w_shape.dims[0],
-        w_shape.dims[1],
-        1,
-        w_shape.dims[2],
-        w_shape.dims[3],
+        w_shape[0], w_shape[1], 1, w_shape[2], w_shape[3],
     ]));
 
     let options_3d = ConvTransposeOptions::new(
@@ -1169,17 +1120,17 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
     let x_shape = x.layout().shape();
     let w_shape = weight.layout().shape();
 
-    let batch_size = x_shape.dims[0];
-    let in_channels = x_shape.dims[1];
-    let in_d = x_shape.dims[2];
-    let in_h = x_shape.dims[3];
-    let in_w = x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let in_channels = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
 
     // Weight shape for transpose: [in_channels, out_channels_per_group, kd, kh, kw]
-    let out_channels_per_group = w_shape.dims[1];
-    let kernel_d = w_shape.dims[2];
-    let kernel_h = w_shape.dims[3];
-    let kernel_w = w_shape.dims[4];
+    let out_channels_per_group = w_shape[1];
+    let kernel_d = w_shape[2];
+    let kernel_h = w_shape[3];
+    let kernel_w = w_shape[4];
 
     let [stride_d, stride_h, stride_w] = options.stride;
     let [pad_d, pad_h, pad_w] = options.padding;
@@ -1624,7 +1575,7 @@ mod tests {
         let options = ConvOptions::new([1, 1], [0, 0], [1, 1], 1);
         let result = conv2d_f32(x, weight, None, &options);
 
-        assert_eq!(result.layout().shape().dims, vec![1, 8, 3, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 8, 3, 3]);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
 
         // First output channel should be sum across all 4 input channels at each position
@@ -1666,7 +1617,7 @@ mod tests {
         let weight = FlexTensor::from_data(TensorData::new(w_data, vec![1, 1, 3]));
         let options = ConvOptions::new([1], [0], [1], 1);
         let result = conv1d_f32(x, weight, None, &options);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 3]);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(out, vec![6.0, 9.0, 12.0]);
     }
@@ -1679,7 +1630,7 @@ mod tests {
         let weight = FlexTensor::from_data(TensorData::new(w_data, vec![1, 1, 2, 2]));
         let options = ConvOptions::new([1, 1], [0, 0], [1, 1], 1);
         let result = conv2d_f32(x, weight, None, &options);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 3, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 3, 3]);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(
             out,
@@ -1716,7 +1667,7 @@ mod tests {
         let weight = FlexTensor::from_data(TensorData::new(vec![1.0f32; 32], vec![4, 2, 2, 2]));
         let options = ConvOptions::new([1, 1], [0, 0], [1, 1], 2);
         let result = conv2d_f32(x, weight, None, &options);
-        assert_eq!(result.layout().shape().dims, vec![1, 4, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 4, 2, 2]);
     }
 
     #[test]
@@ -1725,7 +1676,7 @@ mod tests {
         let weight = FlexTensor::from_data(TensorData::new(vec![1.0f32; 8], vec![1, 1, 2, 2, 2]));
         let options = ConvOptions::new([1, 1, 1], [0, 0, 0], [1, 1, 1], 1);
         let result = conv3d_f32(x, weight, None, &options);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 1, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 1, 2, 2]);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         assert!(out.iter().all(|&v| (v - 8.0).abs() < 1e-5));
     }

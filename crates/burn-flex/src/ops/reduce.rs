@@ -247,7 +247,7 @@ pub fn sum_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 
 /// Mean along a dimension, keeping the dimension with size 1.
 pub fn mean_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
-    let dim_size = tensor.layout().shape().dims[dim];
+    let dim_size = tensor.layout().shape()[dim];
     assert!(
         dim_size > 0,
         "mean_dim: cannot take mean of empty dimension"
@@ -357,7 +357,7 @@ pub fn prod_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 // Max / Min (all elements)
 // ============================================================================
 
-/// Max of all elements, returning a scalar tensor of shape [1].
+/// Max of all elements, returning a scalar tensor of shape \[1\].
 pub fn max(tensor: FlexTensor) -> FlexTensor {
     match tensor.dtype() {
         DType::F32 => max_f32_reduce(&tensor),
@@ -384,7 +384,7 @@ pub fn max(tensor: FlexTensor) -> FlexTensor {
     }
 }
 
-/// Min of all elements, returning a scalar tensor of shape [1].
+/// Min of all elements, returning a scalar tensor of shape \[1\].
 pub fn min(tensor: FlexTensor) -> FlexTensor {
     match tensor.dtype() {
         DType::F32 => min_f32_reduce(&tensor),
@@ -610,13 +610,13 @@ fn reduce_dim_f32(tensor: &FlexTensor, dim: usize, op: ReduceOp) -> FlexTensor {
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[f32] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -896,13 +896,13 @@ where
     let shape = tensor.layout().shape();
     let strides = tensor.layout().strides();
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -968,13 +968,13 @@ where
         ndims
     );
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1029,13 +1029,13 @@ where
         ndims
     );
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1086,7 +1086,7 @@ pub fn mean(tensor: FlexTensor) -> FlexTensor {
 /// Max along a dimension, returning only values.
 pub fn max_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
     assert!(
-        tensor.layout().shape().dims[dim] > 0,
+        tensor.layout().shape()[dim] > 0,
         "max_dim: dimension {dim} has size 0"
     );
     match tensor.dtype() {
@@ -1103,7 +1103,7 @@ pub fn max_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 /// Min along a dimension, returning only values.
 pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
     assert!(
-        tensor.layout().shape().dims[dim] > 0,
+        tensor.layout().shape()[dim] > 0,
         "min_dim: dimension {dim} has size 0"
     );
     match tensor.dtype() {
@@ -1120,7 +1120,7 @@ pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 /// Max along a dimension with indices, returning (values, indices) in a single pass.
 pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     assert!(
-        tensor.layout().shape().dims[dim] > 0,
+        tensor.layout().shape()[dim] > 0,
         "max_dim_with_indices: dimension {dim} has size 0"
     );
     match tensor.dtype() {
@@ -1149,7 +1149,7 @@ pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
 /// Min along a dimension with indices, returning (values, indices) in a single pass.
 pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     assert!(
-        tensor.layout().shape().dims[dim] > 0,
+        tensor.layout().shape()[dim] > 0,
         "min_dim_with_indices: dimension {dim} has size 0"
     );
     match tensor.dtype() {
@@ -1184,11 +1184,11 @@ fn max_dim_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
@@ -1225,11 +1225,11 @@ fn max_dim_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
@@ -1265,11 +1265,11 @@ fn min_dim_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
@@ -1306,11 +1306,11 @@ fn min_dim_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
@@ -1347,11 +1347,11 @@ fn max_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
     let cap = outer_size.max(1) * inner_size.max(1);
@@ -1400,11 +1400,11 @@ fn min_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
     let cap = outer_size.max(1) * inner_size.max(1);
@@ -1452,11 +1452,11 @@ fn max_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
     let cap = outer_size.max(1) * inner_size.max(1);
@@ -1504,11 +1504,11 @@ fn min_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
     let cap = outer_size.max(1) * inner_size.max(1);
@@ -1553,11 +1553,11 @@ fn max_dim_f16(tensor: &FlexTensor, dim: usize, _values_only: bool) -> FlexTenso
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[f16] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
@@ -1590,11 +1590,11 @@ fn min_dim_f16(tensor: &FlexTensor, dim: usize, _values_only: bool) -> FlexTenso
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[f16] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
@@ -1627,11 +1627,11 @@ fn max_dim_bf16(tensor: &FlexTensor, dim: usize, _values_only: bool) -> FlexTens
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[bf16] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
@@ -1664,11 +1664,11 @@ fn min_dim_bf16(tensor: &FlexTensor, dim: usize, _values_only: bool) -> FlexTens
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     let data: &[bf16] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
@@ -1745,13 +1745,13 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
         ndims
     );
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1798,13 +1798,13 @@ fn argext_half<E: Element + bytemuck::Pod>(
 
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1851,13 +1851,13 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
         ndims
     );
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1905,13 +1905,13 @@ fn argmax_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
         ndims
     );
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1959,13 +1959,13 @@ fn argmin_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
         ndims
     );
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
     let out_size: usize = out_shape.iter().product();
 
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -2012,7 +2012,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [5]));
         let result = sum(tensor);
 
-        assert_eq!(result.layout().shape().dims, vec![1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![15.0]);
@@ -2052,7 +2052,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [2, 3]));
         let result = sum_dim(tensor, 0);
 
-        assert_eq!(result.layout().shape().dims, vec![1, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 3]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![5.0, 7.0, 9.0]);
@@ -2065,7 +2065,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [2, 3]));
         let result = sum_dim(tensor, 1);
 
-        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![6.0, 15.0]);
@@ -2078,7 +2078,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [2, 3]));
         let result = mean_dim(tensor, 1);
 
-        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![2.0, 5.0]);
@@ -2121,7 +2121,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [5]));
         let result = argmax(tensor, 0);
 
-        assert_eq!(result.layout().shape().dims, vec![1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1]);
         let result_data = result.into_data();
         let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![1]); // index of 5.0
@@ -2134,7 +2134,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [2, 3]));
         let result = argmax(tensor, 1);
 
-        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
         let result_data = result.into_data();
         let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![1, 0]); // indices of max in each row
@@ -2147,7 +2147,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [2, 3]));
         let result = argmin(tensor, 1);
 
-        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
         let result_data = result.into_data();
         let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![0, 1]); // indices of min in each row
@@ -2170,7 +2170,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [5]));
         let result = sum(tensor);
 
-        assert_eq!(result.layout().shape().dims, vec![1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1]);
         let result_data = result.into_data();
         let values: Vec<i32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![15]);
@@ -2183,7 +2183,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [2, 3]));
         let result = sum_dim(tensor, 1);
 
-        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
         let result_data = result.into_data();
         let values: Vec<i32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![6, 15]);
@@ -2195,7 +2195,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [5]));
         let result = argmax(tensor, 0);
 
-        assert_eq!(result.layout().shape().dims, vec![1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1]);
         let result_data = result.into_data();
         let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![1]); // index of 5
@@ -2228,7 +2228,7 @@ mod tests {
         assert!(flipped.layout().strides()[0] < 0);
 
         let result = sum_dim(flipped, 0);
-        assert_eq!(result.layout().shape().dims, vec![1, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 3]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         // Same sum regardless of row order
@@ -2245,7 +2245,7 @@ mod tests {
         assert!(flipped.layout().strides()[1] < 0);
 
         let result = sum_dim(flipped, 1);
-        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![6.0, 15.0]);
@@ -2277,7 +2277,7 @@ mod tests {
         assert!(flipped.layout().strides()[1] < 0);
 
         let result = argmax(flipped, 1);
-        assert_eq!(result.layout().shape().dims, vec![2, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
         let result_data = result.into_data();
         let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         // Row 0: [3, 5, 1] -> max at index 1
@@ -2310,7 +2310,7 @@ mod tests {
         let flipped = crate::ops::flip::flip(tensor, &[0]);
 
         let result = mean_dim(flipped, 0);
-        assert_eq!(result.layout().shape().dims, vec![1, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 3]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![2.5, 3.5, 4.5]);
@@ -2373,10 +2373,10 @@ mod tests {
         let permuted = tensor.permute(&[0, 2, 1, 3]);
 
         assert!(!permuted.is_contiguous());
-        assert_eq!(permuted.layout().shape().dims, vec![2, 4, 3, 5]);
+        assert_eq!(permuted.layout().shape().to_vec(), vec![2, 4, 3, 5]);
 
         let result = argmax(permuted.clone(), 3);
-        assert_eq!(result.layout().shape().dims, vec![2, 4, 3, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 4, 3, 1]);
 
         // Verify values are valid indices (0..5)
         let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
@@ -2386,7 +2386,7 @@ mod tests {
 
         // Also test argmax on dim 2 of permuted tensor
         let result = argmax(permuted, 2);
-        assert_eq!(result.layout().shape().dims, vec![2, 4, 1, 5]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 4, 1, 5]);
         let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
         for &v in &values {
             assert!(v >= 0 && v < 3, "argmax index out of range: {v}");
@@ -2403,7 +2403,7 @@ mod tests {
         assert!(!permuted.is_contiguous());
 
         let result = argmin(permuted, 3);
-        assert_eq!(result.layout().shape().dims, vec![2, 4, 3, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 4, 3, 1]);
 
         let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
         for &v in &values {
@@ -2421,7 +2421,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [1, 84, 80, 80]));
 
         let result = argmax(tensor, 1);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 80, 80]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 80, 80]);
 
         let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
         assert_eq!(values.len(), 6400);
@@ -2440,7 +2440,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, shape));
 
         let result = sum_dim(tensor, 1);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 80, 80]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 80, 80]);
 
         let values: Vec<f32> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
         assert_eq!(values.len(), 6400);
@@ -2469,7 +2469,7 @@ mod tests {
         // Shape is now [2, 3, 2]
 
         let result = argmax(permuted, 2);
-        assert_eq!(result.layout().shape().dims, vec![2, 3, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 3, 1]);
         let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
         // For each row along dim 2, the second element (from the original dim 0 of 2x3 blocks)
         // is always larger: [1 vs 4] -> idx 1, [2 vs 5] -> idx 1, etc.

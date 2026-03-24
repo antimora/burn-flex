@@ -107,13 +107,13 @@ fn deform_im2col_f32(
 ///
 /// # Arguments
 /// * `x` - Input tensor [batch, channels_in, height, width]
-/// * `offset` - Offset tensor [batch, offset_groups * kernel_h * kernel_w * 2, out_h, out_w]
-/// * `weight` - Weight tensor [channels_out, channels_in/weight_groups, kernel_h, kernel_w]
-/// * `mask` - Optional mask tensor [batch, offset_groups * kernel_h * kernel_w, out_h, out_w]
-/// * `bias` - Optional bias tensor [channels_out]
-/// * `stride` - Stride [stride_h, stride_w]
-/// * `padding` - Padding [pad_h, pad_w]
-/// * `dilation` - Dilation [dil_h, dil_w]
+/// * `offset` - Offset tensor \[batch, offset_groups * kernel_h * kernel_w * 2, out_h, out_w\]
+/// * `weight` - Weight tensor \[channels_out, channels_in/weight_groups, kernel_h, kernel_w\]
+/// * `mask` - Optional mask tensor \[batch, offset_groups * kernel_h * kernel_w, out_h, out_w\]
+/// * `bias` - Optional bias tensor \[channels_out\]
+/// * `stride` - Stride \[stride_h, stride_w\]
+/// * `padding` - Padding \[pad_h, pad_w\]
+/// * `dilation` - Dilation \[dil_h, dil_w\]
 /// * `weight_groups` - Number of weight groups
 /// * `offset_groups` - Number of offset groups
 #[allow(clippy::too_many_arguments)]
@@ -139,18 +139,18 @@ pub fn deform_conv2d_f32(
     let weight_shape = weight.layout().shape();
     let offset_shape = offset.layout().shape();
 
-    let batch = x_shape.dims[0];
-    let channels_in = x_shape.dims[1];
-    let in_h = x_shape.dims[2];
-    let in_w = x_shape.dims[3];
+    let batch = x_shape[0];
+    let channels_in = x_shape[1];
+    let in_h = x_shape[2];
+    let in_w = x_shape[3];
 
-    let channels_out = weight_shape.dims[0];
-    let channels_per_weight_group = weight_shape.dims[1]; // channels_in / weight_groups
-    let kernel_h = weight_shape.dims[2];
-    let kernel_w = weight_shape.dims[3];
+    let channels_out = weight_shape[0];
+    let channels_per_weight_group = weight_shape[1]; // channels_in / weight_groups
+    let kernel_h = weight_shape[2];
+    let kernel_w = weight_shape[3];
 
-    let out_h = offset_shape.dims[2];
-    let out_w = offset_shape.dims[3];
+    let out_h = offset_shape[2];
+    let out_w = offset_shape[3];
 
     let x_data: &[f32] = x.storage();
     let offset_data: &[f32] = offset.storage();
@@ -162,7 +162,7 @@ pub fn deform_conv2d_f32(
     let out_channels_per_weight_group = channels_out / weight_groups;
     let spatial_out = out_h * out_w;
     let col_len = channels_per_weight_group * kernel_h * kernel_w;
-    let offset_channels = offset_shape.dims[1];
+    let offset_channels = offset_shape[1];
 
     // Flatten weights to [channels_out, col_len] for GEMM
     // Layout: [oc, ic, kh, kw] -> [oc, kh * kw * ic]
@@ -471,17 +471,17 @@ pub fn deform_conv2d_backward_f32(
     let offset_shape = offset.layout().shape();
     let out_grad_shape = output_grad.layout().shape();
 
-    let batch = x_shape.dims[0];
-    let channels_in = x_shape.dims[1];
-    let in_h = x_shape.dims[2];
-    let in_w = x_shape.dims[3];
+    let batch = x_shape[0];
+    let channels_in = x_shape[1];
+    let in_h = x_shape[2];
+    let in_w = x_shape[3];
 
-    let channels_out = weight_shape.dims[0];
-    let kernel_h = weight_shape.dims[2];
-    let kernel_w = weight_shape.dims[3];
+    let channels_out = weight_shape[0];
+    let kernel_h = weight_shape[2];
+    let kernel_w = weight_shape[3];
 
-    let out_h = out_grad_shape.dims[2];
-    let out_w = out_grad_shape.dims[3];
+    let out_h = out_grad_shape[2];
+    let out_w = out_grad_shape[3];
 
     let x_data: &[f32] = x.storage();
     let offset_data: &[f32] = offset.storage();
@@ -495,7 +495,7 @@ pub fn deform_conv2d_backward_f32(
 
     // Initialize gradients
     let mut x_grad = vec![0.0f32; batch * channels_in * in_h * in_w];
-    let mut offset_grad = vec![0.0f32; batch * offset_shape.dims[1] * out_h * out_w];
+    let mut offset_grad = vec![0.0f32; batch * offset_shape[1] * out_h * out_w];
     let mut weight_grad = vec![0.0f32; weight_shape.num_elements()];
     let mut mask_grad = mask
         .as_ref()
@@ -546,11 +546,11 @@ pub fn deform_conv2d_backward_f32(
                                     offset_group * kernel_h * kernel_w * 2 + kernel_idx * 2;
                                 let offset_idx_w = offset_idx_h + 1;
 
-                                let offset_h_flat = b * offset_shape.dims[1] * out_h * out_w
+                                let offset_h_flat = b * offset_shape[1] * out_h * out_w
                                     + offset_idx_h * out_h * out_w
                                     + oh * out_w
                                     + ow;
-                                let offset_w_flat = b * offset_shape.dims[1] * out_h * out_w
+                                let offset_w_flat = b * offset_shape[1] * out_h * out_w
                                     + offset_idx_w * out_h * out_w
                                     + oh * out_w
                                     + ow;
@@ -777,18 +777,18 @@ pub fn deform_conv2d_f64(
     let weight_shape = weight.layout().shape();
     let offset_shape = offset.layout().shape();
 
-    let batch = x_shape.dims[0];
-    let channels_in = x_shape.dims[1];
-    let in_h = x_shape.dims[2];
-    let in_w = x_shape.dims[3];
+    let batch = x_shape[0];
+    let channels_in = x_shape[1];
+    let in_h = x_shape[2];
+    let in_w = x_shape[3];
 
-    let channels_out = weight_shape.dims[0];
-    let channels_per_weight_group = weight_shape.dims[1];
-    let kernel_h = weight_shape.dims[2];
-    let kernel_w = weight_shape.dims[3];
+    let channels_out = weight_shape[0];
+    let channels_per_weight_group = weight_shape[1];
+    let kernel_h = weight_shape[2];
+    let kernel_w = weight_shape[3];
 
-    let out_h = offset_shape.dims[2];
-    let out_w = offset_shape.dims[3];
+    let out_h = offset_shape[2];
+    let out_w = offset_shape[3];
 
     let x_data: &[f64] = x.storage();
     let offset_data: &[f64] = offset.storage();
@@ -850,10 +850,10 @@ pub fn deform_conv2d_f64(
                                     offset_group * kernel_h * kernel_w * 2 + kernel_idx * 2;
                                 let offset_idx_w = offset_idx_h + 1;
 
-                                let offset_h_flat = b * offset_shape.dims[1] * spatial_out
+                                let offset_h_flat = b * offset_shape[1] * spatial_out
                                     + offset_idx_h * spatial_out
                                     + spatial_idx;
-                                let offset_w_flat = b * offset_shape.dims[1] * spatial_out
+                                let offset_w_flat = b * offset_shape[1] * spatial_out
                                     + offset_idx_w * spatial_out
                                     + spatial_idx;
 

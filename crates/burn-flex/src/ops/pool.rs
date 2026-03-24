@@ -207,11 +207,11 @@ where
     let x = x.to_contiguous();
     let x_shape = x.layout().shape();
 
-    let batch_size = x_shape.dims[0];
-    let channels = x_shape.dims[1];
-    let in_d = x_shape.dims[2];
-    let in_h = x_shape.dims[3];
-    let in_w = x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let channels = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
 
     let [kernel_d, kernel_h, kernel_w] = kernel_size;
     let [stride_d, stride_h, stride_w] = stride;
@@ -666,11 +666,11 @@ where
     let x = x.to_contiguous();
     let x_shape = x.layout().shape();
 
-    let batch_size = x_shape.dims[0];
-    let channels = x_shape.dims[1];
-    let in_d = x_shape.dims[2];
-    let in_h = x_shape.dims[3];
-    let in_w = x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let channels = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
 
     let [kernel_d, kernel_h, kernel_w] = kernel_size;
     let [stride_d, stride_h, stride_w] = stride;
@@ -1026,11 +1026,11 @@ where
     let x = x.to_contiguous();
     let x_shape = x.layout().shape();
 
-    let batch_size = x_shape.dims[0];
-    let channels = x_shape.dims[1];
-    let in_d = x_shape.dims[2];
-    let in_h = x_shape.dims[3];
-    let in_w = x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let channels = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
 
     let [out_d, out_h, out_w] = output_size;
     let spatial_out = out_d * out_h * out_w;
@@ -1256,17 +1256,17 @@ where
     let grad = grad.to_contiguous();
     let indices = indices.to_contiguous();
 
-    let batch_size = x_shape.dims[0];
-    let channels = x_shape.dims[1];
-    let in_d = x_shape.dims[2];
-    let in_h = x_shape.dims[3];
-    let in_w = x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let channels = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
     let spatial_in = in_d * in_h * in_w;
 
     let grad_shape = grad.layout().shape();
-    let out_d = grad_shape.dims[2];
-    let out_h = grad_shape.dims[3];
-    let out_w = grad_shape.dims[4];
+    let out_d = grad_shape[2];
+    let out_h = grad_shape[3];
+    let out_w = grad_shape[4];
     let spatial_out = out_d * out_h * out_w;
 
     let grad_data: &[T] = grad.storage();
@@ -1431,11 +1431,11 @@ where
     let x_shape = x.layout().shape();
     let grad = grad.to_contiguous();
 
-    let batch_size = x_shape.dims[0];
-    let channels = x_shape.dims[1];
-    let in_d = x_shape.dims[2];
-    let in_h = x_shape.dims[3];
-    let in_w = x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let channels = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
     let spatial_in = in_d * in_h * in_w;
 
     let [kernel_d, kernel_h, kernel_w] = kernel_size;
@@ -1444,9 +1444,9 @@ where
     let kernel_volume = kernel_d * kernel_h * kernel_w;
 
     let grad_shape = grad.layout().shape();
-    let out_d = grad_shape.dims[2];
-    let out_h = grad_shape.dims[3];
-    let out_w = grad_shape.dims[4];
+    let out_d = grad_shape[2];
+    let out_h = grad_shape[3];
+    let out_w = grad_shape[4];
     let spatial_out = out_d * out_h * out_w;
 
     let grad_data: &[T] = grad.storage();
@@ -1604,17 +1604,17 @@ where
     let x_shape = x.layout().shape();
     let grad = grad.to_contiguous();
 
-    let batch_size = x_shape.dims[0];
-    let channels = x_shape.dims[1];
-    let in_d = x_shape.dims[2];
-    let in_h = x_shape.dims[3];
-    let in_w = x_shape.dims[4];
+    let batch_size = x_shape[0];
+    let channels = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
     let spatial_in = in_d * in_h * in_w;
 
     let grad_shape = grad.layout().shape();
-    let out_d = grad_shape.dims[2];
-    let out_h = grad_shape.dims[3];
-    let out_w = grad_shape.dims[4];
+    let out_d = grad_shape[2];
+    let out_h = grad_shape[3];
+    let out_w = grad_shape[4];
     let spatial_out = out_d * out_h * out_w;
 
     let grad_data: &[T] = grad.storage();
@@ -1673,46 +1673,25 @@ where
 /// Expand 2D tensor [N, C, H, W] to 3D [N, C, 1, H, W].
 fn expand_2d_to_3d(x: &FlexTensor) -> FlexTensor {
     let shape = x.layout().shape();
-    x.reshape(Shape::from(vec![
-        shape.dims[0],
-        shape.dims[1],
-        1,
-        shape.dims[2],
-        shape.dims[3],
-    ]))
+    x.reshape(Shape::from(vec![shape[0], shape[1], 1, shape[2], shape[3]]))
 }
 
 /// Squeeze 3D tensor [N, C, 1, H, W] to 2D [N, C, H, W].
 fn squeeze_3d_to_2d(x: FlexTensor) -> FlexTensor {
     let shape = x.layout().shape();
-    x.reshape(Shape::from(vec![
-        shape.dims[0],
-        shape.dims[1],
-        shape.dims[3],
-        shape.dims[4],
-    ]))
+    x.reshape(Shape::from(vec![shape[0], shape[1], shape[3], shape[4]]))
 }
 
 /// Expand 1D tensor [N, C, L] to 3D [N, C, 1, 1, L].
 fn expand_1d_to_3d(x: &FlexTensor) -> FlexTensor {
     let shape = x.layout().shape();
-    x.reshape(Shape::from(vec![
-        shape.dims[0],
-        shape.dims[1],
-        1,
-        1,
-        shape.dims[2],
-    ]))
+    x.reshape(Shape::from(vec![shape[0], shape[1], 1, 1, shape[2]]))
 }
 
 /// Squeeze 3D tensor [N, C, 1, 1, L] to 1D [N, C, L].
 fn squeeze_3d_to_1d(x: FlexTensor) -> FlexTensor {
     let shape = x.layout().shape();
-    x.reshape(Shape::from(vec![
-        shape.dims[0],
-        shape.dims[1],
-        shape.dims[4],
-    ]))
+    x.reshape(Shape::from(vec![shape[0], shape[1], shape[4]]))
 }
 
 // ============================================================================
@@ -1779,7 +1758,7 @@ mod tests {
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 4, 4]));
 
         let result = max_pool2d_f32(x, [2, 2], [2, 2], [0, 0], [1, 1], false);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 2, 2]);
 
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         // Max in each 2x2 block:
@@ -1816,7 +1795,7 @@ mod tests {
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 3, 3]));
 
         let result = max_pool2d_f32(x, [2, 2], [1, 1], [1, 1], [1, 1], false);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 4, 4]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 4, 4]);
     }
 
     #[test]
@@ -1828,7 +1807,7 @@ mod tests {
         let result = max_pool2d_f32(x, [2, 2], [1, 1], [0, 0], [2, 2], false);
         // Effective kernel size = (2-1)*2 + 1 = 3
         // Output size = (5 - 3) / 1 + 1 = 3
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 3, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 3, 3]);
 
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         // With dilation 2, kernel at (0,0) hits positions (0,0), (0,2), (2,0), (2,2)
@@ -1849,11 +1828,11 @@ mod tests {
 
         // Without ceil mode: (5 - 2) / 2 + 1 = 2
         let result_floor = max_pool2d_f32(x.clone(), [2, 2], [2, 2], [0, 0], [1, 1], false);
-        assert_eq!(result_floor.layout().shape().dims, vec![1, 1, 2, 2]);
+        assert_eq!(result_floor.layout().shape().to_vec(), vec![1, 1, 2, 2]);
 
         // With ceil mode: ceil((5 - 2) / 2) + 1 = 3
         let result_ceil = max_pool2d_f32(x, [2, 2], [2, 2], [0, 0], [1, 1], true);
-        assert_eq!(result_ceil.layout().shape().dims, vec![1, 1, 3, 3]);
+        assert_eq!(result_ceil.layout().shape().to_vec(), vec![1, 1, 3, 3]);
     }
 
     #[test]
@@ -1862,7 +1841,7 @@ mod tests {
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 4, 4]));
 
         let result = avg_pool2d_f32(x, [2, 2], [2, 2], [0, 0], false, false);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 2, 2]);
 
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         // Avg in each 2x2 block:
@@ -1902,7 +1881,7 @@ mod tests {
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 4, 4]));
 
         let result = adaptive_avg_pool2d_f32(x, [2, 2]);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 2, 2]);
 
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         // Each output averages a 2x2 region
@@ -1917,7 +1896,7 @@ mod tests {
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 3, 3]));
 
         let result = adaptive_avg_pool2d_f32(x, [1, 1]);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 1, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 1, 1]);
 
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         // Average of 1..9 = 5
@@ -1931,7 +1910,7 @@ mod tests {
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 8]));
 
         let result = max_pool1d_f32(x, 2, 2, 0, 1, false);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 4]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 4]);
 
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(out, vec![2.0, 4.0, 6.0, 8.0]);
@@ -1944,7 +1923,7 @@ mod tests {
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 2, 4, 4, 4]));
 
         let result = max_pool3d_f32(x, [2, 2, 2], [2, 2, 2], [0, 0, 0], [1, 1, 1], false);
-        assert_eq!(result.layout().shape().dims, vec![1, 2, 2, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 2, 2, 2, 2]);
     }
 
     #[test]

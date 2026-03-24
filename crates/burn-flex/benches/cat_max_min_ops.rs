@@ -220,23 +220,6 @@ macro_rules! bench_cat {
                 }
             }
 
-            #[divan::bench_group(name = "int_powf_scalar")]
-            mod int_powf_scalar {
-                use super::*;
-
-                #[divan::bench]
-                fn _256x256(bencher: Bencher) {
-                    let t = make_int_2d::<B>(256, 256);
-                    bencher.bench(|| t.clone().powf_scalar(2.5));
-                }
-
-                #[divan::bench]
-                fn _1024x256(bencher: Bencher) {
-                    let t = make_int_2d::<B>(1024, 256);
-                    bencher.bench(|| t.clone().powf_scalar(2.5));
-                }
-            }
-
             #[divan::bench_group(name = "bool_select")]
             mod bool_select {
                 use super::*;

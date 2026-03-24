@@ -48,13 +48,13 @@ impl Iterator for StridedIter<'_> {
 
         for d in (0..shape.num_dims()).rev() {
             self.multi_index[d] += 1;
-            if self.multi_index[d] < shape.dims[d] {
+            if self.multi_index[d] < shape[d] {
                 self.storage_index += strides[d];
                 break;
             }
             // Wrap around this dimension
             self.multi_index[d] = 0;
-            self.storage_index -= (shape.dims[d] as isize - 1) * strides[d];
+            self.storage_index -= (shape[d] as isize - 1) * strides[d];
         }
 
         Some(idx)

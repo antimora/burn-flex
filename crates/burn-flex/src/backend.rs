@@ -91,7 +91,7 @@ impl Backend for Flex {
             DType::U64 | DType::U32 | DType::U16 | DType::U8 => {
                 DTypeUsage::Storage | DTypeUsage::Arithmetic
             }
-            DType::Bool => DTypeUsage::Storage | DTypeUsage::Arithmetic,
+            DType::Bool(_) => DTypeUsage::Storage | DTypeUsage::Arithmetic,
             // Quantized types: storage only for now
             DType::QFloat(_) => DTypeUsage::Storage.into(),
             _ => DTypeUsageSet::empty(),

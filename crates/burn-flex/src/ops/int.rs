@@ -104,43 +104,83 @@ impl IntTensorOps<Flex> for Flex {
         crate::ops::gather_scatter::select_add_i64(tensor, dim, indices, value)
     }
 
-    fn int_equal(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> BoolTensor<Flex> {
+    fn int_equal(
+        lhs: IntTensor<Flex>,
+        rhs: IntTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_equal(lhs, rhs)
     }
 
-    fn int_equal_elem(lhs: IntTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn int_equal_elem(
+        lhs: IntTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_equal_elem(lhs, rhs.to_i64().unwrap())
     }
 
-    fn int_greater(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> BoolTensor<Flex> {
+    fn int_greater(
+        lhs: IntTensor<Flex>,
+        rhs: IntTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_greater(lhs, rhs)
     }
 
-    fn int_greater_elem(lhs: IntTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn int_greater_elem(
+        lhs: IntTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_greater_elem(lhs, rhs.to_i64().unwrap())
     }
 
-    fn int_greater_equal(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> BoolTensor<Flex> {
+    fn int_greater_equal(
+        lhs: IntTensor<Flex>,
+        rhs: IntTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_greater_equal(lhs, rhs)
     }
 
-    fn int_greater_equal_elem(lhs: IntTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn int_greater_equal_elem(
+        lhs: IntTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_greater_equal_elem(lhs, rhs.to_i64().unwrap())
     }
 
-    fn int_lower(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> BoolTensor<Flex> {
+    fn int_lower(
+        lhs: IntTensor<Flex>,
+        rhs: IntTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_lower(lhs, rhs)
     }
 
-    fn int_lower_elem(lhs: IntTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn int_lower_elem(
+        lhs: IntTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_lower_elem(lhs, rhs.to_i64().unwrap())
     }
 
-    fn int_lower_equal(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> BoolTensor<Flex> {
+    fn int_lower_equal(
+        lhs: IntTensor<Flex>,
+        rhs: IntTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_lower_equal(lhs, rhs)
     }
 
-    fn int_lower_equal_elem(lhs: IntTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn int_lower_equal_elem(
+        lhs: IntTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::int_lower_equal_elem(lhs, rhs.to_i64().unwrap())
     }
 
@@ -203,7 +243,10 @@ impl IntTensorOps<Flex> for Flex {
     }
 
     // i64/u64 > 2^24 lose precision when converted to f32 (matches PyTorch).
-    fn int_into_float(tensor: IntTensor<Flex>) -> FloatTensor<Flex> {
+    fn int_into_float(
+        tensor: IntTensor<Flex>,
+        _out_dtype: burn_std::FloatDType,
+    ) -> FloatTensor<Flex> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
         let dtype = tensor.dtype();
@@ -245,11 +288,7 @@ impl IntTensorOps<Flex> for Flex {
         _device: &Device<Flex>,
     ) -> IntTensor<Flex> {
         let mut seed = crate::backend::SEED.lock().unwrap();
-        let mut rng = if let Some(rng_seeded) = seed.as_ref() {
-            rng_seeded.clone()
-        } else {
-            crate::backend::get_seeded_rng()
-        };
+        let mut rng = seed.take().unwrap_or_else(crate::backend::get_seeded_rng);
         let data = TensorData::random::<i64, _, _>(shape, distribution, &mut rng);
         *seed = Some(rng);
         FlexTensor::from_data(data)
@@ -564,49 +603,32 @@ impl IntTensorOps<Flex> for Flex {
         crate::ops::reduce::min_dim_with_indices(tensor, dim)
     }
 
-    fn int_any(tensor: IntTensor<Flex>) -> BoolTensor<Flex> {
+    fn int_any(tensor: IntTensor<Flex>, _out_dtype: burn_std::BoolDType) -> BoolTensor<Flex> {
         crate::ops::comparison::any_int(tensor)
     }
 
-    fn int_any_dim(tensor: IntTensor<Flex>, dim: usize) -> BoolTensor<Flex> {
+    fn int_any_dim(
+        tensor: IntTensor<Flex>,
+        dim: usize,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::any_int_dim(tensor, dim)
     }
 
-    fn int_all(tensor: IntTensor<Flex>) -> BoolTensor<Flex> {
+    fn int_all(tensor: IntTensor<Flex>, _out_dtype: burn_std::BoolDType) -> BoolTensor<Flex> {
         crate::ops::comparison::all_int(tensor)
     }
 
-    fn int_all_dim(tensor: IntTensor<Flex>, dim: usize) -> BoolTensor<Flex> {
+    fn int_all_dim(
+        tensor: IntTensor<Flex>,
+        dim: usize,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::all_int_dim(tensor, dim)
     }
 
     fn int_powi(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> IntTensor<Flex> {
         int_binary_op(lhs, rhs, |a, b| a.wrapping_pow(b as u32))
-    }
-
-    fn int_powf(lhs: IntTensor<Flex>, rhs: FloatTensor<Flex>) -> IntTensor<Flex> {
-        // Convert both to f32, compute powf, convert back to i64
-        let lhs = lhs.to_contiguous();
-        let rhs = rhs.to_contiguous();
-
-        let lhs_data: &[i64] = lhs.storage();
-        let rhs_data: &[f32] = rhs.storage();
-        let result: Vec<i64> = lhs_data
-            .iter()
-            .zip(rhs_data.iter())
-            .map(|(&a, &b)| (a as f64).powf(b as f64).round() as i64)
-            .collect();
-
-        FlexTensor::new(
-            Bytes::from_elems(result),
-            Layout::contiguous(lhs.layout().shape().clone()),
-            DType::I64,
-        )
-    }
-
-    fn int_powf_scalar(lhs: IntTensor<Flex>, rhs: Scalar) -> IntTensor<Flex> {
-        let exp = rhs.to_f64().unwrap() as u32;
-        int_scalar_op(lhs, 0, move |a, _| a.wrapping_pow(exp))
     }
 }
 

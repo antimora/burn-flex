@@ -22,7 +22,7 @@ impl Layout {
 
         // Compute strides from right to left
         for i in (0..ndims.saturating_sub(1)).rev() {
-            strides[i] = strides[i + 1] * shape.dims[i + 1] as isize;
+            strides[i] = strides[i + 1] * shape[i + 1] as isize;
         }
 
         Self {
@@ -78,7 +78,7 @@ impl Layout {
             if self.strides[i] != expected_stride {
                 return false;
             }
-            expected_stride *= self.shape.dims[i] as isize;
+            expected_stride *= self.shape[i] as isize;
         }
         true
     }
@@ -94,7 +94,7 @@ impl Layout {
 
     /// Transpose: swap two dimensions (zero-copy, metadata only).
     pub fn transpose(&self, dim1: usize, dim2: usize) -> Self {
-        let mut dims = self.shape.dims.clone();
+        let mut dims = self.shape.to_vec();
         let mut strides = self.strides.clone();
         dims.swap(dim1, dim2);
         strides.swap(dim1, dim2);
@@ -115,7 +115,7 @@ impl Layout {
             "permute: axes length must match number of dimensions"
         );
 
-        let new_dims: Vec<usize> = axes.iter().map(|&i| self.shape.dims[i]).collect();
+        let new_dims: Vec<usize> = axes.iter().map(|&i| self.shape[i]).collect();
         let new_strides: Vec<isize> = axes.iter().map(|&i| self.strides[i]).collect();
 
         Self {
@@ -141,7 +141,7 @@ impl Layout {
                 self.num_dims()
             );
 
-            let dim_size = self.shape.dims[axis];
+            let dim_size = self.shape[axis];
             if dim_size > 1 {
                 // Move start to last element along this axis
                 offset_adjustment += (dim_size as isize - 1) * self.strides[axis];
@@ -164,13 +164,13 @@ impl Layout {
     /// Narrow/slice along a dimension (zero-copy, metadata only).
     pub fn narrow(&self, dim: usize, start: usize, len: usize) -> Self {
         debug_assert!(
-            start + len <= self.shape.dims[dim],
+            start + len <= self.shape[dim],
             "narrow: start ({}) + len ({}) exceeds dimension size ({})",
             start,
             len,
-            self.shape.dims[dim]
+            self.shape[dim]
         );
-        let mut dims = self.shape.dims.clone();
+        let mut dims = self.shape.to_vec();
         dims[dim] = len;
 
         let new_offset_isize = self.start_offset as isize + self.strides[dim] * start as isize;
@@ -191,7 +191,7 @@ impl Layout {
     /// - `needs_copy = true`: Has negative steps requiring data reordering
     pub fn slice(&self, slices: &[Slice]) -> (Self, bool) {
         let ndims = self.num_dims();
-        let mut new_dims = self.shape.dims.clone();
+        let mut new_dims = self.shape.to_vec();
         let mut new_strides = self.strides.clone();
         let mut new_offset = self.start_offset as isize;
         let mut needs_copy = false;
@@ -201,7 +201,7 @@ impl Layout {
                 break;
             }
 
-            let dim_size = self.shape.dims[dim] as isize;
+            let dim_size = self.shape[dim] as isize;
             let stride = self.strides[dim];
 
             // Normalize start index (handle negative)
@@ -305,8 +305,8 @@ impl Layout {
             return None;
         }
         Some((
-            self.shape.dims[0],
-            self.shape.dims[1],
+            self.shape[0],
+            self.shape[1],
             self.strides[0],
             self.strides[1],
         ))
@@ -348,8 +348,8 @@ impl Layout {
 
         for i in (0..ndims).rev() {
             if self.strides[i] == expected_stride {
-                block_len *= self.shape.dims[i];
-                expected_stride *= self.shape.dims[i] as isize;
+                block_len *= self.shape[i];
+                expected_stride *= self.shape[i] as isize;
             } else {
                 break;
             }
@@ -413,7 +413,7 @@ impl<'a> StridedBlocks<'a> {
 
                 for i in (0..ndims).rev() {
                     if layout.strides[i] == expected_stride {
-                        expected_stride *= layout.shape.dims[i] as isize;
+                        expected_stride *= layout.shape[i] as isize;
                     } else {
                         outer_dims = i + 1;
                         break;
@@ -481,7 +481,7 @@ impl Iterator for BlockStartIter<'_> {
                 let shape = &layout.shape;
                 for d in (0..outer_dims).rev() {
                     multi_index[d] += 1;
-                    if multi_index[d] < shape.dims[d] {
+                    if multi_index[d] < shape[d] {
                         break;
                     }
                     multi_index[d] = 0;
@@ -524,7 +524,7 @@ mod tests {
     fn test_transpose() {
         let layout = Layout::contiguous(Shape::from(vec![2, 3]));
         let transposed = layout.transpose(0, 1);
-        assert_eq!(transposed.shape().dims, vec![3, 2]);
+        assert_eq!(transposed.shape().to_vec(), vec![3, 2]);
         assert_eq!(transposed.strides(), &[1, 3]);
         assert!(!transposed.is_contiguous());
     }
@@ -533,7 +533,7 @@ mod tests {
     fn test_narrow() {
         let layout = Layout::contiguous(Shape::from(vec![4, 4]));
         let narrowed = layout.narrow(0, 1, 2);
-        assert_eq!(narrowed.shape().dims, vec![2, 4]);
+        assert_eq!(narrowed.shape().to_vec(), vec![2, 4]);
         assert_eq!(narrowed.start_offset(), 4);
     }
 
@@ -559,7 +559,7 @@ mod tests {
         let layout = Layout::contiguous(Shape::from(vec![4]));
         let flipped = layout.flip(&[0]);
 
-        assert_eq!(flipped.shape().dims, vec![4]);
+        assert_eq!(flipped.shape().to_vec(), vec![4]);
         assert_eq!(flipped.strides(), &[-1]);
         assert_eq!(flipped.start_offset(), 3);
 

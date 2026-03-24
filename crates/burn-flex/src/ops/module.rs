@@ -7,10 +7,11 @@ use crate::{Flex, FlexTensor, Layout};
 use burn_backend::{
     DType, Element,
     ops::{
-        ConvOptions, ConvTransposeOptions, DeformConv2dBackward, DeformConvOptions,
-        InterpolateMode, InterpolateOptions, MaxPool2dBackward, MaxPool2dWithIndices, ModuleOps,
+        AttentionModuleOptions, ConvOptions, ConvTransposeOptions, DeformConv2dBackward,
+        DeformConvOptions, InterpolateMode, InterpolateOptions, MaxPool2dBackward,
+        MaxPool2dWithIndices, ModuleOps,
     },
-    tensor::{FloatTensor, IntTensor},
+    tensor::{BoolTensor, FloatTensor, IntTensor},
 };
 use burn_std::Bytes;
 use bytemuck::Pod;
@@ -609,5 +610,19 @@ impl ModuleOps<Flex> for Flex {
                 )
             }
         }
+    }
+
+    fn attention(
+        query: FloatTensor<Flex>,
+        key: FloatTensor<Flex>,
+        value: FloatTensor<Flex>,
+        mask: Option<BoolTensor<Flex>>,
+        attn_bias: Option<FloatTensor<Flex>>,
+        options: AttentionModuleOptions,
+    ) -> FloatTensor<Flex> {
+        // TODO: implement fused attention kernel (see issue)
+        burn_backend::ops::attention::attention_fallback::<Flex>(
+            query, key, value, mask, attn_bias, options,
+        )
     }
 }

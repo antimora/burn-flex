@@ -38,7 +38,7 @@ fn slice_with_copy(tensor: &FlexTensor, slices: &[Slice]) -> FlexTensor {
         DType::U64 => slice_copy_impl::<u64>(tensor, slices),
         DType::U16 => slice_copy_impl::<u16>(tensor, slices),
         DType::U8 => slice_copy_impl::<u8>(tensor, slices),
-        DType::Bool => slice_copy_impl::<u8>(tensor, slices),
+        DType::Bool(_) => slice_copy_impl::<u8>(tensor, slices),
         _ => panic!("slice: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -57,7 +57,7 @@ fn slice_copy_impl<E: Element + bytemuck::Pod + Default>(
     let mut slice_info: Vec<(usize, usize, isize)> = Vec::with_capacity(ndims); // (start, len, step)
 
     for dim in 0..ndims {
-        let dim_size = src_layout.shape().dims[dim] as isize;
+        let dim_size = src_layout.shape()[dim] as isize;
 
         let slice = if dim < slices.len() {
             &slices[dim]
@@ -163,7 +163,7 @@ pub fn slice_assign(tensor: FlexTensor, slices: &[Slice], value: FlexTensor) -> 
         DType::U64 => slice_assign_impl::<u64>(tensor, slices, value),
         DType::U16 => slice_assign_impl::<u16>(tensor, slices, value),
         DType::U8 => slice_assign_impl::<u8>(tensor, slices, value),
-        DType::Bool => slice_assign_impl::<u8>(tensor, slices, value),
+        DType::Bool(_) => slice_assign_impl::<u8>(tensor, slices, value),
         _ => panic!("slice_assign: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -186,7 +186,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
     // Calculate slice info: (start, len, step) for each dimension
     let slice_info: Vec<(usize, usize, isize)> = (0..ndims)
         .map(|dim| {
-            let dim_size = dst_layout.shape().dims[dim] as isize;
+            let dim_size = dst_layout.shape()[dim] as isize;
             let slice = if dim < slices.len() {
                 &slices[dim]
             } else {
@@ -226,7 +226,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
         // 2D with contiguous inner: row-based memcpy
         let (row_start, row_len, row_step) = slice_info[0];
         let (col_start, col_len, _) = slice_info[1];
-        let dst_cols = dst_layout.shape().dims[1];
+        let dst_cols = dst_layout.shape()[1];
 
         let mut val_offset = 0;
         for r in 0..row_len {
@@ -370,7 +370,7 @@ mod tests {
         let slices = vec![Slice::new(0, Some(1), 1), Slice::new(1, Some(3), 1)];
         let result = slice(tensor, &slices);
 
-        assert_eq!(result.layout().shape().dims, vec![1, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 2]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![1.0, 2.0]);
@@ -386,7 +386,7 @@ mod tests {
         let slices = vec![Slice::new(0, Some(6), 2)];
         let result = slice(tensor, &slices);
 
-        assert_eq!(result.layout().shape().dims, vec![3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![3]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![0.0, 2.0, 4.0]);
@@ -402,7 +402,7 @@ mod tests {
         let slices = vec![Slice::new(-3, None, 1)];
         let result = slice(tensor, &slices);
 
-        assert_eq!(result.layout().shape().dims, vec![3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![3]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![2.0, 3.0, 4.0]);
@@ -419,7 +419,7 @@ mod tests {
         let slices = vec![Slice::new(0, None, -1)];
         let result = slice(tensor, &slices);
 
-        assert_eq!(result.layout().shape().dims, vec![5]);
+        assert_eq!(result.layout().shape().to_vec(), vec![5]);
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
         assert_eq!(values, vec![4.0, 3.0, 2.0, 1.0, 0.0]);

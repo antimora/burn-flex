@@ -26,7 +26,7 @@ pub fn cat(tensors: Vec<FlexTensor>, dim: usize) -> FlexTensor {
         DType::U64 => cat_impl::<u64>(tensors, dim),
         DType::U32 => cat_impl::<u32>(tensors, dim),
         DType::U16 => cat_impl::<u16>(tensors, dim),
-        DType::U8 | DType::Bool => cat_impl::<u8>(tensors, dim),
+        DType::U8 | DType::Bool(_) => cat_impl::<u8>(tensors, dim),
         _ => panic!("cat: unsupported dtype {:?}", dtype),
     }
 }
@@ -44,19 +44,19 @@ fn cat_impl<E: Element + bytemuck::Pod>(tensors: Vec<FlexTensor>, dim: usize) ->
     );
 
     // Compute output shape: sum along cat dim, others must match
-    let mut out_dims = first_shape.dims.clone();
+    let mut out_dims = first_shape.to_vec();
     out_dims[dim] = 0;
     for t in &tensors {
         let s = t.layout().shape();
         assert_eq!(s.num_dims(), ndims, "cat: dimension count mismatch");
         for (d, out_d) in out_dims.iter_mut().enumerate() {
             if d == dim {
-                *out_d += s.dims[d];
+                *out_d += s[d];
             } else {
                 assert_eq!(
-                    s.dims[d], first_shape.dims[d],
+                    s[d], first_shape[d],
                     "cat: shape mismatch at dim {d}: expected {}, got {}",
-                    first_shape.dims[d], s.dims[d]
+                    first_shape[d], s[d]
                 );
             }
         }
@@ -96,7 +96,7 @@ fn cat_impl<E: Element + bytemuck::Pod>(tensors: Vec<FlexTensor>, dim: usize) ->
         for outer in 0..outer_size {
             for t in &contiguous {
                 let data: &[E] = t.storage();
-                let t_dim_size = t.layout().shape().dims[dim];
+                let t_dim_size = t.layout().shape()[dim];
                 let t_start = t.layout().start_offset();
                 // Each tensor's chunk for this outer index:
                 // offset = t_start + outer * t_dim_size * inner_size

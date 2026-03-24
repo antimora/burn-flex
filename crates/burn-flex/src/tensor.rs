@@ -24,7 +24,7 @@ pub struct FlexTensor {
 impl fmt::Debug for FlexTensor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FlexTensor")
-            .field("shape", &self.layout.shape().dims)
+            .field("shape", self.layout.shape())
             .field("dtype", &self.dtype)
             .field("contiguous", &self.layout.is_contiguous())
             .field("unique", &self.is_unique())
@@ -44,7 +44,7 @@ impl FlexTensor {
 
     /// Create a tensor from TensorData.
     pub fn from_data(data: TensorData) -> Self {
-        let shape = Shape::from(data.shape.clone());
+        let shape = data.shape.clone();
         let layout = Layout::contiguous(shape);
         let dtype = data.dtype;
         Self {
@@ -63,7 +63,7 @@ impl FlexTensor {
             match Arc::try_unwrap(self.data) {
                 Ok(bytes) => TensorData {
                     bytes,
-                    shape: self.layout.shape().dims.clone(),
+                    shape: self.layout.shape().clone(),
                     dtype: self.dtype,
                 },
                 Err(arc) => {
@@ -71,7 +71,7 @@ impl FlexTensor {
                     let bytes = Bytes::from_bytes_vec((*arc).to_vec());
                     TensorData {
                         bytes,
-                        shape: self.layout.shape().dims.clone(),
+                        shape: self.layout.shape().clone(),
                         dtype: self.dtype,
                     }
                 }
@@ -149,7 +149,8 @@ impl FlexTensor {
     /// Note: Bool tensors are stored as u8, so both Bool and U8 dtypes accept u8 access.
     pub fn storage<E: Element + bytemuck::Pod>(&self) -> &[E] {
         debug_assert!(
-            E::dtype() == self.dtype || (self.dtype == DType::Bool && E::dtype() == DType::U8),
+            E::dtype() == self.dtype
+                || (matches!(self.dtype, DType::Bool(_)) && E::dtype() == DType::U8),
             "storage: dtype mismatch (expected {:?}, got {:?})",
             self.dtype,
             E::dtype()
@@ -168,7 +169,8 @@ impl FlexTensor {
     /// Note: Bool tensors are stored as u8, so both Bool and U8 dtypes accept u8 access.
     pub fn storage_mut<E: Element + bytemuck::Pod>(&mut self) -> &mut [E] {
         debug_assert!(
-            E::dtype() == self.dtype || (self.dtype == DType::Bool && E::dtype() == DType::U8),
+            E::dtype() == self.dtype
+                || (matches!(self.dtype, DType::Bool(_)) && E::dtype() == DType::U8),
             "storage_mut: dtype mismatch (expected {:?}, got {:?})",
             self.dtype,
             E::dtype()
@@ -185,7 +187,8 @@ impl FlexTensor {
     /// Note: Bool tensors are stored as u8, so both Bool and U8 dtypes accept u8 access.
     pub fn try_storage_mut<E: Element + bytemuck::Pod>(&mut self) -> Option<&mut [E]> {
         debug_assert!(
-            E::dtype() == self.dtype || (self.dtype == DType::Bool && E::dtype() == DType::U8),
+            E::dtype() == self.dtype
+                || (matches!(self.dtype, DType::Bool(_)) && E::dtype() == DType::U8),
             "try_storage_mut: dtype mismatch (expected {:?}, got {:?})",
             self.dtype,
             E::dtype()
@@ -250,7 +253,7 @@ impl FlexTensor {
             DType::U32 => self.copy_contiguous::<u32>(),
             DType::U16 => self.copy_contiguous::<u16>(),
             DType::U8 => self.copy_contiguous::<u8>(),
-            DType::Bool => self.copy_contiguous::<u8>(), // bool as u8
+            DType::Bool(_) => self.copy_contiguous::<u8>(), // bool as u8
             _ => panic!("Unsupported dtype for contiguous copy: {:?}", self.dtype),
         }
     }
@@ -354,7 +357,7 @@ fn dtype_size(dtype: DType) -> usize {
         DType::F64 | DType::I64 | DType::U64 => 8,
         DType::F32 | DType::I32 | DType::U32 => 4,
         DType::F16 | DType::BF16 | DType::I16 | DType::U16 => 2,
-        DType::I8 | DType::U8 | DType::Bool => 1,
+        DType::I8 | DType::U8 | DType::Bool(_) => 1,
         _ => panic!("Unsupported dtype: {:?}", dtype),
     }
 }
@@ -378,7 +381,7 @@ mod tests {
         let data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
         let tensor = FlexTensor::from_data(data);
         let reshaped = tensor.reshape(Shape::from(vec![3, 2]));
-        assert_eq!(reshaped.shape().dims, vec![3, 2]);
+        assert_eq!(reshaped.shape().to_vec(), vec![3, 2]);
     }
 
     #[test]
@@ -386,7 +389,7 @@ mod tests {
         let data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
         let tensor = FlexTensor::from_data(data);
         let transposed = tensor.transpose(0, 1);
-        assert_eq!(transposed.shape().dims, vec![3, 2]);
+        assert_eq!(transposed.shape().to_vec(), vec![3, 2]);
         assert!(!transposed.is_contiguous());
     }
 

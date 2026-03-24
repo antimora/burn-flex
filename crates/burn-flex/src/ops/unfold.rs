@@ -48,19 +48,19 @@ pub fn unfold(tensor: FlexTensor, dim: usize, size: usize, step: usize) -> FlexT
     assert!(size > 0, "window size must be positive");
     assert!(step > 0, "step must be positive");
     assert!(
-        shape.dims[dim] >= size,
+        shape[dim] >= size,
         "dimension {} has size {} which is smaller than window size {}",
         dim,
-        shape.dims[dim],
+        shape[dim],
         size
     );
 
-    let dim_size = shape.dims[dim];
+    let dim_size = shape[dim];
     let windows = calculate_windows(dim_size, size, step);
 
     // Build output shape: [pre..., windows, post..., size]
     let mut output_dims: Vec<usize> = Vec::with_capacity(ndims + 1);
-    for (d, &s) in shape.dims.iter().enumerate() {
+    for (d, &s) in shape.iter().enumerate() {
         if d == dim {
             output_dims.push(windows);
         } else {
@@ -127,7 +127,7 @@ mod tests {
         // Window 2: [3, 4, 5]
         let tensor = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0], [5]));
         let result = unfold_f32(tensor, 0, 3, 1);
-        assert_eq!(result.layout().shape().dims, vec![3, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![3, 3]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 3.0, 4.0, 5.0]);
     }
@@ -143,7 +143,7 @@ mod tests {
         let tensor =
             FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [6]));
         let result = unfold_f32(tensor, 0, 3, 2);
-        assert_eq!(result.layout().shape().dims, vec![2, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 3]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1.0, 2.0, 3.0, 3.0, 4.0, 5.0]);
     }
@@ -159,7 +159,7 @@ mod tests {
             [2, 4],
         ));
         let result = unfold_f32(tensor, 1, 2, 1);
-        assert_eq!(result.layout().shape().dims, vec![2, 3, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 3, 2]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         // Row 0: windows [1,2], [2,3], [3,4]
         // Row 1: windows [5,6], [6,7], [7,8]

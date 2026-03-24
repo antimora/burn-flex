@@ -327,7 +327,7 @@ mod tests {
 
     fn tensor_from_vec(data: Vec<f32>) -> FlexTensor {
         let shape = burn_std::Shape::from(vec![data.len()]);
-        FlexTensor::from_data(TensorData::new(data, shape.dims.clone()))
+        FlexTensor::from_data(TensorData::new(data, shape.to_vec()))
     }
 
     #[test]
@@ -544,7 +544,7 @@ mod tests {
                 },
             ],
         );
-        assert_eq!(sliced.layout().shape().dims, &[1, 4]);
+        assert_eq!(sliced.layout().shape().to_vec(), vec![1, 4]);
         assert_eq!(sliced.layout().strides()[1], 2); // stride=2 on last dim
 
         // Verify the sliced data is correct before applying sin
@@ -588,7 +588,7 @@ mod tests {
                 },
             ],
         );
-        assert_eq!(sliced.layout().shape().dims, &[1, 2, 3]);
+        assert_eq!(sliced.layout().shape().to_vec(), vec![1, 2, 3]);
 
         // Even indices from each row: row0 = [0, 1.0, 2.0], row1 = [3.0, 4.0, 5.0]
         sliced.clone().into_data().assert_approx_eq::<f32>(
