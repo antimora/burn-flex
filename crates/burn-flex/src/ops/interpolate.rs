@@ -600,6 +600,11 @@ fn lanczos3_weight(x: f64) -> f64 {
 }
 
 /// Lanczos3 interpolation (6x6 sinc-windowed kernel).
+///
+/// Uses skip-and-renormalize boundary handling: out-of-bounds samples are
+/// excluded and weights are renormalized. This avoids edge ringing artifacts
+/// from replicated boundary pixels (unlike bicubic which clamps to edge).
+/// Matches the ndarray reference implementation.
 fn interpolate_lanczos3_impl<T>(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
