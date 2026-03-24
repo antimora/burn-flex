@@ -25,7 +25,14 @@ pub fn attention(
     attn_bias: Option<FlexTensor>,
     options: AttentionModuleOptions,
 ) -> FlexTensor {
-    match query.dtype() {
+    let dtype = query.dtype();
+    debug_assert_eq!(key.dtype(), dtype, "attention: key dtype mismatch");
+    debug_assert_eq!(value.dtype(), dtype, "attention: value dtype mismatch");
+    if let Some(ref b) = attn_bias {
+        debug_assert_eq!(b.dtype(), dtype, "attention: attn_bias dtype mismatch");
+    }
+
+    match dtype {
         DType::F32 => attention_impl::<f32>(query, key, value, mask, attn_bias, options),
         DType::F64 => attention_impl::<f64>(query, key, value, mask, attn_bias, options),
         DType::F16 => {
@@ -105,7 +112,7 @@ fn attention_impl<T>(
     options: AttentionModuleOptions,
 ) -> FlexTensor
 where
-    T: Float + Pod + Copy + burn_backend::Element + Default + core::iter::Sum,
+    T: Float + Pod + Copy + burn_backend::Element,
     T: core::ops::AddAssign,
 {
     if let Some(softcap) = options.softcap {
@@ -144,7 +151,7 @@ fn fused_softmax<T>(
     head_dim: usize,
 ) -> FlexTensor
 where
-    T: Float + Pod + Copy + burn_backend::Element + Default + core::iter::Sum,
+    T: Float + Pod + Copy + burn_backend::Element,
     T: core::ops::AddAssign,
 {
     let scores = scores.to_contiguous();
@@ -158,10 +165,28 @@ where
 
     let scores_data: &[T] = scores.storage();
 
-    let mask_tensor = mask.map(|m| m.to_contiguous());
+    let scores_numel = scores_data.len();
+
+    let mask_tensor = mask.map(|m| {
+        let m = m.to_contiguous();
+        debug_assert_eq!(
+            m.layout().num_elements(),
+            scores_numel,
+            "attention: mask shape must match scores shape"
+        );
+        m
+    });
     let mask_data: Option<&[u8]> = mask_tensor.as_ref().map(|m| m.bytes());
 
-    let bias_tensor = attn_bias.map(|b| b.to_contiguous());
+    let bias_tensor = attn_bias.map(|b| {
+        let b = b.to_contiguous();
+        debug_assert_eq!(
+            b.layout().num_elements(),
+            scores_numel,
+            "attention: attn_bias shape must match scores shape"
+        );
+        b
+    });
     let bias_data: Option<&[T]> = bias_tensor.as_ref().map(|b| b.storage());
 
     let scale = T::from(
@@ -268,6 +293,15 @@ fn fused_softmax_row<T>(
         }
     }
 
+    // Handle all-masked rows: if every position was masked, row_max stays -inf
+    // and exp(-inf - -inf) = exp(NaN) = NaN. Output zeros instead.
+    if row_max == neg_inf {
+        for k in 0..seq_k {
+            output[k] = T::zero();
+        }
+        return;
+    }
+
     // Pass 2: exp(x - max) and sum
     let mut sum = T::zero();
     for k in 0..seq_k {
@@ -277,17 +311,15 @@ fn fused_softmax_row<T>(
     }
 
     // Normalize
-    if sum > T::zero() {
-        let inv_sum = T::one() / sum;
-        for k in 0..seq_k {
-            output[k] = output[k] * inv_sum;
-        }
+    let inv_sum = T::one() / sum;
+    for k in 0..seq_k {
+        output[k] = output[k] * inv_sum;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use burn_backend::ops::{AttentionModuleOptions, ModuleOps};
+    use burn_backend::ops::AttentionModuleOptions;
     use burn_tensor::{Tensor, TensorData};
 
     use crate::Flex;
@@ -483,12 +515,33 @@ mod tests {
             is_causal: true,
             ..Default::default()
         };
-        let result = burn_tensor::module::attention(q, k, v, None, None, opts);
-        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        let result_causal =
+            burn_tensor::module::attention(q.clone(), k.clone(), v.clone(), None, None, opts);
+        let data_causal: Vec<f32> = result_causal.into_data().to_vec().unwrap();
+
+        let result_full =
+            burn_tensor::module::attention(q, k, v, None, None, Default::default());
+        let data_full: Vec<f32> = result_full.into_data().to_vec().unwrap();
 
         // With causal offset = seq_k - seq_q = 2:
-        // Row 0 (q_pos=0): can attend to k positions where k <= 0+2 = 2, so k=0,1,2
-        // Row 1 (q_pos=1): can attend to k positions where k <= 1+2 = 3, so all
-        assert_eq!(data.len(), 2);
+        // Row 0 (q_pos=0): can attend to k=0,1,2 but NOT k=3 (v=40.0)
+        // Row 1 (q_pos=1): can attend to all 4 positions
+        assert_eq!(data_causal.len(), 2);
+
+        // Causal hides v=40.0 from first query, so output must be less than non-causal
+        assert!(
+            data_causal[0] < data_full[0],
+            "expected causal[0] < full[0], got {} vs {}",
+            data_causal[0],
+            data_full[0]
+        );
+
+        // Second query sees all positions in both cases
+        assert!(
+            (data_causal[1] - data_full[1]).abs() < 1e-5,
+            "expected causal[1] ~= full[1], got {} vs {}",
+            data_causal[1],
+            data_full[1]
+        );
     }
 }
