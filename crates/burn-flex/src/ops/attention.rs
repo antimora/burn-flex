@@ -541,4 +541,82 @@ mod tests {
             data_full[1]
         );
     }
+
+    #[test]
+    fn test_all_masked_produces_zeros() {
+        // Mask every position: output should be zeros, not NaN
+        let (q, k, v) = make_qkv(
+            &[&[1.0, 0.0], &[0.0, 1.0]],
+            &[&[1.0, 0.0], &[0.0, 1.0]],
+            &[&[10.0], &[20.0]],
+        );
+
+        let dev = Default::default();
+        use burn_tensor::Bool;
+        let mask: Tensor<Flex, 4, Bool> = Tensor::from_data(
+            TensorData::from([[[[true, true], [true, true]]]]),
+            &dev,
+        );
+
+        let result =
+            burn_tensor::module::attention(q, k, v, Some(mask), None, Default::default());
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        for (i, &val) in data.iter().enumerate() {
+            assert!(!val.is_nan(), "output[{i}] is NaN");
+            assert!((val - 0.0).abs() < 1e-6, "expected 0.0, got {val}");
+        }
+    }
+
+    #[test]
+    fn test_multi_batch_multi_head() {
+        // batch=2, heads=2: verify each batch/head is independent
+        let dev = Default::default();
+        let q: Tensor<Flex, 4> = Tensor::from_data(
+            TensorData::new(
+                vec![
+                    // batch 0, head 0
+                    1.0f32, 0.0, 0.0, 1.0,
+                    // batch 0, head 1
+                    0.5, 0.5, 0.5, 0.5,
+                    // batch 1, head 0
+                    1.0, 0.0, 0.0, 1.0,
+                    // batch 1, head 1
+                    0.0, 1.0, 1.0, 0.0,
+                ],
+                [2, 2, 2, 2],
+            ),
+            &dev,
+        );
+        let k = q.clone();
+        let v: Tensor<Flex, 4> = Tensor::from_data(
+            TensorData::new(vec![10.0f32; 16], [2, 2, 2, 2]),
+            &dev,
+        );
+
+        let result = burn_tensor::module::attention(q, k, v, None, None, Default::default());
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // With uniform V=10, all outputs should be 10 regardless of attention weights
+        assert_eq!(data.len(), 16);
+        for (i, &val) in data.iter().enumerate() {
+            assert!(
+                (val - 10.0).abs() < 1e-4,
+                "output[{i}] = {val}, expected 10.0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_single_element() {
+        // seq_q=1, seq_k=1: autoregressive decoding shape
+        let (q, k, v) = make_qkv(&[&[1.0, 0.0]], &[&[1.0, 0.0]], &[&[42.0]]);
+
+        let result = burn_tensor::module::attention(q, k, v, None, None, Default::default());
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // Single-element softmax = 1.0, so output = V[0] exactly
+        assert_eq!(data.len(), 1);
+        assert!((data[0] - 42.0).abs() < 1e-5, "got {}", data[0]);
+    }
 }
