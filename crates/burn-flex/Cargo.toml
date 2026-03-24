@@ -38,6 +38,10 @@ burn-ndarray = { workspace = true }
 divan = { workspace = true }
 
 [[bench]]
+name = "attention"
+harness = false
+
+[[bench]]
 name = "binary_ops"
 harness = false
 
