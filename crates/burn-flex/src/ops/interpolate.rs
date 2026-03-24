@@ -632,12 +632,19 @@ where
     let max_h = in_height as isize - 1;
     let max_w = in_width as isize - 1;
 
-    let lanczos3_pixel = |in_base: usize, oh: usize, ow: usize| -> T {
-        let y_in = map_coord(oh, y_ratio, align_corners);
-        let x_in = map_coord(ow, x_ratio, align_corners);
-        let y0 = y_in.floor();
+    /// Compute one Lanczos3 output pixel given pre-computed y coordinates.
+    #[inline]
+    fn lanczos3_sample<T: Float + burn_backend::Element + bytemuck::Pod>(
+        input: &[T],
+        in_base: usize,
+        in_width: usize,
+        y_in: f64,
+        y0: f64,
+        x_in: f64,
+        max_h: isize,
+        max_w: isize,
+    ) -> T {
         let x0 = x_in.floor();
-
         let mut result = 0.0_f64;
         let mut weight_sum = 0.0_f64;
 
@@ -665,7 +672,7 @@ where
             result /= weight_sum;
         }
         T::from(result).unwrap()
-    };
+    }
 
     let output = {
         #[cfg(feature = "rayon")]
@@ -685,10 +692,17 @@ where
                 let in_base = b * channels * in_hw + c * in_hw;
                 let out_base = b * channels * out_hw + c * out_hw;
 
+                let y_in = map_coord(oh, y_ratio, align_corners);
+                let y0 = y_in.floor();
+
                 for ow in 0..out_width {
+                    let x_in = map_coord(ow, x_ratio, align_corners);
                     let out_idx = out_base + oh * out_width + ow;
                     unsafe {
-                        out_ptr.write(out_idx, lanczos3_pixel(in_base, oh, ow));
+                        out_ptr.write(
+                            out_idx,
+                            lanczos3_sample(input, in_base, in_width, y_in, y0, x_in, max_h, max_w),
+                        );
                     }
                 }
             });
@@ -704,9 +718,13 @@ where
                     let out_base = b * channels * out_hw + c * out_hw;
 
                     for oh in 0..out_height {
+                        let y_in = map_coord(oh, y_ratio, align_corners);
+                        let y0 = y_in.floor();
+
                         for ow in 0..out_width {
+                            let x_in = map_coord(ow, x_ratio, align_corners);
                             output[out_base + oh * out_width + ow] =
-                                lanczos3_pixel(in_base, oh, ow);
+                                lanczos3_sample(input, in_base, in_width, y_in, y0, x_in, max_h, max_w);
                         }
                     }
                 }
@@ -989,7 +1007,7 @@ mod tests {
             DType::F32,
         );
 
-        let result = interpolate_nearest_f32(x, [4, 4]);
+        let result = interpolate_nearest_f32(x, [4, 4], true);
         let output = result.storage::<f32>();
 
         assert_eq!(output.len(), 16);
@@ -1008,7 +1026,7 @@ mod tests {
             DType::F32,
         );
 
-        let result = interpolate_bilinear_f32(x, [4, 4]);
+        let result = interpolate_bilinear_f32(x, [4, 4], true);
         let output = result.storage::<f32>();
 
         assert!((output[0] - 0.0).abs() < 1e-5);
@@ -1020,14 +1038,14 @@ mod tests {
     #[test]
     fn test_bicubic_basic() {
         let x = make_input_f32(1, 1, 4, 4);
-        let result = interpolate_bicubic_f32(x, [8, 8]);
+        let result = interpolate_bicubic_f32(x, [8, 8], true);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 8, 8]);
     }
 
     #[test]
     fn test_downsample() {
         let x = make_input_f32(1, 1, 4, 4);
-        let result = interpolate_nearest_f32(x, [2, 2]);
+        let result = interpolate_nearest_f32(x, [2, 2], true);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 2, 2]);
     }
 
@@ -1040,7 +1058,7 @@ mod tests {
             DType::F32,
         );
 
-        let result = interpolate_nearest_backward_f32(x, grad, [4, 4]);
+        let result = interpolate_nearest_backward_f32(x, grad, [4, 4], true);
         let output = result.storage::<f32>();
 
         assert_eq!(output.len(), 4);
