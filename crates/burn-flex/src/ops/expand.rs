@@ -18,12 +18,12 @@ pub fn broadcast_shape(lhs: &Shape, rhs: &Shape) -> Shape {
         let rhs_idx = i as isize + rhs.num_dims() as isize - max_dims as isize;
 
         let lhs_dim = if lhs_idx >= 0 {
-            lhs.dims[lhs_idx as usize]
+            lhs[lhs_idx as usize]
         } else {
             1
         };
         let rhs_dim = if rhs_idx >= 0 {
-            rhs.dims[rhs_idx as usize]
+            rhs[rhs_idx as usize]
         } else {
             1
         };
@@ -76,7 +76,7 @@ pub fn broadcast_binary(lhs: FlexTensor, rhs: FlexTensor) -> (FlexTensor, FlexTe
 /// that doesn't copy data - it uses stride 0 for expanded dimensions.
 pub fn expand(tensor: FlexTensor, target_shape: Shape) -> FlexTensor {
     // Capture values we need before consuming tensor
-    let src_dims = tensor.layout().shape().dims.clone();
+    let src_dims = tensor.layout().shape().to_vec();
     let src_strides = tensor.layout().strides().to_vec();
     let start_offset = tensor.layout().start_offset();
     let dtype = tensor.dtype();
@@ -90,7 +90,7 @@ pub fn expand(tensor: FlexTensor, target_shape: Shape) -> FlexTensor {
     let mut new_strides = Vec::with_capacity(target_ndims);
 
     for i in 0..target_ndims {
-        let target_dim = target_shape.dims[i];
+        let target_dim = target_shape[i];
 
         if i < dim_diff {
             // New dimension prepended - must be broadcastable from size 1
@@ -130,7 +130,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0], [3]));
         let expanded = expand(tensor, Shape::new([2, 3]));
 
-        assert_eq!(expanded.layout().shape().dims, vec![2, 3]);
+        assert_eq!(expanded.layout().shape().to_vec(), vec![2, 3]);
         assert_eq!(expanded.layout().strides(), &[0, 1]);
     }
 
@@ -140,7 +140,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0], [3, 1]));
         let expanded = expand(tensor, Shape::new([3, 4]));
 
-        assert_eq!(expanded.layout().shape().dims, vec![3, 4]);
+        assert_eq!(expanded.layout().shape().to_vec(), vec![3, 4]);
         // Original strides for [3, 1] would be [1, 1]
         // After expand to [3, 4], stride for dim 1 becomes 0
         assert_eq!(expanded.layout().strides()[1], 0);
@@ -156,7 +156,7 @@ mod tests {
         let original_strides = tensor.layout().strides().to_vec();
         let expanded = expand(tensor, Shape::new([2, 3]));
 
-        assert_eq!(expanded.layout().shape().dims, vec![2, 3]);
+        assert_eq!(expanded.layout().shape().to_vec(), vec![2, 3]);
         assert_eq!(expanded.layout().strides(), &original_strides);
     }
 
@@ -172,7 +172,7 @@ mod tests {
         assert_eq!(transposed.layout().strides(), &[1, 2]);
 
         let expanded = expand(transposed, Shape::new([3, 2, 2]));
-        assert_eq!(expanded.layout().shape().dims, vec![3, 2, 2]);
+        assert_eq!(expanded.layout().shape().to_vec(), vec![3, 2, 2]);
         // New dim with stride 0, original strides preserved
         assert_eq!(expanded.layout().strides(), &[0, 1, 2]);
 
@@ -194,7 +194,7 @@ mod tests {
         assert!(flipped.layout().strides()[0] < 0);
 
         let expanded = expand(flipped, Shape::new([2, 3]));
-        assert_eq!(expanded.layout().shape().dims, vec![2, 3]);
+        assert_eq!(expanded.layout().shape().to_vec(), vec![2, 3]);
         // Stride 0 for new broadcast dim, negative stride preserved
         assert_eq!(expanded.layout().strides()[0], 0);
         assert!(expanded.layout().strides()[1] < 0);
@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(flipped.layout().strides()[1], 1);
 
         let expanded = expand(flipped, Shape::new([3, 2, 2]));
-        assert_eq!(expanded.layout().shape().dims, vec![3, 2, 2]);
+        assert_eq!(expanded.layout().shape().to_vec(), vec![3, 2, 2]);
         // Stride 0 for broadcast, negative stride preserved for axis 1, positive for axis 2
         assert_eq!(expanded.layout().strides()[0], 0);
         assert!(expanded.layout().strides()[1] < 0);
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(narrowed.layout().start_offset(), 1);
 
         let expanded = expand(narrowed, Shape::new([2, 3]));
-        assert_eq!(expanded.layout().shape().dims, vec![2, 3]);
+        assert_eq!(expanded.layout().shape().to_vec(), vec![2, 3]);
         // Start offset preserved
         assert_eq!(expanded.layout().start_offset(), 1);
 
@@ -261,8 +261,8 @@ mod tests {
         let rhs = FlexTensor::from_data(TensorData::new(vec![10.0f32, 20.0], [2, 1]));
 
         let (lhs_bc, rhs_bc) = broadcast_binary(lhs, rhs);
-        assert_eq!(lhs_bc.layout().shape().dims, vec![2, 4]);
-        assert_eq!(rhs_bc.layout().shape().dims, vec![2, 4]);
+        assert_eq!(lhs_bc.layout().shape().to_vec(), vec![2, 4]);
+        assert_eq!(rhs_bc.layout().shape().to_vec(), vec![2, 4]);
 
         // lhs should have stride 0 in dim 0 (broadcast), negative stride in dim 1 (from flip)
         assert_eq!(lhs_bc.layout().strides()[0], 0);

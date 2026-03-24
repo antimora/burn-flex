@@ -28,11 +28,7 @@ impl FloatTensorOps<Flex> for Flex {
         _device: &Device<Flex>,
     ) -> FloatTensor<Flex> {
         let mut seed = crate::backend::SEED.lock().unwrap();
-        let mut rng = if let Some(rng_seeded) = seed.as_ref() {
-            rng_seeded.clone()
-        } else {
-            crate::backend::get_seeded_rng()
-        };
+        let mut rng = seed.take().unwrap_or_else(crate::backend::get_seeded_rng);
         let data = TensorData::random::<f32, _, _>(shape, distribution, &mut rng);
         *seed = Some(rng);
         FlexTensor::from_data(data)
@@ -56,7 +52,10 @@ impl FloatTensorOps<Flex> for Flex {
         tensor
     }
 
-    fn float_into_int(tensor: FloatTensor<Flex>) -> IntTensor<Flex> {
+    fn float_into_int(
+        tensor: FloatTensor<Flex>,
+        _out_dtype: burn_std::IntDType,
+    ) -> IntTensor<Flex> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
         let dtype = tensor.dtype();
@@ -158,9 +157,9 @@ impl FloatTensorOps<Flex> for Flex {
         let shape = lhs.layout().shape();
         let ndims = shape.num_dims();
         assert_eq!(
-            shape.dims[dim], 3,
+            shape[dim], 3,
             "cross product requires dimension {} to have size 3, got {}",
-            dim, shape.dims[dim]
+            dim, shape[dim]
         );
 
         // Helper to create slices that select index `idx` along `dim`
@@ -350,51 +349,99 @@ impl FloatTensorOps<Flex> for Flex {
         }
     }
 
-    fn float_equal(lhs: FloatTensor<Flex>, rhs: FloatTensor<Flex>) -> BoolTensor<Flex> {
+    fn float_equal(
+        lhs: FloatTensor<Flex>,
+        rhs: FloatTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::equal(lhs, rhs)
     }
 
-    fn float_equal_elem(lhs: FloatTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn float_equal_elem(
+        lhs: FloatTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::equal_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_greater(lhs: FloatTensor<Flex>, rhs: FloatTensor<Flex>) -> BoolTensor<Flex> {
+    fn float_greater(
+        lhs: FloatTensor<Flex>,
+        rhs: FloatTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::greater(lhs, rhs)
     }
 
-    fn float_greater_elem(lhs: FloatTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn float_greater_elem(
+        lhs: FloatTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::greater_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_greater_equal(lhs: FloatTensor<Flex>, rhs: FloatTensor<Flex>) -> BoolTensor<Flex> {
+    fn float_greater_equal(
+        lhs: FloatTensor<Flex>,
+        rhs: FloatTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::greater_equal(lhs, rhs)
     }
 
-    fn float_greater_equal_elem(lhs: FloatTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn float_greater_equal_elem(
+        lhs: FloatTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::greater_equal_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_lower(lhs: FloatTensor<Flex>, rhs: FloatTensor<Flex>) -> BoolTensor<Flex> {
+    fn float_lower(
+        lhs: FloatTensor<Flex>,
+        rhs: FloatTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::lower(lhs, rhs)
     }
 
-    fn float_lower_elem(lhs: FloatTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn float_lower_elem(
+        lhs: FloatTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::lower_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_lower_equal(lhs: FloatTensor<Flex>, rhs: FloatTensor<Flex>) -> BoolTensor<Flex> {
+    fn float_lower_equal(
+        lhs: FloatTensor<Flex>,
+        rhs: FloatTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::lower_equal(lhs, rhs)
     }
 
-    fn float_lower_equal_elem(lhs: FloatTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn float_lower_equal_elem(
+        lhs: FloatTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::lower_equal_elem(lhs, rhs.to_f64().unwrap())
     }
 
-    fn float_not_equal(lhs: FloatTensor<Flex>, rhs: FloatTensor<Flex>) -> BoolTensor<Flex> {
+    fn float_not_equal(
+        lhs: FloatTensor<Flex>,
+        rhs: FloatTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::not_equal(lhs, rhs)
     }
 
-    fn float_not_equal_elem(lhs: FloatTensor<Flex>, rhs: Scalar) -> BoolTensor<Flex> {
+    fn float_not_equal_elem(
+        lhs: FloatTensor<Flex>,
+        rhs: Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::not_equal_elem(lhs, rhs.to_f64().unwrap())
     }
 
@@ -485,6 +532,7 @@ impl FloatTensorOps<Flex> for Flex {
     fn float_max_dim_with_indices(
         tensor: FloatTensor<Flex>,
         dim: usize,
+        _indices_dtype: burn_std::IntDType,
     ) -> (FloatTensor<Flex>, IntTensor<Flex>) {
         crate::ops::reduce::max_dim_with_indices(tensor, dim)
     }
@@ -492,23 +540,32 @@ impl FloatTensorOps<Flex> for Flex {
     fn float_min_dim_with_indices(
         tensor: FloatTensor<Flex>,
         dim: usize,
+        _indices_dtype: burn_std::IntDType,
     ) -> (FloatTensor<Flex>, IntTensor<Flex>) {
         crate::ops::reduce::min_dim_with_indices(tensor, dim)
     }
 
-    fn float_any(tensor: FloatTensor<Flex>) -> BoolTensor<Flex> {
+    fn float_any(tensor: FloatTensor<Flex>, _out_dtype: burn_std::BoolDType) -> BoolTensor<Flex> {
         crate::ops::comparison::any_float(tensor)
     }
 
-    fn float_any_dim(tensor: FloatTensor<Flex>, dim: usize) -> BoolTensor<Flex> {
+    fn float_any_dim(
+        tensor: FloatTensor<Flex>,
+        dim: usize,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::any_float_dim(tensor, dim)
     }
 
-    fn float_all(tensor: FloatTensor<Flex>) -> BoolTensor<Flex> {
+    fn float_all(tensor: FloatTensor<Flex>, _out_dtype: burn_std::BoolDType) -> BoolTensor<Flex> {
         crate::ops::comparison::all_float(tensor)
     }
 
-    fn float_all_dim(tensor: FloatTensor<Flex>, dim: usize) -> BoolTensor<Flex> {
+    fn float_all_dim(
+        tensor: FloatTensor<Flex>,
+        dim: usize,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         crate::ops::comparison::all_float_dim(tensor, dim)
     }
 
@@ -756,11 +813,19 @@ impl FloatTensorOps<Flex> for Flex {
         unary::erf(tensor)
     }
 
-    fn float_argmax(tensor: FloatTensor<Flex>, dim: usize) -> IntTensor<Flex> {
+    fn float_argmax(
+        tensor: FloatTensor<Flex>,
+        dim: usize,
+        _out_dtype: burn_std::IntDType,
+    ) -> IntTensor<Flex> {
         crate::ops::reduce::argmax(tensor, dim)
     }
 
-    fn float_argmin(tensor: FloatTensor<Flex>, dim: usize) -> IntTensor<Flex> {
+    fn float_argmin(
+        tensor: FloatTensor<Flex>,
+        dim: usize,
+        _out_dtype: burn_std::IntDType,
+    ) -> IntTensor<Flex> {
         crate::ops::reduce::argmin(tensor, dim)
     }
 
@@ -1020,7 +1085,7 @@ mod tests {
         let t: Tensor<Flex, 1> =
             Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &Default::default());
         let result: Tensor<Flex, 2> = t.unfold(0, 3, 1);
-        assert_eq!(result.shape().dims, [3, 3]);
+        assert_eq!(result.shape().to_vec(), vec![3, 3]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 3.0, 4.0, 5.0]);
     }

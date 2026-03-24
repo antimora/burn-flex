@@ -44,21 +44,18 @@ macro_rules! grid_sample_2d_typed {
 
             assert_eq!(t_shape.num_dims(), 4, "grid_sample_2d: input must be 4D");
             assert_eq!(g_shape.num_dims(), 4, "grid_sample_2d: grid must be 4D");
+            assert_eq!(g_shape[3], 2, "grid_sample_2d: grid last dim must be 2");
             assert_eq!(
-                g_shape.dims[3], 2,
-                "grid_sample_2d: grid last dim must be 2"
-            );
-            assert_eq!(
-                t_shape.dims[0], g_shape.dims[0],
+                t_shape[0], g_shape[0],
                 "grid_sample_2d: batch size mismatch"
             );
 
-            let batch_size = t_shape.dims[0];
-            let channels = t_shape.dims[1];
-            let h_in = t_shape.dims[2];
-            let w_in = t_shape.dims[3];
-            let h_out = g_shape.dims[1];
-            let w_out = g_shape.dims[2];
+            let batch_size = t_shape[0];
+            let channels = t_shape[1];
+            let h_in = t_shape[2];
+            let w_in = t_shape[3];
+            let h_out = g_shape[1];
+            let w_out = g_shape[2];
 
             let tensor_data: &[$elem] = tensor.storage();
             let grid_data: &[$elem] = grid.storage();

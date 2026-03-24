@@ -40,8 +40,12 @@ impl BoolTensorOps<Flex> for Flex {
         crate::ops::slice::slice(tensor, slices)
     }
 
-    fn bool_empty(shape: Shape, _device: &Device<Flex>) -> BoolTensor<Flex> {
-        FlexTensor::empty(shape, DType::Bool)
+    fn bool_empty(
+        shape: Shape,
+        _device: &Device<Flex>,
+        _dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
+        FlexTensor::empty(shape, DType::Bool(burn_std::BoolStore::Native))
     }
 
     fn bool_slice_assign(
@@ -52,7 +56,7 @@ impl BoolTensorOps<Flex> for Flex {
         crate::ops::slice::slice_assign(tensor, slices, value)
     }
 
-    fn bool_into_int(tensor: BoolTensor<Flex>) -> IntTensor<Flex> {
+    fn bool_into_int(tensor: BoolTensor<Flex>, _out_dtype: burn_std::IntDType) -> IntTensor<Flex> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
         // Bool is stored as u8 internally (0 = false, non-zero = true)
@@ -70,7 +74,10 @@ impl BoolTensorOps<Flex> for Flex {
         )
     }
 
-    fn bool_into_float(tensor: BoolTensor<Flex>) -> FloatTensor<Flex> {
+    fn bool_into_float(
+        tensor: BoolTensor<Flex>,
+        _out_dtype: burn_std::FloatDType,
+    ) -> FloatTensor<Flex> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
         // Bool is stored as u8 internally (0 = false, non-zero = true)
@@ -140,7 +147,11 @@ impl BoolTensorOps<Flex> for Flex {
         };
 
         let bytes = Bytes::from_elems(result);
-        FlexTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
+        FlexTensor::new(
+            bytes,
+            Layout::contiguous(shape),
+            DType::Bool(burn_std::BoolStore::Native),
+        )
     }
 
     fn bool_not(mut tensor: BoolTensor<Flex>) -> BoolTensor<Flex> {
@@ -176,7 +187,11 @@ impl BoolTensorOps<Flex> for Flex {
         };
 
         let bytes = Bytes::from_elems(result);
-        FlexTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
+        FlexTensor::new(
+            bytes,
+            Layout::contiguous(shape),
+            DType::Bool(burn_std::BoolStore::Native),
+        )
     }
 
     fn bool_and(lhs: BoolTensor<Flex>, rhs: BoolTensor<Flex>) -> BoolTensor<Flex> {
@@ -196,17 +211,25 @@ impl BoolTensorOps<Flex> for Flex {
     }
 
     // Missing methods
-    fn bool_zeros(shape: Shape, device: &Device<Flex>) -> BoolTensor<Flex> {
-        Self::bool_empty(shape, device)
+    fn bool_zeros(
+        shape: Shape,
+        device: &Device<Flex>,
+        dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
+        Self::bool_empty(shape, device, dtype)
     }
 
-    fn bool_ones(shape: Shape, _device: &Device<Flex>) -> BoolTensor<Flex> {
+    fn bool_ones(
+        shape: Shape,
+        _device: &Device<Flex>,
+        _dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
         let num_elements = shape.num_elements();
         let data = vec![1u8; num_elements];
         FlexTensor::new(
             Bytes::from_elems(data),
             Layout::contiguous(shape),
-            DType::Bool,
+            DType::Bool(burn_std::BoolStore::Native),
         )
     }
 
@@ -221,8 +244,9 @@ impl BoolTensorOps<Flex> for Flex {
     fn bool_mask_fill(
         tensor: BoolTensor<Flex>,
         mask: BoolTensor<Flex>,
-        value: bool,
+        value: burn_backend::Scalar,
     ) -> BoolTensor<Flex> {
+        let value: bool = value.elem();
         crate::ops::mask::mask_fill_bool(tensor, mask, value)
     }
 
@@ -243,14 +267,15 @@ impl BoolTensorOps<Flex> for Flex {
         crate::ops::gather_scatter::scatter_or(tensor, dim, indices, value)
     }
 
-    fn bool_equal_elem(lhs: BoolTensor<Flex>, rhs: bool) -> BoolTensor<Flex> {
+    fn bool_equal_elem(lhs: BoolTensor<Flex>, rhs: burn_backend::Scalar) -> BoolTensor<Flex> {
         use crate::Layout;
         use crate::strided_index::StridedIter;
         use burn_std::Bytes;
 
         let shape = lhs.layout().shape().clone();
         let storage: &[u8] = lhs.bytes();
-        let rhs_val = rhs as u8;
+        let rhs_bool: bool = rhs.elem();
+        let rhs_val = rhs_bool as u8;
 
         let result: Vec<u8> = match lhs.layout().contiguous_offsets() {
             Some((start, end)) => storage[start..end]
@@ -263,7 +288,11 @@ impl BoolTensorOps<Flex> for Flex {
         };
 
         let bytes = Bytes::from_elems(result);
-        FlexTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
+        FlexTensor::new(
+            bytes,
+            Layout::contiguous(shape),
+            DType::Bool(burn_std::BoolStore::Native),
+        )
     }
 
     fn bool_unfold(
@@ -279,7 +308,8 @@ impl BoolTensorOps<Flex> for Flex {
         crate::ops::comparison::bool_not_equal(lhs, rhs)
     }
 
-    fn bool_not_equal_elem(lhs: BoolTensor<Flex>, rhs: bool) -> BoolTensor<Flex> {
+    fn bool_not_equal_elem(lhs: BoolTensor<Flex>, rhs: burn_backend::Scalar) -> BoolTensor<Flex> {
+        let rhs: bool = rhs.elem();
         crate::ops::comparison::bool_not_equal_elem(lhs, rhs)
     }
 
@@ -420,7 +450,11 @@ fn bool_binary_op_simd(mut lhs: FlexTensor, mut rhs: FlexTensor, op: BoolBinaryO
     };
 
     let bytes = Bytes::from_elems(result);
-    FlexTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
+    FlexTensor::new(
+        bytes,
+        Layout::contiguous(shape),
+        DType::Bool(burn_std::BoolStore::Native),
+    )
 }
 
 #[cfg(test)]

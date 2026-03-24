@@ -109,7 +109,7 @@ fn try_broadcast_cmp_f32(
     let lhs_strides = lhs.layout().strides();
     let rhs_strides = rhs.layout().strides();
     let shape = lhs.layout().shape().clone();
-    let [rows, cols] = shape.dims[..] else {
+    let [rows, cols] = shape[..] else {
         return None;
     };
 
@@ -386,7 +386,11 @@ where
 
 fn make_bool_tensor(data: Vec<u8>, shape: Shape) -> FlexTensor {
     let bytes = Bytes::from_elems(data);
-    FlexTensor::new(bytes, Layout::contiguous(shape), DType::Bool)
+    FlexTensor::new(
+        bytes,
+        Layout::contiguous(shape),
+        DType::Bool(burn_std::BoolStore::Native),
+    )
 }
 
 // Specific comparison functions
@@ -642,7 +646,7 @@ pub fn bool_not_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     FlexTensor::new(
         Bytes::from_elems(result),
         Layout::contiguous(shape),
-        DType::Bool,
+        DType::Bool(burn_std::BoolStore::Native),
     )
 }
 
@@ -658,7 +662,7 @@ pub fn bool_not_equal_elem(lhs: FlexTensor, rhs: bool) -> FlexTensor {
     FlexTensor::new(
         Bytes::from_elems(result),
         Layout::contiguous(shape),
-        DType::Bool,
+        DType::Bool(burn_std::BoolStore::Native),
     )
 }
 
@@ -763,7 +767,7 @@ fn bool_scalar(val: bool) -> FlexTensor {
     FlexTensor::new(
         Bytes::from_elems(alloc::vec![byte]),
         Layout::contiguous(Shape::from(alloc::vec![1])),
-        DType::Bool,
+        DType::Bool(burn_std::BoolStore::Native),
     )
 }
 
@@ -793,11 +797,11 @@ fn reduce_bool_dim_with(
     let ndims = shape.num_dims();
     assert!(dim < ndims);
 
-    let dim_size = shape.dims[dim];
-    let mut out_shape: Vec<usize> = shape.dims.clone();
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape.dims[..dim].iter().product();
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
 
     let out_size = outer_size.max(1) * inner_size.max(1);
     let mut result: Vec<u8> = Vec::with_capacity(out_size);
@@ -816,7 +820,7 @@ fn reduce_bool_dim_with(
     FlexTensor::new(
         Bytes::from_elems(result),
         Layout::contiguous(Shape::from(out_shape)),
-        DType::Bool,
+        DType::Bool(burn_std::BoolStore::Native),
     )
 }
 

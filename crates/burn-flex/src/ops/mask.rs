@@ -80,7 +80,7 @@ pub fn mask_fill_bool(tensor: FlexTensor, mask: FlexTensor, value: bool) -> Flex
     FlexTensor::new(
         Bytes::from_elems(result),
         Layout::contiguous(shape),
-        DType::Bool,
+        DType::Bool(burn_std::BoolStore::Native),
     )
 }
 
@@ -199,7 +199,7 @@ pub fn mask_where_bool(tensor: FlexTensor, mask: FlexTensor, value: FlexTensor) 
     FlexTensor::new(
         Bytes::from_elems(result),
         Layout::contiguous(shape),
-        DType::Bool,
+        DType::Bool(burn_std::BoolStore::Native),
     )
 }
 

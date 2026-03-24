@@ -56,11 +56,11 @@ where
     let total_size = shape.num_elements();
     let mut result = vec![E::default(); total_size];
 
-    let dim_size = shape.dims[dim];
+    let dim_size = shape[dim];
     // Contiguous block size after the cumulative dimension
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
+    let inner_size: usize = shape[dim + 1..].iter().product();
     // Number of outer blocks (dimensions before the cumulative dimension)
-    let outer_size: usize = shape.dims[..dim].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
     let block_size = dim_size * inner_size;
 
     if inner_size == 1 {
@@ -121,9 +121,9 @@ where
     let total_size = shape.num_elements();
     let mut result = vec![E::default(); total_size];
 
-    let dim_size = shape.dims[dim];
-    let inner_size: usize = shape.dims[dim + 1..].iter().product();
-    let outer_size: usize = shape.dims[..dim].iter().product();
+    let dim_size = shape[dim];
+    let inner_size: usize = shape[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product();
     let block_size = dim_size * inner_size;
 
     // Accumulator buffer for f32 intermediate values

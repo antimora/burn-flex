@@ -57,8 +57,8 @@ pub fn matmul(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     debug_assert!(rhs_rank >= 2, "matmul requires at least 2D tensors");
 
     // Check inner dimensions match: lhs[..., M, K] x rhs[..., K, N]
-    let k_lhs = lhs_shape.dims[lhs_rank - 1];
-    let k_rhs = rhs_shape.dims[rhs_rank - 2];
+    let k_lhs = lhs_shape[lhs_rank - 1];
+    let k_rhs = rhs_shape[rhs_rank - 2];
     debug_assert_eq!(k_lhs, k_rhs, "matmul: inner dimensions must match");
 
     match lhs.dtype() {
@@ -175,9 +175,9 @@ fn matmul_2d_strided_f32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
 
-    let m = lhs_shape.dims[0];
-    let k = lhs_shape.dims[1];
-    let n = rhs_shape.dims[1];
+    let m = lhs_shape[0];
+    let k = lhs_shape[1];
+    let n = rhs_shape[1];
 
     // Get strides for both inputs (handles transposed tensors)
     let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
@@ -271,12 +271,12 @@ fn matmul_batched_f32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_rank = lhs_shape.num_dims();
     let rhs_rank = rhs_shape.num_dims();
 
-    let m = lhs_shape.dims[lhs_rank - 2];
-    let k = lhs_shape.dims[lhs_rank - 1];
-    let n = rhs_shape.dims[rhs_rank - 1];
+    let m = lhs_shape[lhs_rank - 2];
+    let k = lhs_shape[lhs_rank - 1];
+    let n = rhs_shape[rhs_rank - 1];
 
-    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
-    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    let lhs_batch: Vec<usize> = lhs_shape[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape[..rhs_rank - 2].to_vec();
 
     // Compute broadcast batch dimensions
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
@@ -432,9 +432,9 @@ fn matmul_2d_strided_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
 
-    let m = lhs_shape.dims[0];
-    let k = lhs_shape.dims[1];
-    let n = rhs_shape.dims[1];
+    let m = lhs_shape[0];
+    let k = lhs_shape[1];
+    let n = rhs_shape[1];
 
     let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
     let (rhs_row_stride, rhs_col_stride) = get_2d_strides(rhs.layout());
@@ -522,12 +522,12 @@ fn matmul_batched_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_rank = lhs_shape.num_dims();
     let rhs_rank = rhs_shape.num_dims();
 
-    let m = lhs_shape.dims[lhs_rank - 2];
-    let k = lhs_shape.dims[lhs_rank - 1];
-    let n = rhs_shape.dims[rhs_rank - 1];
+    let m = lhs_shape[lhs_rank - 2];
+    let k = lhs_shape[lhs_rank - 1];
+    let n = rhs_shape[rhs_rank - 1];
 
-    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
-    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    let lhs_batch: Vec<usize> = lhs_shape[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape[..rhs_rank - 2].to_vec();
 
     // Compute broadcast batch dimensions
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
@@ -671,9 +671,9 @@ fn matmul_2d_strided_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
 
-    let m = lhs_shape.dims[0];
-    let k = lhs_shape.dims[1];
-    let n = rhs_shape.dims[1];
+    let m = lhs_shape[0];
+    let k = lhs_shape[1];
+    let n = rhs_shape[1];
 
     let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
     let (rhs_row_stride, rhs_col_stride) = get_2d_strides(rhs.layout());
@@ -761,12 +761,12 @@ fn matmul_batched_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_rank = lhs_shape.num_dims();
     let rhs_rank = rhs_shape.num_dims();
 
-    let m = lhs_shape.dims[lhs_rank - 2];
-    let k = lhs_shape.dims[lhs_rank - 1];
-    let n = rhs_shape.dims[rhs_rank - 1];
+    let m = lhs_shape[lhs_rank - 2];
+    let k = lhs_shape[lhs_rank - 1];
+    let n = rhs_shape[rhs_rank - 1];
 
-    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
-    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    let lhs_batch: Vec<usize> = lhs_shape[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape[..rhs_rank - 2].to_vec();
 
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
@@ -946,8 +946,8 @@ pub fn int_matmul(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     debug_assert!(lhs_rank >= 2, "int_matmul requires at least 2D tensors");
     debug_assert!(rhs_rank >= 2, "int_matmul requires at least 2D tensors");
 
-    let k_lhs = lhs_shape.dims[lhs_rank - 1];
-    let k_rhs = rhs_shape.dims[rhs_rank - 2];
+    let k_lhs = lhs_shape[lhs_rank - 1];
+    let k_rhs = rhs_shape[rhs_rank - 2];
     debug_assert_eq!(k_lhs, k_rhs, "int_matmul: inner dimensions must match");
 
     match lhs.dtype() {
@@ -980,9 +980,9 @@ fn matmul_2d_i32(lhs: &FlexTensor, rhs: &FlexTensor) -> FlexTensor {
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
 
-    let m = lhs_shape.dims[0];
-    let k = lhs_shape.dims[1];
-    let n = rhs_shape.dims[1];
+    let m = lhs_shape[0];
+    let k = lhs_shape[1];
+    let n = rhs_shape[1];
 
     let lhs_data: &[i32] = lhs.storage();
     let rhs_data: &[i32] = rhs.storage();
@@ -1087,12 +1087,12 @@ fn matmul_batched_i32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_rank = lhs_shape.num_dims();
     let rhs_rank = rhs_shape.num_dims();
 
-    let m = lhs_shape.dims[lhs_rank - 2];
-    let k = lhs_shape.dims[lhs_rank - 1];
-    let n = rhs_shape.dims[rhs_rank - 1];
+    let m = lhs_shape[lhs_rank - 2];
+    let k = lhs_shape[lhs_rank - 1];
+    let n = rhs_shape[rhs_rank - 1];
 
-    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
-    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    let lhs_batch: Vec<usize> = lhs_shape[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape[..rhs_rank - 2].to_vec();
 
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
 
@@ -1209,9 +1209,9 @@ fn matmul_2d_i64(lhs: &FlexTensor, rhs: &FlexTensor) -> FlexTensor {
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
 
-    let m = lhs_shape.dims[0];
-    let k = lhs_shape.dims[1];
-    let n = rhs_shape.dims[1];
+    let m = lhs_shape[0];
+    let k = lhs_shape[1];
+    let n = rhs_shape[1];
 
     let lhs_data: &[i64] = lhs.storage();
     let rhs_data: &[i64] = rhs.storage();
@@ -1243,12 +1243,12 @@ fn matmul_batched_i64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_rank = lhs_shape.num_dims();
     let rhs_rank = rhs_shape.num_dims();
 
-    let m = lhs_shape.dims[lhs_rank - 2];
-    let k = lhs_shape.dims[lhs_rank - 1];
-    let n = rhs_shape.dims[rhs_rank - 1];
+    let m = lhs_shape[lhs_rank - 2];
+    let k = lhs_shape[lhs_rank - 1];
+    let n = rhs_shape[rhs_rank - 1];
 
-    let lhs_batch: Vec<usize> = lhs_shape.dims[..lhs_rank - 2].to_vec();
-    let rhs_batch: Vec<usize> = rhs_shape.dims[..rhs_rank - 2].to_vec();
+    let lhs_batch: Vec<usize> = lhs_shape[..lhs_rank - 2].to_vec();
+    let rhs_batch: Vec<usize> = rhs_shape[..rhs_rank - 2].to_vec();
 
     // Compute broadcast batch dimensions
     let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
@@ -1315,7 +1315,7 @@ mod tests {
 
         let result = matmul(lhs, rhs);
 
-        assert_eq!(result.layout().shape().dims, vec![2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2]);
 
         let result_data = result.into_data();
         let values: Vec<f32> = result_data.to_vec().unwrap();
@@ -1369,7 +1369,7 @@ mod tests {
 
         // [3, 2] x [2, 2] -> [3, 2]
         let result = matmul(transposed, rhs);
-        assert_eq!(result.layout().shape().dims, vec![3, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![3, 2]);
 
         let values: Vec<f32> = result.into_data().to_vec().unwrap();
         // Result should be [[1,4], [2,5], [3,6]] * I = [[1,4], [2,5], [3,6]]
@@ -1390,7 +1390,7 @@ mod tests {
 
         // [2, 2] x [2, 3] -> [2, 3]
         let result = matmul(lhs, transposed);
-        assert_eq!(result.layout().shape().dims, vec![2, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 3]);
 
         let values: Vec<f32> = result.into_data().to_vec().unwrap();
         // I * [[1,3,5], [2,4,6]] = [[1,3,5], [2,4,6]]
@@ -1410,7 +1410,7 @@ mod tests {
 
         // [3, 2] x [2, 3] -> [3, 3]
         let result = matmul(lhs, rhs);
-        assert_eq!(result.layout().shape().dims, vec![3, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![3, 3]);
     }
 
     #[test]
@@ -1434,7 +1434,7 @@ mod tests {
         let rhs = FlexTensor::from_data(rhs_data);
 
         let result = matmul(lhs, rhs);
-        assert_eq!(result.layout().shape().dims, vec![2, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2, 2]);
 
         let values: Vec<f32> = result.into_data().to_vec().unwrap();
 
@@ -1552,7 +1552,7 @@ mod tests {
         let rhs = FlexTensor::from_data(rhs_data);
 
         let result = matmul(lhs, rhs);
-        assert_eq!(result.layout().shape().dims, vec![1, 1]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1]);
 
         let values: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(values, vec![30.0]);
@@ -1572,7 +1572,7 @@ mod tests {
         let rhs = FlexTensor::from_data(rhs_data);
 
         let result = int_matmul(lhs, rhs);
-        assert_eq!(result.layout().shape().dims, vec![2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2]);
 
         let values: Vec<i32> = result.into_data().to_vec().unwrap();
         // [1 2 3] * [1 2]   = [1*1+2*3+3*5  1*2+2*4+3*6] = [22 28]
@@ -1632,7 +1632,7 @@ mod tests {
         let rhs = FlexTensor::from_data(rhs_data);
 
         let result = int_matmul(lhs, rhs);
-        assert_eq!(result.layout().shape().dims, vec![2, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2, 2]);
 
         let values: Vec<i32> = result.into_data().to_vec().unwrap();
         assert_eq!(

@@ -55,9 +55,9 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     for i in 0..ndims {
         if i != dim {
             assert_eq!(
-                tensor_shape.dims[i], indices_shape.dims[i],
+                tensor_shape[i], indices_shape[i],
                 "gather: shape mismatch at dim {}: tensor {} vs indices {}",
-                i, tensor_shape.dims[i], indices_shape.dims[i]
+                i, tensor_shape[i], indices_shape[i]
             );
         }
     }
@@ -66,8 +66,8 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     let indices_data: &[i64] = indices.storage();
 
     // Calculate strides for tensor (row-major)
-    let tensor_strides: Vec<usize> = compute_strides(&tensor_shape.dims);
-    let indices_strides: Vec<usize> = compute_strides(&indices_shape.dims);
+    let tensor_strides: Vec<usize> = compute_strides(tensor_shape);
+    let indices_strides: Vec<usize> = compute_strides(indices_shape);
 
     let output_size = indices_shape.num_elements();
 
@@ -76,10 +76,10 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
         let result = gather_2d::<E>(
             tensor_data,
             indices_data,
-            tensor_shape.dims[0],
-            tensor_shape.dims[1],
-            indices_shape.dims[0],
-            indices_shape.dims[1],
+            tensor_shape[0],
+            tensor_shape[1],
+            indices_shape[0],
+            indices_shape[1],
             dim,
         );
         let bytes = Bytes::from_elems(result);
@@ -89,7 +89,7 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     // General N-D case with pre-allocated coordinates
     let dim_stride = tensor_strides[dim];
 
-    let gather_dim_size = tensor_shape.dims[dim];
+    let gather_dim_size = tensor_shape[dim];
 
     #[cfg(feature = "rayon")]
     let result: Vec<E> = (0..output_size)
@@ -259,17 +259,19 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
         ndims
     );
     assert_eq!(
-        indices_shape, value_shape,
+        indices_shape,
+        value_shape,
         "scatter_add: indices shape {:?} must match value shape {:?}",
-        indices_shape.dims, value_shape.dims
+        indices_shape.to_vec(),
+        value_shape.to_vec()
     );
 
     for i in 0..ndims {
         if i != dim {
             assert_eq!(
-                tensor_shape.dims[i], indices_shape.dims[i],
+                tensor_shape[i], indices_shape[i],
                 "scatter_add: shape mismatch at dim {}: tensor {} vs indices {}",
-                i, tensor_shape.dims[i], indices_shape.dims[i]
+                i, tensor_shape[i], indices_shape[i]
             );
         }
     }
@@ -280,8 +282,8 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
 
     let mut result: Vec<E> = tensor_data.to_vec();
 
-    let tensor_strides: Vec<usize> = compute_strides(&tensor_shape.dims);
-    let indices_strides: Vec<usize> = compute_strides(&indices_shape.dims);
+    let tensor_strides: Vec<usize> = compute_strides(&tensor_shape);
+    let indices_strides: Vec<usize> = compute_strides(indices_shape);
 
     let num_elements = indices_shape.num_elements();
 
@@ -291,16 +293,16 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
             &mut result,
             indices_data,
             value_data,
-            tensor_shape.dims[0],
-            tensor_shape.dims[1],
-            indices_shape.dims[0],
-            indices_shape.dims[1],
+            tensor_shape[0],
+            tensor_shape[1],
+            indices_shape[0],
+            indices_shape[1],
             dim,
         );
     } else {
         // General N-D case (sequential due to potential index conflicts)
         let dim_stride = tensor_strides[dim];
-        let scatter_dim_size = tensor_shape.dims[dim];
+        let scatter_dim_size = tensor_shape[dim];
         for idx in 0..num_elements {
             let index_val = checked_index(indices_data[idx], scatter_dim_size);
             let dst_idx = compute_gather_index(
@@ -388,7 +390,7 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
     let num_indices = indices_data.len();
 
     // Build output shape: replace dim with num_indices
-    let mut output_dims = tensor_shape.dims.clone();
+    let mut output_dims = tensor_shape.to_vec();
     output_dims[dim] = num_indices;
     let output_shape = Shape::from(output_dims);
 
@@ -397,8 +399,8 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
         let result = select_2d::<E>(
             tensor_data,
             indices_data,
-            tensor_shape.dims[0],
-            tensor_shape.dims[1],
+            tensor_shape[0],
+            tensor_shape[1],
             num_indices,
             dim,
         );
@@ -407,14 +409,14 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
     }
 
     // General N-D case
-    let tensor_strides: Vec<usize> = compute_strides(&tensor_shape.dims);
-    let output_strides: Vec<usize> = compute_strides(&output_shape.dims);
+    let tensor_strides: Vec<usize> = compute_strides(tensor_shape);
+    let output_strides: Vec<usize> = compute_strides(&output_shape);
     let output_size = output_shape.num_elements();
 
     // Calculate slice size (elements after dim)
     let slice_size: usize = tensor_strides[dim];
 
-    let select_dim_size = tensor_shape.dims[dim];
+    let select_dim_size = tensor_shape[dim];
 
     // If dim is the last dimension or we can use bulk copies
     if dim == ndims - 1 || slice_size == 1 {
@@ -471,7 +473,7 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
     let outer_count = if dim == 0 {
         1
     } else {
-        tensor_shape.dims[..dim].iter().product()
+        tensor_shape[..dim].iter().product()
     };
 
     for outer in 0..outer_count {
@@ -619,15 +621,15 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
     for d in 0..ndims {
         if d == dim {
             assert_eq!(
-                value_shape.dims[d], num_indices,
+                value_shape[d], num_indices,
                 "select_add: value dim {} should be {} (num indices), got {}",
-                d, num_indices, value_shape.dims[d]
+                d, num_indices, value_shape[d]
             );
         } else {
             assert_eq!(
-                value_shape.dims[d], tensor_shape.dims[d],
+                value_shape[d], tensor_shape[d],
                 "select_add: value dim {} should match tensor dim {}, got {}",
-                d, tensor_shape.dims[d], value_shape.dims[d]
+                d, tensor_shape[d], value_shape[d]
             );
         }
     }
@@ -640,8 +642,8 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
             &mut result,
             indices_data,
             value_data,
-            tensor_shape.dims[0],
-            tensor_shape.dims[1],
+            tensor_shape[0],
+            tensor_shape[1],
             num_indices,
             dim,
         );
@@ -650,9 +652,9 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
     }
 
     // General N-D case
-    let tensor_strides: Vec<usize> = compute_strides(&tensor_shape.dims);
-    let value_strides: Vec<usize> = compute_strides(&value_shape.dims);
-    let select_add_dim_size = tensor_shape.dims[dim];
+    let tensor_strides: Vec<usize> = compute_strides(&tensor_shape);
+    let value_strides: Vec<usize> = compute_strides(value_shape);
+    let select_add_dim_size = tensor_shape[dim];
 
     for (val_idx, &val) in value_data.iter().enumerate() {
         let mut remaining = val_idx;
@@ -825,17 +827,19 @@ pub fn scatter_or(
         ndims
     );
     assert_eq!(
-        indices_shape, value_shape,
+        indices_shape,
+        value_shape,
         "scatter_or: indices shape {:?} must match value shape {:?}",
-        indices_shape.dims, value_shape.dims
+        indices_shape.to_vec(),
+        value_shape.to_vec()
     );
 
     for i in 0..ndims {
         if i != dim {
             assert_eq!(
-                tensor_shape.dims[i], indices_shape.dims[i],
+                tensor_shape[i], indices_shape[i],
                 "scatter_or: shape mismatch at dim {}: tensor {} vs indices {}",
-                i, tensor_shape.dims[i], indices_shape.dims[i]
+                i, tensor_shape[i], indices_shape[i]
             );
         }
     }
@@ -846,18 +850,18 @@ pub fn scatter_or(
 
     let mut result: Vec<u8> = tensor_data.to_vec();
 
-    let tensor_strides = compute_strides(&tensor_shape.dims);
-    let indices_strides = compute_strides(&indices_shape.dims);
+    let tensor_strides = compute_strides(&tensor_shape);
+    let indices_strides = compute_strides(indices_shape);
 
     let num_elements = indices_shape.num_elements();
 
-    let scatter_or_dim_size = tensor_shape.dims[dim];
+    let scatter_or_dim_size = tensor_shape[dim];
 
     // Use 2D specialized path
     if ndims == 2 {
-        let tensor_cols = tensor_shape.dims[1];
-        let indices_rows = indices_shape.dims[0];
-        let indices_cols = indices_shape.dims[1];
+        let tensor_cols = tensor_shape[1];
+        let indices_rows = indices_shape[0];
+        let indices_cols = indices_shape[1];
 
         if dim == 0 {
             for i in 0..indices_rows {
@@ -894,7 +898,11 @@ pub fn scatter_or(
     }
 
     let bytes = Bytes::from_elems(result);
-    FlexTensor::new(bytes, Layout::contiguous(tensor_shape), DType::Bool)
+    FlexTensor::new(
+        bytes,
+        Layout::contiguous(tensor_shape),
+        DType::Bool(burn_std::BoolStore::Native),
+    )
 }
 
 #[cfg(test)]
@@ -921,7 +929,7 @@ mod tests {
         let indices = FlexTensor::from_data(TensorData::new(vec![0i64, 2, 1, 0], [2, 2]));
 
         let result = gather_f32(tensor, 1, indices);
-        assert_eq!(result.layout().shape().dims, vec![2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1.0, 3.0, 5.0, 4.0]);
     }
@@ -938,7 +946,7 @@ mod tests {
         let indices = FlexTensor::from_data(TensorData::new(vec![1i64, 0, 1, 0, 1, 0], [2, 3]));
 
         let result = gather_f32(tensor, 0, indices);
-        assert_eq!(result.layout().shape().dims, vec![2, 3]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 3]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         // output[i,j] = tensor[indices[i,j], j]
         // [0,0]: tensor[1, 0] = 4.0
@@ -984,7 +992,7 @@ mod tests {
         let indices = FlexTensor::from_data(TensorData::new(vec![2i64, 0], [2]));
 
         let result = select_f32(tensor, 0, indices);
-        assert_eq!(result.layout().shape().dims, vec![2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![5.0, 6.0, 1.0, 2.0]);
     }
@@ -998,7 +1006,7 @@ mod tests {
         let indices = FlexTensor::from_data(TensorData::new(vec![2i64, 0], [2]));
 
         let result = select_f32(tensor, 1, indices);
-        assert_eq!(result.layout().shape().dims, vec![2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![3.0, 1.0, 6.0, 4.0]);
     }

@@ -161,10 +161,10 @@ where
     let input = x.storage::<T>();
     let shape = x.layout().shape();
 
-    let batch = shape.dims[0];
-    let channels = shape.dims[1];
-    let in_height = shape.dims[2];
-    let in_width = shape.dims[3];
+    let batch = shape[0];
+    let channels = shape[1];
+    let in_height = shape[2];
+    let in_width = shape[3];
     assert!(
         in_height > 0 && in_width > 0,
         "interpolate: input spatial dimensions must be > 0"
@@ -246,10 +246,10 @@ where
     let input = x.storage::<T>();
     let shape = x.layout().shape();
 
-    let batch = shape.dims[0];
-    let channels = shape.dims[1];
-    let in_height = shape.dims[2];
-    let in_width = shape.dims[3];
+    let batch = shape[0];
+    let channels = shape[1];
+    let in_height = shape[2];
+    let in_width = shape[3];
     assert!(
         in_height > 0 && in_width > 0,
         "interpolate: input spatial dimensions must be > 0"
@@ -366,10 +366,10 @@ where
     let input = x.storage::<T>();
     let shape = x.layout().shape();
 
-    let batch = shape.dims[0];
-    let channels = shape.dims[1];
-    let in_height = shape.dims[2];
-    let in_width = shape.dims[3];
+    let batch = shape[0];
+    let channels = shape[1];
+    let in_height = shape[2];
+    let in_width = shape[3];
     assert!(
         in_height > 0 && in_width > 0,
         "interpolate: input spatial dimensions must be > 0"
@@ -572,10 +572,10 @@ where
     let grad_data = grad.storage::<T>();
     let shape = x.layout().shape();
 
-    let batch = shape.dims[0];
-    let channels = shape.dims[1];
-    let in_height = shape.dims[2];
-    let in_width = shape.dims[3];
+    let batch = shape[0];
+    let channels = shape[1];
+    let in_height = shape[2];
+    let in_width = shape[3];
     assert!(
         in_height > 0 && in_width > 0,
         "interpolate: input spatial dimensions must be > 0"
@@ -629,10 +629,10 @@ where
     let grad_data = grad.storage::<T>();
     let shape = x.layout().shape();
 
-    let batch = shape.dims[0];
-    let channels = shape.dims[1];
-    let in_height = shape.dims[2];
-    let in_width = shape.dims[3];
+    let batch = shape[0];
+    let channels = shape[1];
+    let in_height = shape[2];
+    let in_width = shape[3];
     assert!(
         in_height > 0 && in_width > 0,
         "interpolate: input spatial dimensions must be > 0"
@@ -705,10 +705,10 @@ where
     let grad_data = grad.storage::<T>();
     let shape = x.layout().shape();
 
-    let batch = shape.dims[0];
-    let channels = shape.dims[1];
-    let in_height = shape.dims[2];
-    let in_width = shape.dims[3];
+    let batch = shape[0];
+    let channels = shape[1];
+    let in_height = shape[2];
+    let in_width = shape[3];
     assert!(
         in_height > 0 && in_width > 0,
         "interpolate: input spatial dimensions must be > 0"
@@ -854,14 +854,14 @@ mod tests {
     fn test_bicubic_basic() {
         let x = make_input_f32(1, 1, 4, 4);
         let result = interpolate_bicubic_f32(x, [8, 8]);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 8, 8]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 8, 8]);
     }
 
     #[test]
     fn test_downsample() {
         let x = make_input_f32(1, 1, 4, 4);
         let result = interpolate_nearest_f32(x, [2, 2]);
-        assert_eq!(result.layout().shape().dims, vec![1, 1, 2, 2]);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 2, 2]);
     }
 
     #[test]
