@@ -1,0 +1,10 @@
+# Advisories in transitive dependencies pulled in by burn's dependency tree.
+# These cannot be fixed on our side; they require upstream burn to update.
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0037", # quinn-proto (via burn -> cubecl -> wgpu)
+    "RUSTSEC-2026-0049", # rustls-webpki (via burn -> cubecl -> wgpu)
+    "RUSTSEC-2026-0068", # tar (via burn transitive)
+    "RUSTSEC-2026-0067", # tar (via burn transitive)
+    "RUSTSEC-2026-0009", # time (via burn transitive)
+]

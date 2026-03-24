@@ -107,13 +107,13 @@ fn deform_im2col_f32(
 ///
 /// # Arguments
 /// * `x` - Input tensor [batch, channels_in, height, width]
-/// * `offset` - Offset tensor [batch, offset_groups * kernel_h * kernel_w * 2, out_h, out_w]
-/// * `weight` - Weight tensor [channels_out, channels_in/weight_groups, kernel_h, kernel_w]
-/// * `mask` - Optional mask tensor [batch, offset_groups * kernel_h * kernel_w, out_h, out_w]
-/// * `bias` - Optional bias tensor [channels_out]
-/// * `stride` - Stride [stride_h, stride_w]
-/// * `padding` - Padding [pad_h, pad_w]
-/// * `dilation` - Dilation [dil_h, dil_w]
+/// * `offset` - Offset tensor \[batch, offset_groups * kernel_h * kernel_w * 2, out_h, out_w\]
+/// * `weight` - Weight tensor \[channels_out, channels_in/weight_groups, kernel_h, kernel_w\]
+/// * `mask` - Optional mask tensor \[batch, offset_groups * kernel_h * kernel_w, out_h, out_w\]
+/// * `bias` - Optional bias tensor \[channels_out\]
+/// * `stride` - Stride \[stride_h, stride_w\]
+/// * `padding` - Padding \[pad_h, pad_w\]
+/// * `dilation` - Dilation \[dil_h, dil_w\]
 /// * `weight_groups` - Number of weight groups
 /// * `offset_groups` - Number of offset groups
 #[allow(clippy::too_many_arguments)]

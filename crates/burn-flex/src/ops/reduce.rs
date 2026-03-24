@@ -357,7 +357,7 @@ pub fn prod_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 // Max / Min (all elements)
 // ============================================================================
 
-/// Max of all elements, returning a scalar tensor of shape [1].
+/// Max of all elements, returning a scalar tensor of shape \[1\].
 pub fn max(tensor: FlexTensor) -> FlexTensor {
     match tensor.dtype() {
         DType::F32 => max_f32_reduce(&tensor),
@@ -384,7 +384,7 @@ pub fn max(tensor: FlexTensor) -> FlexTensor {
     }
 }
 
-/// Min of all elements, returning a scalar tensor of shape [1].
+/// Min of all elements, returning a scalar tensor of shape \[1\].
 pub fn min(tensor: FlexTensor) -> FlexTensor {
     match tensor.dtype() {
         DType::F32 => min_f32_reduce(&tensor),
