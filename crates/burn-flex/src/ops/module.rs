@@ -553,6 +553,18 @@ impl ModuleOps<Flex> for Flex {
             (InterpolateMode::Bicubic, DType::BF16) => {
                 interpolate::interpolate_bicubic_bf16(x, output_size, options.align_corners)
             }
+            (InterpolateMode::Lanczos3, DType::F32) => {
+                interpolate::interpolate_lanczos3_f32(x, output_size, options.align_corners)
+            }
+            (InterpolateMode::Lanczos3, DType::F64) => {
+                interpolate::interpolate_lanczos3_f64(x, output_size, options.align_corners)
+            }
+            (InterpolateMode::Lanczos3, DType::F16) => {
+                interpolate::interpolate_lanczos3_f16(x, output_size, options.align_corners)
+            }
+            (InterpolateMode::Lanczos3, DType::BF16) => {
+                interpolate::interpolate_lanczos3_bf16(x, output_size, options.align_corners)
+            }
             (mode, dtype) => panic!(
                 "interpolate: unsupported mode {:?} / dtype {:?}",
                 mode, dtype

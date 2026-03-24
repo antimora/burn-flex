@@ -83,6 +83,11 @@ interpolate_typed!(interpolate_bicubic_f64, interpolate_bicubic_impl, f64);
 interpolate_typed!(interpolate_bicubic_f16, interpolate_bicubic_impl, f16);
 interpolate_bf16!(interpolate_bicubic_bf16, interpolate_bicubic_f32);
 
+interpolate_typed!(interpolate_lanczos3_f32, interpolate_lanczos3_impl, f32);
+interpolate_typed!(interpolate_lanczos3_f64, interpolate_lanczos3_impl, f64);
+interpolate_typed!(interpolate_lanczos3_f16, interpolate_lanczos3_impl, f16);
+interpolate_bf16!(interpolate_lanczos3_bf16, interpolate_lanczos3_f32);
+
 // ============================================================================
 // Backward pass - dtype dispatch
 // ============================================================================
@@ -575,6 +580,141 @@ fn cubic_weight(t: f64, a: f64) -> f64 {
     } else {
         0.0
     }
+}
+
+/// Lanczos3 interpolation weight function.
+/// Uses a sinc-windowed sinc kernel with a=3.
+#[inline]
+fn lanczos3_weight(x: f64) -> f64 {
+    if x == 0.0 {
+        return 1.0;
+    }
+    let abs_x = x.abs();
+    if abs_x >= 3.0 {
+        return 0.0;
+    }
+    let pi = core::f64::consts::PI;
+    let pi_x = pi * x;
+    let pi_x_over_3 = pi_x / 3.0;
+    (pi_x.sin() * pi_x_over_3.sin()) / (pi_x * pi_x_over_3)
+}
+
+/// Lanczos3 interpolation (6x6 sinc-windowed kernel).
+fn interpolate_lanczos3_impl<T>(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor
+where
+    T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
+{
+    let x = x.to_contiguous();
+    let input = x.storage::<T>();
+    let shape = x.layout().shape();
+
+    let batch = shape[0];
+    let channels = shape[1];
+    let in_height = shape[2];
+    let in_width = shape[3];
+    assert!(
+        in_height > 0 && in_width > 0,
+        "interpolate: input spatial dimensions must be > 0"
+    );
+    let [out_height, out_width] = output_size;
+
+    let y_ratio = coord_ratio(in_height, out_height, align_corners);
+    let x_ratio = coord_ratio(in_width, out_width, align_corners);
+
+    let out_numel = batch * channels * out_height * out_width;
+    let in_hw = in_height * in_width;
+    let out_hw = out_height * out_width;
+    let max_h = in_height as isize - 1;
+    let max_w = in_width as isize - 1;
+
+    let lanczos3_pixel = |in_base: usize, oh: usize, ow: usize| -> T {
+        let y_in = map_coord(oh, y_ratio, align_corners);
+        let x_in = map_coord(ow, x_ratio, align_corners);
+        let y0 = y_in.floor();
+        let x0 = x_in.floor();
+
+        let mut result = 0.0_f64;
+        let mut weight_sum = 0.0_f64;
+
+        for ky in -2..=3_isize {
+            let yi = y0 as isize + ky;
+            if yi < 0 || yi > max_h {
+                continue;
+            }
+            let wy = lanczos3_weight(y_in - (y0 + ky as f64));
+            for kx in -2..=3_isize {
+                let xi = x0 as isize + kx;
+                if xi < 0 || xi > max_w {
+                    continue;
+                }
+                let wx = lanczos3_weight(x_in - (x0 + kx as f64));
+                let w = wy * wx;
+                let val = input[in_base + yi as usize * in_width + xi as usize];
+                let val_f64 = <T as num_traits::ToPrimitive>::to_f64(&val).unwrap_or(0.0);
+                result += val_f64 * w;
+                weight_sum += w;
+            }
+        }
+
+        if weight_sum != 0.0 {
+            result /= weight_sum;
+        }
+        T::from(result).unwrap()
+    };
+
+    let output = {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+
+            let mut output = vec![T::zero(); out_numel];
+            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
+
+            let total_rows = batch * channels * out_height;
+            (0..total_rows).into_par_iter().for_each(|id| {
+                let b = id / (channels * out_height);
+                let remainder = id % (channels * out_height);
+                let c = remainder / out_height;
+                let oh = remainder % out_height;
+
+                let in_base = b * channels * in_hw + c * in_hw;
+                let out_base = b * channels * out_hw + c * out_hw;
+
+                for ow in 0..out_width {
+                    let out_idx = out_base + oh * out_width + ow;
+                    unsafe {
+                        out_ptr.write(out_idx, lanczos3_pixel(in_base, oh, ow));
+                    }
+                }
+            });
+            output
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut output = vec![T::zero(); out_numel];
+
+            for b in 0..batch {
+                for c in 0..channels {
+                    let in_base = b * channels * in_hw + c * in_hw;
+                    let out_base = b * channels * out_hw + c * out_hw;
+
+                    for oh in 0..out_height {
+                        for ow in 0..out_width {
+                            output[out_base + oh * out_width + ow] =
+                                lanczos3_pixel(in_base, oh, ow);
+                        }
+                    }
+                }
+            }
+            output
+        }
+    };
+
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(Shape::from(vec![batch, channels, out_height, out_width])),
+        x.dtype(),
+    )
 }
 
 // ============================================================================
