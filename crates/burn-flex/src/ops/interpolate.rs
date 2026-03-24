@@ -26,8 +26,8 @@ use crate::{FlexTensor, Layout};
 /// Generates an interpolation forward typed dispatcher.
 macro_rules! interpolate_typed {
     ($fn_name:ident, $impl_fn:ident, $T:ty) => {
-        pub fn $fn_name(x: FlexTensor, output_size: [usize; 2]) -> FlexTensor {
-            $impl_fn::<$T>(x, output_size)
+        pub fn $fn_name(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor {
+            $impl_fn::<$T>(x, output_size, align_corners)
         }
     };
 }
@@ -35,9 +35,9 @@ macro_rules! interpolate_typed {
 /// Generates an interpolation bf16 forward wrapper via f32 conversion.
 macro_rules! interpolate_bf16 {
     ($bf16_fn:ident, $f32_fn:ident) => {
-        pub fn $bf16_fn(x: FlexTensor, output_size: [usize; 2]) -> FlexTensor {
+        pub fn $bf16_fn(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor {
             let x_f32 = convert_bf16_to_f32(&x);
-            let result_f32 = $f32_fn(x_f32, output_size);
+            let result_f32 = $f32_fn(x_f32, output_size, align_corners);
             convert_f32_to_bf16(&result_f32)
         }
     };
@@ -46,8 +46,8 @@ macro_rules! interpolate_bf16 {
 /// Generates an interpolation backward typed dispatcher.
 macro_rules! interpolate_backward_typed {
     ($fn_name:ident, $impl_fn:ident, $T:ty) => {
-        pub fn $fn_name(x: FlexTensor, grad: FlexTensor, output_size: [usize; 2]) -> FlexTensor {
-            $impl_fn::<$T>(x, grad, output_size)
+        pub fn $fn_name(x: FlexTensor, grad: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor {
+            $impl_fn::<$T>(x, grad, output_size, align_corners)
         }
     };
 }
@@ -55,10 +55,10 @@ macro_rules! interpolate_backward_typed {
 /// Generates an interpolation bf16 backward wrapper via f32 conversion.
 macro_rules! interpolate_backward_bf16 {
     ($bf16_fn:ident, $f32_fn:ident) => {
-        pub fn $bf16_fn(x: FlexTensor, grad: FlexTensor, output_size: [usize; 2]) -> FlexTensor {
+        pub fn $bf16_fn(x: FlexTensor, grad: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor {
             let x_f32 = convert_bf16_to_f32(&x);
             let grad_f32 = convert_bf16_to_f32(&grad);
-            let result_f32 = $f32_fn(x_f32, grad_f32, output_size);
+            let result_f32 = $f32_fn(x_f32, grad_f32, output_size, align_corners);
             convert_f32_to_bf16(&result_f32)
         }
     };
@@ -82,6 +82,11 @@ interpolate_typed!(interpolate_bicubic_f32, interpolate_bicubic_impl, f32);
 interpolate_typed!(interpolate_bicubic_f64, interpolate_bicubic_impl, f64);
 interpolate_typed!(interpolate_bicubic_f16, interpolate_bicubic_impl, f16);
 interpolate_bf16!(interpolate_bicubic_bf16, interpolate_bicubic_f32);
+
+interpolate_typed!(interpolate_lanczos3_f32, interpolate_lanczos3_impl, f32);
+interpolate_typed!(interpolate_lanczos3_f64, interpolate_lanczos3_impl, f64);
+interpolate_typed!(interpolate_lanczos3_f16, interpolate_lanczos3_impl, f16);
+interpolate_bf16!(interpolate_lanczos3_bf16, interpolate_lanczos3_f32);
 
 // ============================================================================
 // Backward pass - dtype dispatch
@@ -151,9 +156,31 @@ interpolate_backward_bf16!(
 // Generic implementations with rayon parallelism
 // ============================================================================
 
+/// Compute coordinate mapping parameters.
+///
+/// align_corners=true:  ratio = (in_size - 1) / (out_size - 1), coord = out * ratio
+/// align_corners=false: ratio = in_size / out_size, coord = (out + 0.5) * ratio - 0.5
+fn coord_ratio(in_size: usize, out_size: usize, align_corners: bool) -> f64 {
+    if align_corners {
+        (in_size as f64 - 1.0) / (out_size.max(1) - 1).max(1) as f64
+    } else {
+        in_size as f64 / out_size as f64
+    }
+}
+
+/// Map an output coordinate to input coordinate.
+#[inline]
+fn map_coord(out_coord: usize, ratio: f64, align_corners: bool) -> f64 {
+    if align_corners {
+        out_coord as f64 * ratio
+    } else {
+        (out_coord as f64 + 0.5) * ratio - 0.5
+    }
+}
+
 /// Nearest neighbor interpolation.
 /// Maps output coordinates to input using floor(ratio * out_coord).
-fn interpolate_nearest_impl<T>(x: FlexTensor, output_size: [usize; 2]) -> FlexTensor
+fn interpolate_nearest_impl<T>(x: FlexTensor, output_size: [usize; 2], _align_corners: bool) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
 {
@@ -238,7 +265,7 @@ where
 
 /// Bilinear interpolation.
 /// Uses 4-point weighted average based on distance to neighbors.
-fn interpolate_bilinear_impl<T>(x: FlexTensor, output_size: [usize; 2]) -> FlexTensor
+fn interpolate_bilinear_impl<T>(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
 {
@@ -256,8 +283,8 @@ where
     );
     let [out_height, out_width] = output_size;
 
-    let y_ratio = (in_height as f64 - 1.0) / (out_height.max(1) - 1).max(1) as f64;
-    let x_ratio = (in_width as f64 - 1.0) / (out_width.max(1) - 1).max(1) as f64;
+    let y_ratio = coord_ratio(in_height, out_height, align_corners);
+    let x_ratio = coord_ratio(in_width, out_width, align_corners);
 
     let out_numel = batch * channels * out_height * out_width;
     let in_hw = in_height * in_width;
@@ -277,16 +304,16 @@ where
                     let out_base = b * channels * out_hw + c * out_hw;
 
                     for oh in 0..out_height {
-                        let y_in = oh as f64 * y_ratio;
-                        let y_low = y_in.floor() as usize;
+                        let y_in = map_coord(oh, y_ratio, align_corners);
+                        let y_low = (y_in.floor().max(0.0)) as usize;
                         let y_high = (y_low + 1).min(in_height - 1);
-                        let y_weight = T::from(y_in - y_low as f64).unwrap();
+                        let y_weight = T::from((y_in - y_low as f64).max(0.0)).unwrap();
 
                         for ow in 0..out_width {
-                            let x_in = ow as f64 * x_ratio;
-                            let x_low = x_in.floor() as usize;
+                            let x_in = map_coord(ow, x_ratio, align_corners);
+                            let x_low = (x_in.floor().max(0.0)) as usize;
                             let x_high = (x_low + 1).min(in_width - 1);
-                            let x_weight = T::from(x_in - x_low as f64).unwrap();
+                            let x_weight = T::from((x_in - x_low as f64).max(0.0)).unwrap();
 
                             let p_a = input[in_base + y_low * in_width + x_low];
                             let p_b = input[in_base + y_low * in_width + x_high];
@@ -319,16 +346,16 @@ where
                     let out_base = b * channels * out_hw + c * out_hw;
 
                     for oh in 0..out_height {
-                        let y_in = oh as f64 * y_ratio;
-                        let y_low = y_in.floor() as usize;
+                        let y_in = map_coord(oh, y_ratio, align_corners);
+                        let y_low = (y_in.floor().max(0.0)) as usize;
                         let y_high = (y_low + 1).min(in_height - 1);
-                        let y_weight = T::from(y_in - y_low as f64).unwrap();
+                        let y_weight = T::from((y_in - y_low as f64).max(0.0)).unwrap();
 
                         for ow in 0..out_width {
-                            let x_in = ow as f64 * x_ratio;
-                            let x_low = x_in.floor() as usize;
+                            let x_in = map_coord(ow, x_ratio, align_corners);
+                            let x_low = (x_in.floor().max(0.0)) as usize;
                             let x_high = (x_low + 1).min(in_width - 1);
-                            let x_weight = T::from(x_in - x_low as f64).unwrap();
+                            let x_weight = T::from((x_in - x_low as f64).max(0.0)).unwrap();
 
                             let p_a = input[in_base + y_low * in_width + x_low];
                             let p_b = input[in_base + y_low * in_width + x_high];
@@ -358,7 +385,7 @@ where
 }
 
 /// Bicubic interpolation using cubic convolution.
-fn interpolate_bicubic_impl<T>(x: FlexTensor, output_size: [usize; 2]) -> FlexTensor
+fn interpolate_bicubic_impl<T>(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
 {
@@ -376,8 +403,8 @@ where
     );
     let [out_height, out_width] = output_size;
 
-    let y_ratio = (in_height as f64 - 1.0) / (out_height.max(1) - 1).max(1) as f64;
-    let x_ratio = (in_width as f64 - 1.0) / (out_width.max(1) - 1).max(1) as f64;
+    let y_ratio = coord_ratio(in_height, out_height, align_corners);
+    let x_ratio = coord_ratio(in_width, out_width, align_corners);
 
     let out_numel = batch * channels * out_height * out_width;
     let in_hw = in_height * in_width;
@@ -406,11 +433,11 @@ where
                     let in_base = b * channels * in_hw + c * in_hw;
                     let out_base = b * channels * out_hw + c * out_hw;
 
-                    let y_in = oh as f64 * y_ratio;
+                    let y_in = map_coord(oh, y_ratio, align_corners);
                     let y0 = y_in.floor() as isize;
 
                     for ow in 0..out_width {
-                        let x_in = ow as f64 * x_ratio;
+                        let x_in = map_coord(ow, x_ratio, align_corners);
                         let x0 = x_in.floor() as isize;
 
                         let mut sum = 0.0_f64;
@@ -448,11 +475,11 @@ where
                         let out_base = b * channels * out_hw + c * out_hw;
 
                         for oh in 0..out_height {
-                            let y_in = oh as f64 * y_ratio;
+                            let y_in = map_coord(oh, y_ratio, align_corners);
                             let y0 = y_in.floor() as isize;
 
                             for ow in 0..out_width {
-                                let x_in = ow as f64 * x_ratio;
+                                let x_in = map_coord(ow, x_ratio, align_corners);
                                 let x0 = x_in.floor() as isize;
 
                                 let mut sum = 0.0_f64;
@@ -497,11 +524,11 @@ where
                     let out_base = b * channels * out_hw + c * out_hw;
 
                     for oh in 0..out_height {
-                        let y_in = oh as f64 * y_ratio;
+                        let y_in = map_coord(oh, y_ratio, align_corners);
                         let y0 = y_in.floor() as isize;
 
                         for ow in 0..out_width {
-                            let x_in = ow as f64 * x_ratio;
+                            let x_in = map_coord(ow, x_ratio, align_corners);
                             let x0 = x_in.floor() as isize;
 
                             let mut sum = 0.0_f64;
@@ -555,6 +582,164 @@ fn cubic_weight(t: f64, a: f64) -> f64 {
     }
 }
 
+/// Lanczos3 interpolation weight function.
+/// Uses a sinc-windowed sinc kernel with a=3.
+#[inline]
+fn lanczos3_weight(x: f64) -> f64 {
+    if x == 0.0 {
+        return 1.0;
+    }
+    let abs_x = x.abs();
+    if abs_x >= 3.0 {
+        return 0.0;
+    }
+    let pi = core::f64::consts::PI;
+    let pi_x = pi * x;
+    let pi_x_over_3 = pi_x / 3.0;
+    (pi_x.sin() * pi_x_over_3.sin()) / (pi_x * pi_x_over_3)
+}
+
+/// Lanczos3 interpolation (6x6 sinc-windowed kernel).
+///
+/// Uses skip-and-renormalize boundary handling: out-of-bounds samples are
+/// excluded and weights are renormalized. This avoids edge ringing artifacts
+/// from replicated boundary pixels (unlike bicubic which clamps to edge).
+/// Matches the ndarray reference implementation.
+fn interpolate_lanczos3_impl<T>(x: FlexTensor, output_size: [usize; 2], align_corners: bool) -> FlexTensor
+where
+    T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
+{
+    let x = x.to_contiguous();
+    let input = x.storage::<T>();
+    let shape = x.layout().shape();
+
+    let batch = shape[0];
+    let channels = shape[1];
+    let in_height = shape[2];
+    let in_width = shape[3];
+    assert!(
+        in_height > 0 && in_width > 0,
+        "interpolate: input spatial dimensions must be > 0"
+    );
+    let [out_height, out_width] = output_size;
+
+    let y_ratio = coord_ratio(in_height, out_height, align_corners);
+    let x_ratio = coord_ratio(in_width, out_width, align_corners);
+
+    let out_numel = batch * channels * out_height * out_width;
+    let in_hw = in_height * in_width;
+    let out_hw = out_height * out_width;
+    let max_h = in_height as isize - 1;
+    let max_w = in_width as isize - 1;
+
+    /// Compute one Lanczos3 output pixel given pre-computed y coordinates.
+    #[inline]
+    fn lanczos3_sample<T: Float + burn_backend::Element + bytemuck::Pod>(
+        input: &[T],
+        in_base: usize,
+        in_width: usize,
+        y_in: f64,
+        y0: f64,
+        x_in: f64,
+        max_h: isize,
+        max_w: isize,
+    ) -> T {
+        let x0 = x_in.floor();
+        let mut result = 0.0_f64;
+        let mut weight_sum = 0.0_f64;
+
+        for ky in -2..=3_isize {
+            let yi = y0 as isize + ky;
+            if yi < 0 || yi > max_h {
+                continue;
+            }
+            let wy = lanczos3_weight(y_in - (y0 + ky as f64));
+            for kx in -2..=3_isize {
+                let xi = x0 as isize + kx;
+                if xi < 0 || xi > max_w {
+                    continue;
+                }
+                let wx = lanczos3_weight(x_in - (x0 + kx as f64));
+                let w = wy * wx;
+                let val = input[in_base + yi as usize * in_width + xi as usize];
+                let val_f64 = <T as num_traits::ToPrimitive>::to_f64(&val).unwrap_or(0.0);
+                result += val_f64 * w;
+                weight_sum += w;
+            }
+        }
+
+        if weight_sum != 0.0 {
+            result /= weight_sum;
+        }
+        T::from(result).unwrap()
+    }
+
+    let output = {
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+
+            let mut output = vec![T::zero(); out_numel];
+            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
+
+            let total_rows = batch * channels * out_height;
+            (0..total_rows).into_par_iter().for_each(|id| {
+                let b = id / (channels * out_height);
+                let remainder = id % (channels * out_height);
+                let c = remainder / out_height;
+                let oh = remainder % out_height;
+
+                let in_base = b * channels * in_hw + c * in_hw;
+                let out_base = b * channels * out_hw + c * out_hw;
+
+                let y_in = map_coord(oh, y_ratio, align_corners);
+                let y0 = y_in.floor();
+
+                for ow in 0..out_width {
+                    let x_in = map_coord(ow, x_ratio, align_corners);
+                    let out_idx = out_base + oh * out_width + ow;
+                    unsafe {
+                        out_ptr.write(
+                            out_idx,
+                            lanczos3_sample(input, in_base, in_width, y_in, y0, x_in, max_h, max_w),
+                        );
+                    }
+                }
+            });
+            output
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut output = vec![T::zero(); out_numel];
+
+            for b in 0..batch {
+                for c in 0..channels {
+                    let in_base = b * channels * in_hw + c * in_hw;
+                    let out_base = b * channels * out_hw + c * out_hw;
+
+                    for oh in 0..out_height {
+                        let y_in = map_coord(oh, y_ratio, align_corners);
+                        let y0 = y_in.floor();
+
+                        for ow in 0..out_width {
+                            let x_in = map_coord(ow, x_ratio, align_corners);
+                            output[out_base + oh * out_width + ow] =
+                                lanczos3_sample(input, in_base, in_width, y_in, y0, x_in, max_h, max_w);
+                        }
+                    }
+                }
+            }
+            output
+        }
+    };
+
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(Shape::from(vec![batch, channels, out_height, out_width])),
+        x.dtype(),
+    )
+}
+
 // ============================================================================
 // Backward implementations
 // ============================================================================
@@ -563,7 +748,7 @@ fn cubic_weight(t: f64, a: f64) -> f64 {
 fn interpolate_nearest_backward_impl<T>(
     x: FlexTensor,
     grad: FlexTensor,
-    output_size: [usize; 2],
+    output_size: [usize; 2], _align_corners: bool,
 ) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod,
@@ -620,7 +805,7 @@ where
 fn interpolate_bilinear_backward_impl<T>(
     x: FlexTensor,
     grad: FlexTensor,
-    output_size: [usize; 2],
+    output_size: [usize; 2], align_corners: bool,
 ) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod,
@@ -639,8 +824,8 @@ where
     );
     let [out_height, out_width] = output_size;
 
-    let y_ratio = (in_height as f64 - 1.0) / (out_height.max(1) - 1).max(1) as f64;
-    let x_ratio = (in_width as f64 - 1.0) / (out_width.max(1) - 1).max(1) as f64;
+    let y_ratio = coord_ratio(in_height, out_height, align_corners);
+    let x_ratio = coord_ratio(in_width, out_width, align_corners);
 
     let in_numel = batch * channels * in_height * in_width;
     let mut input_grad = vec![T::zero(); in_numel];
@@ -654,16 +839,16 @@ where
             let out_base = b * channels * out_hw + c * out_hw;
 
             for oh in 0..out_height {
-                let y_in = oh as f64 * y_ratio;
-                let y_low = y_in.floor() as usize;
+                let y_in = map_coord(oh, y_ratio, align_corners);
+                let y_low = (y_in.floor().max(0.0)) as usize;
                 let y_high = (y_low + 1).min(in_height - 1);
-                let y_weight = T::from(y_in - y_low as f64).unwrap();
+                let y_weight = T::from((y_in - y_low as f64).max(0.0)).unwrap();
 
                 for ow in 0..out_width {
-                    let x_in = ow as f64 * x_ratio;
-                    let x_low = x_in.floor() as usize;
+                    let x_in = map_coord(ow, x_ratio, align_corners);
+                    let x_low = (x_in.floor().max(0.0)) as usize;
                     let x_high = (x_low + 1).min(in_width - 1);
-                    let x_weight = T::from(x_in - x_low as f64).unwrap();
+                    let x_weight = T::from((x_in - x_low as f64).max(0.0)).unwrap();
 
                     let grad_val = grad_data[out_base + oh * out_width + ow];
                     let one = T::one();
@@ -696,7 +881,7 @@ where
 fn interpolate_bicubic_backward_impl<T>(
     x: FlexTensor,
     grad: FlexTensor,
-    output_size: [usize; 2],
+    output_size: [usize; 2], align_corners: bool,
 ) -> FlexTensor
 where
     T: Float + burn_backend::Element + bytemuck::Pod,
@@ -715,8 +900,8 @@ where
     );
     let [out_height, out_width] = output_size;
 
-    let y_ratio = (in_height as f64 - 1.0) / (out_height.max(1) - 1).max(1) as f64;
-    let x_ratio = (in_width as f64 - 1.0) / (out_width.max(1) - 1).max(1) as f64;
+    let y_ratio = coord_ratio(in_height, out_height, align_corners);
+    let x_ratio = coord_ratio(in_width, out_width, align_corners);
 
     let in_numel = batch * channels * in_height * in_width;
     let mut input_grad = vec![T::zero(); in_numel];
@@ -731,11 +916,11 @@ where
             let out_base = b * channels * out_hw + c * out_hw;
 
             for oh in 0..out_height {
-                let y_in = oh as f64 * y_ratio;
+                let y_in = map_coord(oh, y_ratio, align_corners);
                 let y0 = y_in.floor() as isize;
 
                 for ow in 0..out_width {
-                    let x_in = ow as f64 * x_ratio;
+                    let x_in = map_coord(ow, x_ratio, align_corners);
                     let x0 = x_in.floor() as isize;
 
                     let grad_val = <T as num_traits::ToPrimitive>::to_f64(
@@ -822,7 +1007,7 @@ mod tests {
             DType::F32,
         );
 
-        let result = interpolate_nearest_f32(x, [4, 4]);
+        let result = interpolate_nearest_f32(x, [4, 4], true);
         let output = result.storage::<f32>();
 
         assert_eq!(output.len(), 16);
@@ -841,7 +1026,7 @@ mod tests {
             DType::F32,
         );
 
-        let result = interpolate_bilinear_f32(x, [4, 4]);
+        let result = interpolate_bilinear_f32(x, [4, 4], true);
         let output = result.storage::<f32>();
 
         assert!((output[0] - 0.0).abs() < 1e-5);
@@ -853,14 +1038,14 @@ mod tests {
     #[test]
     fn test_bicubic_basic() {
         let x = make_input_f32(1, 1, 4, 4);
-        let result = interpolate_bicubic_f32(x, [8, 8]);
+        let result = interpolate_bicubic_f32(x, [8, 8], true);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 8, 8]);
     }
 
     #[test]
     fn test_downsample() {
         let x = make_input_f32(1, 1, 4, 4);
-        let result = interpolate_nearest_f32(x, [2, 2]);
+        let result = interpolate_nearest_f32(x, [2, 2], true);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 2, 2]);
     }
 
@@ -873,7 +1058,7 @@ mod tests {
             DType::F32,
         );
 
-        let result = interpolate_nearest_backward_f32(x, grad, [4, 4]);
+        let result = interpolate_nearest_backward_f32(x, grad, [4, 4], true);
         let output = result.storage::<f32>();
 
         assert_eq!(output.len(), 4);
