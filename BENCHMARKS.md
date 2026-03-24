@@ -734,6 +734,53 @@ intermediate tensor allocations for coordinate transforms and interpolation.
 
 ---
 
+## Attention (Scaled Dot-Product)
+
+Fused attention kernel: combines scale + softcap + masking + bias + softmax into a single pass
+over the scores matrix, reducing intermediate allocations from ~12 (NdArray fallback) to 3.
+
+### Self-Attention
+
+| Config | Flex | NdArray | Speedup | Flex Alloc | NdArray Alloc |
+| ------ | ---- | ------- | ------- | ---------- | ------------- |
+| h8, s64, d64    | 470 us  | 460 us  | ~1.0x    | 7.9 MB  | 12.7 MB |
+| h12, s128, d64  | 1.08 ms | 1.51 ms | **1.4x** | 7.9 MB  | 12.7 MB |
+| h12, s256, d64  | 2.68 ms | 5.90 ms | **2.2x** | 7.9 MB  | 12.7 MB |
+| h12, s512, d64  | 8.84 ms | 21.8 ms | **2.5x** | 7.9 MB  | 15.8 MB |
+| h32, s256, d128 | 9.03 ms | 17.4 ms | **1.9x** | 7.9 MB  | 15.8 MB |
+| b4, h12, s128   | 3.35 ms | 5.26 ms | **1.6x** | 7.9 MB  | 12.7 MB |
+
+### Causal Attention
+
+| Config | Flex | NdArray | Speedup |
+| ------ | ---- | ------- | ------- |
+| h12, s128, d64 | 1.21 ms | 1.63 ms | **1.3x** |
+| h12, s256, d64 | 3.28 ms | 6.32 ms | **1.9x** |
+| h12, s512, d64 | 10.6 ms | 23.2 ms | **2.2x** |
+
+NdArray builds an explicit causal mask tensor (arange + compare + expand), adding ~3 extra
+allocations. Flex applies the mask inline during the fused softmax pass.
+
+### With Additive Bias (ALiBi-style)
+
+| Config | Flex | NdArray | Speedup |
+| ------ | ---- | ------- | ------- |
+| h12, s128, d64 | 1.09 ms | 1.54 ms | **1.4x** |
+| h12, s256, d64 | 2.70 ms | 5.96 ms | **2.2x** |
+
+### Cross-Attention (seq_q != seq_k)
+
+| Config | Flex | NdArray | Speedup |
+| ------ | ---- | ------- | ------- |
+| sq128, sk512, d64 | 3.34 ms | 6.03 ms | **1.8x** |
+| sq32, sk1024, d64 | 3.62 ms | 3.59 ms | ~1.0x   |
+
+Speedup scales with sequence length: the fused kernel avoids allocating and iterating over
+increasingly large intermediate score matrices. For small score matrices (sq32) the matmul
+dominates and both backends are similar.
+
+---
+
 ## Quantized Tensor Operations
 
 All quantized ops (except layout ops) go through a dequantize-op-quantize cycle. Flex stores scales
@@ -827,6 +874,7 @@ f32, then requantizes. 16x less memory at 1M scale.
 ## Running Benchmarks
 
 ```bash
+cargo bench --bench attention
 cargo bench --bench binary_ops
 cargo bench --bench matmul
 cargo bench --bench int_ops
