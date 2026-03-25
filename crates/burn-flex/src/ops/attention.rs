@@ -553,13 +553,10 @@ mod tests {
 
         let dev = Default::default();
         use burn_tensor::Bool;
-        let mask: Tensor<Flex, 4, Bool> = Tensor::from_data(
-            TensorData::from([[[[true, true], [true, true]]]]),
-            &dev,
-        );
+        let mask: Tensor<Flex, 4, Bool> =
+            Tensor::from_data(TensorData::from([[[[true, true], [true, true]]]]), &dev);
 
-        let result =
-            burn_tensor::module::attention(q, k, v, Some(mask), None, Default::default());
+        let result = burn_tensor::module::attention(q, k, v, Some(mask), None, Default::default());
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
 
         for (i, &val) in data.iter().enumerate() {
@@ -576,12 +573,9 @@ mod tests {
             TensorData::new(
                 vec![
                     // batch 0, head 0
-                    1.0f32, 0.0, 0.0, 1.0,
-                    // batch 0, head 1
-                    0.5, 0.5, 0.5, 0.5,
-                    // batch 1, head 0
-                    1.0, 0.0, 0.0, 1.0,
-                    // batch 1, head 1
+                    1.0f32, 0.0, 0.0, 1.0, // batch 0, head 1
+                    0.5, 0.5, 0.5, 0.5, // batch 1, head 0
+                    1.0, 0.0, 0.0, 1.0, // batch 1, head 1
                     0.0, 1.0, 1.0, 0.0,
                 ],
                 [2, 2, 2, 2],
@@ -589,10 +583,8 @@ mod tests {
             &dev,
         );
         let k = q.clone();
-        let v: Tensor<Flex, 4> = Tensor::from_data(
-            TensorData::new(vec![10.0f32; 16], [2, 2, 2, 2]),
-            &dev,
-        );
+        let v: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(vec![10.0f32; 16], [2, 2, 2, 2]), &dev);
 
         let result = burn_tensor::module::attention(q, k, v, None, None, Default::default());
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
