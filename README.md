@@ -110,6 +110,9 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
   - `thumbv6m-none-eabi` (ARM Cortex-M0+, no atomic pointers)
   - `thumbv7m-none-eabi` (ARM Cortex-M3)
   - `wasm32-unknown-unknown`
+- Passes [Miri](https://github.com/rust-lang/miri) (undefined behavior detector) on all burn-flex
+  code. Validates memory safety of unsafe pointer arithmetic, bytemuck casts, and Send/Sync
+  implementations.
 - Tested for edge-case robustness: integer overflow at type boundaries, large-float rounding,
   invalid pooling parameters, zero-sized dimensions. Safe for embedded devices.
 - All ONNX model checks in `burn-onnx` pass
