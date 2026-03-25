@@ -26,6 +26,20 @@ use rayon::prelude::*;
 #[cfg(feature = "rayon")]
 const PARALLEL_THRESHOLD: usize = 256 * 1024; // 256K elements
 
+/// Truncate an i64 to a smaller Pod type, keeping the low-order bytes.
+/// Endian-safe: works correctly on both little-endian and big-endian targets.
+fn truncate_i64_to_pod<E: bytemuck::Pod>(value: i64) -> E {
+    let bytes = value.to_ne_bytes();
+    let size = core::mem::size_of::<E>();
+    debug_assert!(size <= core::mem::size_of::<i64>());
+    let offset = if cfg!(target_endian = "big") {
+        core::mem::size_of::<i64>() - size
+    } else {
+        0
+    };
+    bytemuck::pod_read_unaligned(&bytes[offset..offset + size])
+}
+
 // ============================================================================
 // Sum (all elements)
 // ============================================================================
@@ -157,12 +171,7 @@ macro_rules! widening_scalar_reduce {
                 }
             };
             // Truncate back to target type (wrapping, matches PyTorch)
-            let data: &[E] = tensor.storage();
-            let _ = data; // just to bind E
-            let result_bytes = total.to_ne_bytes();
-            // Extract lowest bytes for the target type
-            let result: E =
-                bytemuck::cast_slice::<u8, E>(&result_bytes[..core::mem::size_of::<E>()])[0];
+            let result: E = truncate_i64_to_pod(total);
             let bytes = Bytes::from_elems(vec![result]);
             FlexTensor::new(
                 bytes,
@@ -989,8 +998,7 @@ where
                 acc = reduce_fn(acc, i64::from(data[idx]));
             }
             // Truncate back to target type (wrapping, matches PyTorch)
-            let acc_bytes = acc.to_ne_bytes();
-            let val: E = bytemuck::cast_slice::<u8, E>(&acc_bytes[..core::mem::size_of::<E>()])[0];
+            let val: E = truncate_i64_to_pod(acc);
             result.push(val);
         }
     }

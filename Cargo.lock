@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "burn-flex"
-version = "0.0.1"
+version = "0.21.0-pre.2"
 dependencies = [
  "aligned-vec",
  "burn-backend",
