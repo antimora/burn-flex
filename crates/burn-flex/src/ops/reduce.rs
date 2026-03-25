@@ -157,12 +157,10 @@ macro_rules! widening_scalar_reduce {
                 }
             };
             // Truncate back to target type (wrapping, matches PyTorch)
-            let data: &[E] = tensor.storage();
-            let _ = data; // just to bind E
             let result_bytes = total.to_ne_bytes();
-            // Extract lowest bytes for the target type
+            // Extract lowest bytes for the target type (unaligned read to avoid UB)
             let result: E =
-                bytemuck::cast_slice::<u8, E>(&result_bytes[..core::mem::size_of::<E>()])[0];
+                bytemuck::pod_read_unaligned(&result_bytes[..core::mem::size_of::<E>()]);
             let bytes = Bytes::from_elems(vec![result]);
             FlexTensor::new(
                 bytes,
@@ -988,9 +986,9 @@ where
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 acc = reduce_fn(acc, i64::from(data[idx]));
             }
-            // Truncate back to target type (wrapping, matches PyTorch)
+            // Truncate back to target type (wrapping, matches PyTorch; unaligned read to avoid UB)
             let acc_bytes = acc.to_ne_bytes();
-            let val: E = bytemuck::cast_slice::<u8, E>(&acc_bytes[..core::mem::size_of::<E>()])[0];
+            let val: E = bytemuck::pod_read_unaligned(&acc_bytes[..core::mem::size_of::<E>()]);
             result.push(val);
         }
     }
