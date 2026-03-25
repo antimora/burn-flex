@@ -1,10 +1,12 @@
-//! Fused scaled dot-product attention.
+//! Flash attention for CPU.
 //!
 //! Computes: softmax(Q @ K^T * scale + bias) @ V
 //!
-//! The implementation fuses scale, softcap, masking, bias, and softmax into a
-//! single pass over the attention scores matrix, reducing intermediate tensor
-//! allocations from ~12 (in the generic fallback) to 3.
+//! Uses the flash attention algorithm: instead of materializing the full
+//! [seq_q, seq_kv] attention scores matrix, tiles over the KV dimension
+//! and maintains running softmax statistics (row max and sum) per query row.
+//! This reduces memory from O(seq_q * seq_kv) to O(seq_q * TILE_KV) and
+//! improves cache locality since score tiles fit in L1.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -15,6 +17,13 @@ use bytemuck::Pod;
 use num_traits::Float;
 
 use crate::{FlexTensor, Layout};
+
+/// KV tile size for flash attention.
+///
+/// Each score tile is [seq_q_rows, TILE_KV] per query row processed.
+/// At 64 elements * 4 bytes = 256 bytes per row, this fits comfortably in L1.
+/// The V tile [TILE_KV, val_dim] = 64 * 128 * 4 = 32KB also fits in L1.
+const TILE_KV: usize = 64;
 
 /// Dispatch attention by dtype.
 pub fn attention(
@@ -93,16 +102,24 @@ fn cast_from_f32<E: burn_backend::Element + Pod + Copy>(
     )
 }
 
-/// Core attention implementation, generic over float type.
+/// Flash attention: tiled computation that avoids materializing the full scores matrix.
 ///
 /// Input shapes (all 4D):
 ///   query: \[batch, heads, seq_q, head_dim\]
-///   key:   \[batch, heads, seq_k, head_dim\]
-///   value: \[batch, heads, seq_k, val_dim\]
-///   mask:  \[batch, heads, seq_q, seq_k\] (optional, bool stored as u8)
-///   attn_bias: \[batch, heads, seq_q, seq_k\] (optional)
+///   key:   \[batch, heads, seq_kv, head_dim\]
+///   value: \[batch, heads, seq_kv, val_dim\]
+///   mask:  \[batch, heads, seq_q, seq_kv\] (optional, bool stored as u8)
+///   attn_bias: \[batch, heads, seq_q, seq_kv\] (optional)
 ///
 /// Output: \[batch, heads, seq_q, val_dim\]
+///
+/// Algorithm per (batch, head, query_row):
+///   For each KV tile of size TILE_KV:
+///     1. Score: dot(Q_row, K_tile_row) for each key in tile
+///     2. Transform: scale, softcap, mask, bias
+///     3. Online softmax: update running max (m) and sum (l), rescale accumulator
+///     4. Value accumulate: output += exp_scores @ V_tile
+///   Final: output /= l
 fn attention_impl<T>(
     query: FlexTensor,
     key: FlexTensor,
@@ -119,81 +136,26 @@ where
         assert!(softcap > 0.0, "softcap must be positive, got {softcap}");
     }
 
+    let query = query.to_contiguous();
+    let key = key.to_contiguous();
+    let value = value.to_contiguous();
+
     let q_shape = query.layout().shape();
     let ndims = q_shape.num_dims();
-    let head_dim = q_shape[ndims - 1];
+    assert!(ndims == 4, "attention requires 4D tensors");
 
-    // Step 1: Q @ K^T via existing matmul
-    let transposed_key = key.transpose(ndims - 2, ndims - 1);
-    let scores = crate::ops::matmul::matmul(query, transposed_key);
+    let batch = q_shape[0];
+    let heads = q_shape[1];
+    let seq_q = q_shape[2];
+    let head_dim = q_shape[3];
 
-    // Step 2: Fused scale + softcap + mask + bias + softmax
-    let weights = fused_softmax::<T>(
-        scores,
-        mask.as_ref(),
-        attn_bias.as_ref(),
-        &options,
-        head_dim,
-    );
+    let k_shape = key.layout().shape();
+    let seq_kv = k_shape[2];
+    debug_assert_eq!(k_shape[3], head_dim, "attention: key head_dim mismatch");
 
-    // Step 3: weights @ V
-    crate::ops::matmul::matmul(weights, value)
-}
-
-/// Fused softmax with scale, softcap, masking, and bias.
-///
-/// Operates on scores of shape \[batch, heads, seq_q, seq_k\].
-/// Applies all transformations and softmax row-wise along the last dimension
-/// in a single allocation.
-///
-/// Two-pass approach per row:
-///   Pass 1: apply scale/softcap/mask/bias, find row max
-///   Pass 2: exp(x - max), sum, normalize
-fn fused_softmax<T>(
-    scores: FlexTensor,
-    mask: Option<&FlexTensor>,
-    attn_bias: Option<&FlexTensor>,
-    options: &AttentionModuleOptions,
-    head_dim: usize,
-) -> FlexTensor
-where
-    T: Float + Pod + Copy + burn_backend::Element,
-    T: core::ops::AddAssign,
-{
-    let scores = scores.to_contiguous();
-    let shape = scores.layout().shape().clone();
-    let ndims = shape.num_dims();
-    assert!(ndims >= 2, "scores must be at least 2D");
-
-    let seq_q = shape[ndims - 2];
-    let seq_k = shape[ndims - 1];
-    let num_rows_total: usize = shape[..ndims - 2].iter().product::<usize>() * seq_q;
-
-    let scores_data: &[T] = scores.storage();
-
-    let scores_numel = scores_data.len();
-
-    let mask_tensor = mask.map(|m| {
-        let m = m.to_contiguous();
-        debug_assert_eq!(
-            m.layout().num_elements(),
-            scores_numel,
-            "attention: mask shape must match scores shape"
-        );
-        m
-    });
-    let mask_data: Option<&[u8]> = mask_tensor.as_ref().map(|m| m.bytes());
-
-    let bias_tensor = attn_bias.map(|b| {
-        let b = b.to_contiguous();
-        debug_assert_eq!(
-            b.layout().num_elements(),
-            scores_numel,
-            "attention: attn_bias shape must match scores shape"
-        );
-        b
-    });
-    let bias_data: Option<&[T]> = bias_tensor.as_ref().map(|b| b.storage());
+    let v_shape = value.layout().shape();
+    let val_dim = v_shape[3];
+    debug_assert_eq!(v_shape[2], seq_kv, "attention: value seq_kv mismatch");
 
     let scale = T::from(
         options
@@ -201,37 +163,64 @@ where
             .unwrap_or_else(|| 1.0 / (head_dim as f64).sqrt()),
     )
     .unwrap();
-
     let softcap: Option<T> = options.softcap.map(|s| T::from(s).unwrap());
-    let neg_inf = T::neg_infinity();
-
     let causal_offset = if options.is_causal {
-        Some(seq_k as isize - seq_q as isize)
+        Some(seq_kv as isize - seq_q as isize)
     } else {
         None
     };
 
-    let params = SoftmaxParams {
-        scale,
-        softcap,
-        neg_inf,
-        causal_offset,
-    };
+    let q_data: &[T] = query.storage();
+    let k_data: &[T] = key.storage();
+    let v_data: &[T] = value.storage();
 
-    let mut output = vec![T::zero(); scores_data.len()];
+    let mask_tensor = mask.map(|m| m.to_contiguous());
+    let mask_data: Option<&[u8]> = mask_tensor.as_ref().map(|m| m.bytes());
 
-    for row_idx in 0..num_rows_total {
-        let q_pos = row_idx % seq_q;
-        let row_start = row_idx * seq_k;
-        let scores_row = &scores_data[row_start..row_start + seq_k];
-        let out_row = &mut output[row_start..row_start + seq_k];
+    let bias_tensor = attn_bias.map(|b| b.to_contiguous());
+    let bias_data: Option<&[T]> = bias_tensor.as_ref().map(|b| b.storage());
 
-        let mask_row = mask_data.map(|m| &m[row_start..row_start + seq_k]);
-        let bias_row = bias_data.map(|b| &b[row_start..row_start + seq_k]);
+    let mut output = vec![T::zero(); batch * heads * seq_q * val_dim];
 
-        fused_softmax_row(scores_row, out_row, mask_row, bias_row, &params, q_pos);
+    // 4D strides for contiguous layout
+    let q_head_stride = seq_q * head_dim;
+    let q_batch_stride = heads * q_head_stride;
+    let k_head_stride = seq_kv * head_dim;
+    let k_batch_stride = heads * k_head_stride;
+    let v_head_stride = seq_kv * val_dim;
+    let v_batch_stride = heads * v_head_stride;
+    let o_head_stride = seq_q * val_dim;
+    let o_batch_stride = heads * o_head_stride;
+    let mask_head_stride = seq_q * seq_kv;
+    let mask_batch_stride = heads * mask_head_stride;
+
+    for b in 0..batch {
+        for h in 0..heads {
+            let q_off = b * q_batch_stride + h * q_head_stride;
+            let k_off = b * k_batch_stride + h * k_head_stride;
+            let v_off = b * v_batch_stride + h * v_head_stride;
+            let o_off = b * o_batch_stride + h * o_head_stride;
+            let m_off = b * mask_batch_stride + h * mask_head_stride;
+
+            flash_attention_head(
+                &q_data[q_off..q_off + q_head_stride],
+                &k_data[k_off..k_off + k_head_stride],
+                &v_data[v_off..v_off + v_head_stride],
+                &mut output[o_off..o_off + o_head_stride],
+                mask_data.map(|m| &m[m_off..m_off + mask_head_stride]),
+                bias_data.map(|b| &b[m_off..m_off + mask_head_stride]),
+                seq_q,
+                seq_kv,
+                head_dim,
+                val_dim,
+                scale,
+                softcap,
+                causal_offset,
+            );
+        }
     }
 
+    let shape = burn_std::Shape::from(vec![batch, heads, seq_q, val_dim]);
     FlexTensor::new(
         Bytes::from_elems(output),
         Layout::contiguous(shape),
@@ -239,80 +228,153 @@ where
     )
 }
 
-/// Parameters shared across all rows during fused softmax.
-struct SoftmaxParams<T> {
-    scale: T,
-    softcap: Option<T>,
-    neg_inf: T,
-    causal_offset: Option<isize>,
-}
-
-/// Process a single row of attention scores through the fused pipeline.
+/// Process a single (batch, head) pair with flash attention.
 ///
-/// Applies: scale, softcap, bool mask, causal mask, additive bias, then softmax.
-#[inline]
-fn fused_softmax_row<T>(
-    scores: &[T],
+/// Tiles over the KV dimension in blocks of TILE_KV, maintaining running
+/// softmax state (max `m` and sum `l`) per query row. The output accumulator
+/// is rescaled whenever the running max changes.
+fn flash_attention_head<T>(
+    q: &[T],
+    k: &[T],
+    v: &[T],
     output: &mut [T],
     mask: Option<&[u8]>,
     bias: Option<&[T]>,
-    params: &SoftmaxParams<T>,
-    q_pos: usize,
+    seq_q: usize,
+    seq_kv: usize,
+    head_dim: usize,
+    val_dim: usize,
+    scale: T,
+    softcap: Option<T>,
+    causal_offset: Option<isize>,
 ) where
-    T: Float + Copy + core::ops::AddAssign,
+    T: Float + Pod + Copy + core::ops::AddAssign,
 {
-    // Pass 1: apply transformations and find row max
-    let mut row_max = params.neg_inf;
+    let neg_inf = T::neg_infinity();
 
-    for (k, (out, &score)) in output.iter_mut().zip(scores.iter()).enumerate() {
-        let mut val = score * params.scale;
+    // Running softmax state per query row
+    let mut row_max = vec![neg_inf; seq_q];
+    let mut row_sum = vec![T::zero(); seq_q];
 
-        if let Some(cap) = params.softcap {
-            val = cap * (val / cap).tanh();
-        }
+    // Reusable score buffer for one query row within a KV tile
+    let mut scores = [T::zero(); TILE_KV];
 
-        if let Some(m) = mask
-            && m[k] != 0
-        {
-            val = params.neg_inf;
-        }
+    let num_kv_tiles = seq_kv.div_ceil(TILE_KV);
 
-        if let Some(offset) = params.causal_offset
-            && (k as isize) > (q_pos as isize) + offset
-        {
-            val = params.neg_inf;
-        }
+    for tile_idx in 0..num_kv_tiles {
+        let kv_start = tile_idx * TILE_KV;
+        let kv_end = (kv_start + TILE_KV).min(seq_kv);
+        let tile_kv = kv_end - kv_start;
 
-        if let Some(b) = bias {
-            val += b[k];
-        }
+        for qi in 0..seq_q {
+            let q_row = &q[qi * head_dim..(qi + 1) * head_dim];
+            let out_row = &mut output[qi * val_dim..(qi + 1) * val_dim];
+            let score_buf = &mut scores[..tile_kv];
 
-        *out = val;
-        if val > row_max {
-            row_max = val;
+            // Step 1: Compute score = Q[qi] . K[ki] for each key in tile
+            // Step 2: Apply scale, softcap, mask, bias and find tile max
+            let mut tile_max = neg_inf;
+
+            for ki in 0..tile_kv {
+                let kv_idx = kv_start + ki;
+                let k_row = &k[kv_idx * head_dim..(kv_idx + 1) * head_dim];
+
+                // Dot product
+                let mut dot = T::zero();
+                for d in 0..head_dim {
+                    dot += q_row[d] * k_row[d];
+                }
+
+                let mut val = dot * scale;
+
+                if let Some(cap) = softcap {
+                    val = cap * (val / cap).tanh();
+                }
+
+                if let Some(m) = mask
+                    && m[qi * seq_kv + kv_idx] != 0
+                {
+                    val = neg_inf;
+                }
+
+                if let Some(offset) = causal_offset
+                    && (kv_idx as isize) > (qi as isize) + offset
+                {
+                    val = neg_inf;
+                }
+
+                if let Some(b) = bias {
+                    val += b[qi * seq_kv + kv_idx];
+                }
+
+                score_buf[ki] = val;
+                if val > tile_max {
+                    tile_max = val;
+                }
+            }
+
+            // All positions in this tile are masked for this query row
+            if tile_max == neg_inf {
+                continue;
+            }
+
+            // Step 3: Online softmax update
+            let new_max = if row_max[qi] > tile_max {
+                row_max[qi]
+            } else {
+                tile_max
+            };
+
+            // Exponentiate scores relative to the new max
+            let mut tile_sum = T::zero();
+            for ki in 0..tile_kv {
+                let e = (score_buf[ki] - new_max).exp();
+                score_buf[ki] = e;
+                tile_sum += e;
+            }
+
+            // Correction factor: rescale previous accumulations to the new max
+            let correction = if row_max[qi] == neg_inf {
+                // First tile with valid data, no previous output to preserve
+                T::zero()
+            } else {
+                (row_max[qi] - new_max).exp()
+            };
+
+            // Rescale existing output accumulator
+            for d in 0..val_dim {
+                out_row[d] = out_row[d] * correction;
+            }
+
+            // Update running state
+            row_sum[qi] = row_sum[qi] * correction + tile_sum;
+            row_max[qi] = new_max;
+
+            // Step 4: Accumulate P @ V_tile
+            for ki in 0..tile_kv {
+                let p = score_buf[ki];
+                if p > T::zero() {
+                    let kv_idx = kv_start + ki;
+                    let v_row = &v[kv_idx * val_dim..(kv_idx + 1) * val_dim];
+                    for d in 0..val_dim {
+                        out_row[d] += p * v_row[d];
+                    }
+                }
+            }
         }
     }
 
-    // Handle all-masked rows: output zeros instead of NaN
-    if row_max == params.neg_inf {
-        for out in output.iter_mut() {
-            *out = T::zero();
+    // Final normalization: output /= row_sum
+    for qi in 0..seq_q {
+        let sum = row_sum[qi];
+        if sum > T::zero() {
+            let inv_sum = T::one() / sum;
+            let out_row = &mut output[qi * val_dim..(qi + 1) * val_dim];
+            for d in 0..val_dim {
+                out_row[d] = out_row[d] * inv_sum;
+            }
         }
-        return;
-    }
-
-    // Pass 2: exp(x - max) and sum
-    let mut sum = T::zero();
-    for out in output.iter_mut() {
-        let e = (*out - row_max).exp();
-        *out = e;
-        sum += e;
-    }
-
-    // Normalize
-    let inv_sum = T::one() / sum;
-    for out in output.iter_mut() {
-        *out = *out * inv_sum;
+        // sum == 0 means all positions masked; output stays zero
     }
 }
 
@@ -610,5 +672,165 @@ mod tests {
         // Single-element softmax = 1.0, so output = V[0] exactly
         assert_eq!(data.len(), 1);
         assert!((data[0] - 42.0).abs() < 1e-5, "got {}", data[0]);
+    }
+
+    #[test]
+    fn test_multi_tile_seq_kv() {
+        // seq_kv > TILE_KV (64) to exercise tiling with online softmax correction.
+        // Use 128 keys so we get exactly 2 tiles.
+        let dev = <crate::FlexDevice as Default>::default();
+        let seq_q = 2;
+        let seq_kv = 128;
+        let head_dim = 4;
+        let val_dim = 2;
+
+        // Q: first query selects dim 0, second selects dim 1
+        let mut q_data = vec![0.0f32; seq_q * head_dim];
+        q_data[0] = 1.0; // q[0] = [1,0,0,0]
+        q_data[head_dim + 1] = 1.0; // q[1] = [0,1,0,0]
+
+        // K: all keys are [0.1, 0.1, 0.1, 0.1] so all scores are equal
+        let k_data = vec![0.1f32; seq_kv * head_dim];
+
+        // V: linearly increasing values
+        let mut v_data = vec![0.0f32; seq_kv * val_dim];
+        for i in 0..seq_kv {
+            v_data[i * val_dim] = i as f32;
+            v_data[i * val_dim + 1] = (seq_kv - 1 - i) as f32;
+        }
+
+        let q: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(q_data, [1, 1, seq_q, head_dim]), &dev);
+        let k: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(k_data, [1, 1, seq_kv, head_dim]), &dev);
+        let v: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(v_data, [1, 1, seq_kv, val_dim]), &dev);
+
+        let result = burn_tensor::module::attention(q, k, v, None, None, Default::default());
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // All scores are equal, so output is the mean of all V rows
+        // Mean of 0..127 = 63.5
+        assert_eq!(data.len(), seq_q * val_dim);
+        assert!(
+            (data[0] - 63.5).abs() < 0.1,
+            "expected ~63.5, got {}",
+            data[0]
+        );
+        assert!(
+            (data[1] - 63.5).abs() < 0.1,
+            "expected ~63.5, got {}",
+            data[1]
+        );
+    }
+
+    #[test]
+    fn test_multi_tile_causal() {
+        // seq_kv=128 with causal mask: first query sees only first ~offset+1 keys
+        let dev = <crate::FlexDevice as Default>::default();
+        let seq_q = 4;
+        let seq_kv = 128;
+        let head_dim = 2;
+        let val_dim = 1;
+
+        // All queries/keys are [1,0] so all visible scores are equal
+        let mut q_data = vec![0.0f32; seq_q * head_dim];
+        for i in 0..seq_q {
+            q_data[i * head_dim] = 1.0;
+        }
+        let mut k_data = vec![0.0f32; seq_kv * head_dim];
+        for i in 0..seq_kv {
+            k_data[i * head_dim] = 1.0;
+        }
+
+        // V[i] = i as f32
+        let v_data: Vec<f32> = (0..seq_kv).map(|i| i as f32).collect();
+
+        let q: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(q_data, [1, 1, seq_q, head_dim]), &dev);
+        let k: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(k_data, [1, 1, seq_kv, head_dim]), &dev);
+        let v: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(v_data, [1, 1, seq_kv, val_dim]), &dev);
+
+        let opts = AttentionModuleOptions {
+            is_causal: true,
+            ..Default::default()
+        };
+        let result = burn_tensor::module::attention(q, k, v, None, None, opts);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // causal_offset = seq_kv - seq_q = 124
+        // q[0] sees k[0..=124], uniform attention -> mean of 0..124 = 62.0
+        // q[1] sees k[0..=125] -> mean of 0..125 = 62.5
+        // q[2] sees k[0..=126] -> mean of 0..126 = 63.0
+        // q[3] sees k[0..=127] -> mean of 0..127 = 63.5
+        assert_eq!(data.len(), seq_q);
+        assert!((data[0] - 62.0).abs() < 0.1, "q0: got {}", data[0]);
+        assert!((data[1] - 62.5).abs() < 0.1, "q1: got {}", data[1]);
+        assert!((data[2] - 63.0).abs() < 0.1, "q2: got {}", data[2]);
+        assert!((data[3] - 63.5).abs() < 0.1, "q3: got {}", data[3]);
+    }
+
+    #[test]
+    fn test_tile_boundary_mask() {
+        // Mask falls exactly on a tile boundary: first 64 keys masked, next 64 visible
+        let dev = <crate::FlexDevice as Default>::default();
+        let seq_q = 1;
+        let seq_kv = 128;
+        let head_dim = 2;
+        let val_dim = 1;
+
+        let q_data = vec![1.0f32, 0.0];
+        let k_data = vec![1.0f32, 0.0].repeat(seq_kv);
+        let v_data: Vec<f32> = (0..seq_kv).map(|i| i as f32).collect();
+
+        // Mask: first 64 positions masked (true), rest unmasked (false)
+        let mask_data: Vec<bool> = (0..seq_kv).map(|i| i < 64).collect();
+
+        let q: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(q_data, [1, 1, seq_q, head_dim]), &dev);
+        let k: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(k_data, [1, 1, seq_kv, head_dim]), &dev);
+        let v: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(v_data, [1, 1, seq_kv, val_dim]), &dev);
+
+        use burn_tensor::Bool;
+        let mask: Tensor<Flex, 4, Bool> =
+            Tensor::from_data(TensorData::new(mask_data, [1, 1, seq_q, seq_kv]), &dev);
+
+        let result = burn_tensor::module::attention(q, k, v, Some(mask), None, Default::default());
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // Only positions 64..128 visible, uniform attention -> mean of 64..127 = 95.5
+        assert!(
+            (data[0] - 95.5).abs() < 0.1,
+            "expected ~95.5, got {}",
+            data[0]
+        );
+    }
+
+    #[test]
+    fn test_f64_flash_attention() {
+        use crate::Layout;
+        use burn_std::{Bytes, Shape};
+
+        let q = crate::FlexTensor::new(
+            Bytes::from_elems(vec![1.0f64, 0.0, 0.0, 1.0]),
+            Layout::contiguous(Shape::from(vec![1, 1, 2, 2])),
+            burn_backend::DType::F64,
+        );
+        let k = q.clone();
+        let v = crate::FlexTensor::new(
+            Bytes::from_elems(vec![10.0f64, 20.0]),
+            Layout::contiguous(Shape::from(vec![1, 1, 2, 1])),
+            burn_backend::DType::F64,
+        );
+
+        let result = super::attention(q, k, v, None, None, Default::default());
+        let data: &[f64] = result.storage();
+
+        assert!((data[0] - 13.30).abs() < 0.1, "got {}", data[0]);
+        assert!((data[1] - 16.70).abs() < 0.1, "got {}", data[1]);
     }
 }
