@@ -129,8 +129,7 @@ fn attention_impl<T>(
     options: AttentionModuleOptions,
 ) -> FlexTensor
 where
-    T: Float + Pod + Copy + burn_backend::Element,
-    T: core::ops::AddAssign,
+    T: FlashGemm + burn_backend::Element,
 {
     if let Some(softcap) = options.softcap {
         assert!(softcap > 0.0, "softcap must be positive, got {softcap}");
@@ -228,12 +227,131 @@ where
     )
 }
 
+/// Gemm dispatch for flash attention block matmuls.
+///
+/// Wraps `gemm::gemm` for f32 and f64 so `flash_attention_head` stays generic.
+/// Convention: dst = alpha * dst + beta * (lhs @ rhs)
+trait FlashGemm: Float + Pod + Copy + core::ops::AddAssign {
+    /// Block matrix multiply used for score and value matmuls.
+    ///
+    /// # Safety
+    /// All pointers must be valid for the given dimensions and strides.
+    unsafe fn block_gemm(
+        m: usize,
+        n: usize,
+        k: usize,
+        dst: *mut Self,
+        dst_cs: isize,
+        dst_rs: isize,
+        read_dst: bool,
+        lhs: *const Self,
+        lhs_cs: isize,
+        lhs_rs: isize,
+        rhs: *const Self,
+        rhs_cs: isize,
+        rhs_rs: isize,
+        alpha: Self,
+        beta: Self,
+    );
+}
+
+impl FlashGemm for f32 {
+    unsafe fn block_gemm(
+        m: usize,
+        n: usize,
+        k: usize,
+        dst: *mut Self,
+        dst_cs: isize,
+        dst_rs: isize,
+        read_dst: bool,
+        lhs: *const Self,
+        lhs_cs: isize,
+        lhs_rs: isize,
+        rhs: *const Self,
+        rhs_cs: isize,
+        rhs_rs: isize,
+        alpha: Self,
+        beta: Self,
+    ) {
+        unsafe {
+            gemm::gemm(
+                m,
+                n,
+                k,
+                dst,
+                dst_cs,
+                dst_rs,
+                read_dst,
+                lhs,
+                lhs_cs,
+                lhs_rs,
+                rhs,
+                rhs_cs,
+                rhs_rs,
+                alpha,
+                beta,
+                false,
+                false,
+                false,
+                gemm::Parallelism::None,
+            );
+        }
+    }
+}
+
+impl FlashGemm for f64 {
+    unsafe fn block_gemm(
+        m: usize,
+        n: usize,
+        k: usize,
+        dst: *mut Self,
+        dst_cs: isize,
+        dst_rs: isize,
+        read_dst: bool,
+        lhs: *const Self,
+        lhs_cs: isize,
+        lhs_rs: isize,
+        rhs: *const Self,
+        rhs_cs: isize,
+        rhs_rs: isize,
+        alpha: Self,
+        beta: Self,
+    ) {
+        unsafe {
+            gemm::gemm(
+                m,
+                n,
+                k,
+                dst,
+                dst_cs,
+                dst_rs,
+                read_dst,
+                lhs,
+                lhs_cs,
+                lhs_rs,
+                rhs,
+                rhs_cs,
+                rhs_rs,
+                alpha,
+                beta,
+                false,
+                false,
+                false,
+                gemm::Parallelism::None,
+            );
+        }
+    }
+}
+
 /// Process a single (batch, head) pair with flash attention.
 ///
-/// Tiles over the KV dimension in blocks of TILE_KV, maintaining running
-/// softmax state (max `m` and sum `l`) per query row. The output accumulator
-/// is rescaled whenever the running max changes.
-fn flash_attention_head<T>(
+/// Uses gemm for the two block matmuls per tile:
+///   1. Score matmul: scores\[seq_q, tile_kv\] = Q @ K_tile^T
+///   2. Value matmul: output += P @ V_tile (where P = exp(scores - max))
+///
+/// The online softmax (scale, mask, bias, exp, correction) is applied
+/// row-by-row between the two gemm calls.
+fn flash_attention_head<T: FlashGemm>(
     q: &[T],
     k: &[T],
     v: &[T],
@@ -247,17 +365,15 @@ fn flash_attention_head<T>(
     scale: T,
     softcap: Option<T>,
     causal_offset: Option<isize>,
-) where
-    T: Float + Pod + Copy + core::ops::AddAssign,
-{
+) {
     let neg_inf = T::neg_infinity();
 
     // Running softmax state per query row
     let mut row_max = vec![neg_inf; seq_q];
     let mut row_sum = vec![T::zero(); seq_q];
 
-    // Reusable score buffer for one query row within a KV tile
-    let mut scores = [T::zero(); TILE_KV];
+    // Score buffer for entire tile: [seq_q, TILE_KV]
+    let mut scores = vec![T::zero(); seq_q * TILE_KV];
 
     let num_kv_tiles = seq_kv.div_ceil(TILE_KV);
 
@@ -266,26 +382,42 @@ fn flash_attention_head<T>(
         let kv_end = (kv_start + TILE_KV).min(seq_kv);
         let tile_kv = kv_end - kv_start;
 
-        for qi in 0..seq_q {
-            let q_row = &q[qi * head_dim..(qi + 1) * head_dim];
-            let out_row = &mut output[qi * val_dim..(qi + 1) * val_dim];
-            let score_buf = &mut scores[..tile_kv];
+        // Step 1: Score matmul via gemm
+        // scores[seq_q, tile_kv] = Q[seq_q, head_dim] @ K_tile[tile_kv, head_dim]^T
+        //
+        // Q is row-major [seq_q, head_dim]: rs=head_dim, cs=1
+        // K_tile^T: treat K[tile_kv, head_dim] row-major with swapped strides
+        //   K row-major: rs=head_dim, cs=1 -> K^T: rs=1, cs=head_dim
+        // scores row-major [seq_q, tile_kv]: rs=tile_kv, cs=1
+        unsafe {
+            T::block_gemm(
+                seq_q,
+                tile_kv,
+                head_dim,
+                scores.as_mut_ptr(),
+                1,
+                tile_kv as isize,
+                false,
+                q.as_ptr(),
+                1,
+                head_dim as isize,
+                k.as_ptr().add(kv_start * head_dim),
+                head_dim as isize,
+                1,
+                T::zero(),
+                T::one(),
+            );
+        }
 
-            // Step 1: Compute score = Q[qi] . K[ki] for each key in tile
-            // Step 2: Apply scale, softcap, mask, bias and find tile max
+        // Step 2: Apply scale/softcap/mask/bias, online softmax, rescale output
+        for qi in 0..seq_q {
+            let score_row = &mut scores[qi * tile_kv..(qi + 1) * tile_kv];
+
             let mut tile_max = neg_inf;
 
             for ki in 0..tile_kv {
                 let kv_idx = kv_start + ki;
-                let k_row = &k[kv_idx * head_dim..(kv_idx + 1) * head_dim];
-
-                // Dot product
-                let mut dot = T::zero();
-                for d in 0..head_dim {
-                    dot += q_row[d] * k_row[d];
-                }
-
-                let mut val = dot * scale;
+                let mut val = score_row[ki] * scale;
 
                 if let Some(cap) = softcap {
                     val = cap * (val / cap).tanh();
@@ -307,60 +439,75 @@ fn flash_attention_head<T>(
                     val += b[qi * seq_kv + kv_idx];
                 }
 
-                score_buf[ki] = val;
+                score_row[ki] = val;
                 if val > tile_max {
                     tile_max = val;
                 }
             }
 
-            // All positions in this tile are masked for this query row
             if tile_max == neg_inf {
+                // All masked: zero out scores so gemm contributes nothing
+                for ki in 0..tile_kv {
+                    score_row[ki] = T::zero();
+                }
                 continue;
             }
 
-            // Step 3: Online softmax update
             let new_max = if row_max[qi] > tile_max {
                 row_max[qi]
             } else {
                 tile_max
             };
 
-            // Exponentiate scores relative to the new max
             let mut tile_sum = T::zero();
             for ki in 0..tile_kv {
-                let e = (score_buf[ki] - new_max).exp();
-                score_buf[ki] = e;
+                let e = (score_row[ki] - new_max).exp();
+                score_row[ki] = e;
                 tile_sum += e;
             }
 
-            // Correction factor: rescale previous accumulations to the new max
             let correction = if row_max[qi] == neg_inf {
-                // First tile with valid data, no previous output to preserve
                 T::zero()
             } else {
                 (row_max[qi] - new_max).exp()
             };
 
             // Rescale existing output accumulator
+            let out_row = &mut output[qi * val_dim..(qi + 1) * val_dim];
             for d in 0..val_dim {
                 out_row[d] = out_row[d] * correction;
             }
 
-            // Update running state
             row_sum[qi] = row_sum[qi] * correction + tile_sum;
             row_max[qi] = new_max;
+        }
 
-            // Step 4: Accumulate P @ V_tile
-            for ki in 0..tile_kv {
-                let p = score_buf[ki];
-                if p > T::zero() {
-                    let kv_idx = kv_start + ki;
-                    let v_row = &v[kv_idx * val_dim..(kv_idx + 1) * val_dim];
-                    for d in 0..val_dim {
-                        out_row[d] += p * v_row[d];
-                    }
-                }
-            }
+        // Step 3: Value matmul via gemm
+        // output[seq_q, val_dim] += P[seq_q, tile_kv] @ V_tile[tile_kv, val_dim]
+        //
+        // P (scores buffer) row-major: rs=tile_kv, cs=1
+        // V_tile row-major [tile_kv, val_dim]: rs=val_dim, cs=1
+        // output row-major [seq_q, val_dim]: rs=val_dim, cs=1
+        //
+        // dst = 1.0 * dst + 1.0 * P @ V  (accumulate)
+        unsafe {
+            T::block_gemm(
+                seq_q,
+                val_dim,
+                tile_kv,
+                output.as_mut_ptr(),
+                1,
+                val_dim as isize,
+                true,
+                scores.as_ptr(),
+                1,
+                tile_kv as isize,
+                v.as_ptr().add(kv_start * val_dim),
+                1,
+                val_dim as isize,
+                T::one(),
+                T::one(),
+            );
         }
     }
 
