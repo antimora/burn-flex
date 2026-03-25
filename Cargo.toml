@@ -19,6 +19,14 @@ burn-std = { git = "https://github.com/tracel-ai/burn.git", rev = "f0987e783" }
 burn-tensor = { git = "https://github.com/tracel-ai/burn.git", rev = "f0987e783" }
 burn-ir = { git = "https://github.com/tracel-ai/burn.git", rev = "f0987e783", default-features = false }
 burn-ndarray = { git = "https://github.com/tracel-ai/burn.git", rev = "f0987e783" }
+
+# Uncomment for local testing with burn-backend-tests:
+# burn-backend = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-backend" }
+# burn-std = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-std" }
+# burn-tensor = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-tensor" }
+# burn-ir = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-ir", default-features = false }
+# burn-ndarray = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-ndarray" }
+
 half = { version = "2", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }

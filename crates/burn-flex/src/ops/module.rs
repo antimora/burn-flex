@@ -692,9 +692,6 @@ impl ModuleOps<Flex> for Flex {
         attn_bias: Option<FloatTensor<Flex>>,
         options: AttentionModuleOptions,
     ) -> FloatTensor<Flex> {
-        // TODO: implement fused attention kernel (see issue)
-        burn_backend::ops::attention::attention_fallback::<Flex>(
-            query, key, value, mask, attn_bias, options,
-        )
+        crate::ops::attention::attention(query, key, value, mask, attn_bias, options)
     }
 }

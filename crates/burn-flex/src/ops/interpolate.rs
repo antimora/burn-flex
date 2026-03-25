@@ -660,6 +660,7 @@ where
 
     /// Compute one Lanczos3 output pixel given pre-computed y coordinates.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn lanczos3_sample<T: Float + burn_backend::Element + bytemuck::Pod>(
         input: &[T],
         in_base: usize,

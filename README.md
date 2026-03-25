@@ -21,6 +21,9 @@ is thread-safe by design.
   when uniquely owned.
 - **Convolutions**: Unified 3D implementation with im2col + gemm. Conv1d/2d delegate to conv3d.
   Supports groups, dilation, padding.
+- **Attention**: Fused scaled dot-product attention. Combines scale, softcap, masking, bias, and
+  softmax into a single pass over the scores matrix. Supports causal masking, additive bias (ALiBi),
+  custom scale, and cross-attention.
 - **Pooling**: Max pool, avg pool, adaptive avg pool. All via unified 3D with backward pass support.
 - **Conv Transpose**: Scatter-based transposed convolutions for upsampling.
 - **Portable SIMD**: Uses [macerator](https://crates.io/crates/macerator) for automatic dispatch:
@@ -62,6 +65,7 @@ buffer reuse):
 | Matmul (batched)  | **1.8-3.2x** | 3.2x on multi-head attention shapes     |
 | Conv2d (3x3)      | **1.4-4.0x** | Larger kernels and batches benefit most |
 | Conv1d            | **4.3-9.6x** |                                         |
+| Attention         | **1.4-2.5x** | Fused softmax, scales with seq length   |
 | Pooling           | **1.2-3.1x** |                                         |
 | Interpolation     | **1.2-3.6x** | All modes: nearest, bilinear, bicubic   |
 | Reductions        | **1.6-5.1x** | Near-zero allocation for scalar results |
