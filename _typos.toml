@@ -1,6 +1,8 @@
 [default.extend-words]
 # NdArray is the burn-ndarray backend name, not a typo
 Nd = "Nd"
+# arange is a standard tensor operation (torch.arange, np.arange)
+arange = "arange"
 
 [files]
 extend-exclude = [
