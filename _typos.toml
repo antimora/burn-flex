@@ -1,4 +1,6 @@
-[default]
+[default.extend-words]
+# NdArray is the burn-ndarray backend name, not a typo
+Nd = "Nd"
 
 [files]
 extend-exclude = [
