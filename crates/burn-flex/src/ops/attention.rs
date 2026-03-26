@@ -6,7 +6,8 @@
 //! [seq_q, seq_kv] attention scores matrix, tiles over the KV dimension
 //! and maintains running softmax statistics (row max and sum) per query row.
 //! This reduces memory from O(seq_q * seq_kv) to O(seq_q * TILE_KV) and
-//! improves cache locality since score tiles fit in L1.
+//! improves cache locality since individual score rows and V tiles have
+//! good L1 residency.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -20,9 +21,8 @@ use crate::{FlexTensor, Layout};
 
 /// KV tile size for flash attention.
 ///
-/// Each score tile is [seq_q_rows, TILE_KV] per query row processed.
-/// At 64 elements * 4 bytes = 256 bytes per row, this fits comfortably in L1.
-/// The V tile [TILE_KV, val_dim] = 64 * 128 * 4 = 32KB also fits in L1.
+/// One row of the score tile is TILE_KV * 4 bytes = 256 bytes (f32), fitting in L1.
+/// The V tile [TILE_KV, val_dim] also fits in L1 for typical val_dim (e.g., 128 -> 32KB).
 const TILE_KV: usize = 64;
 
 /// Dispatch attention by dtype.
@@ -108,18 +108,18 @@ fn cast_from_f32<E: burn_backend::Element + Pod + Copy>(
 ///   query: \[batch, heads, seq_q, head_dim\]
 ///   key:   \[batch, heads, seq_kv, head_dim\]
 ///   value: \[batch, heads, seq_kv, val_dim\]
-///   mask:  \[batch, heads, seq_q, seq_kv\] (optional, bool stored as u8)
+///   mask:  \[batch, heads, seq_q, seq_kv\] (optional, u8 where nonzero = masked out)
 ///   attn_bias: \[batch, heads, seq_q, seq_kv\] (optional)
 ///
 /// Output: \[batch, heads, seq_q, val_dim\]
 ///
-/// Algorithm per (batch, head, query_row):
+/// Algorithm per (batch, head):
 ///   For each KV tile of size TILE_KV:
-///     1. Score: dot(Q_row, K_tile_row) for each key in tile
-///     2. Transform: scale, softcap, mask, bias
-///     3. Online softmax: update running max (m) and sum (l), rescale accumulator
-///     4. Value accumulate: output += exp_scores @ V_tile
-///   Final: output /= l
+///     1. Score matmul: scores\[seq_q, tile_kv\] = Q @ K_tile^T  (gemm)
+///     2. Per query row: apply scale, softcap, mask, bias
+///     3. Per query row: online softmax update (running max/sum, rescale accumulator)
+///     4. Value matmul: output += P @ V_tile  (gemm)
+///   Final: output\[qi\] /= row_sum\[qi\] for each query row
 fn attention_impl<T>(
     query: FlexTensor,
     key: FlexTensor,
@@ -147,14 +147,15 @@ where
     let heads = q_shape[1];
     let seq_q = q_shape[2];
     let head_dim = q_shape[3];
+    assert!(head_dim > 0, "attention: head_dim must be non-zero");
 
     let k_shape = key.layout().shape();
     let seq_kv = k_shape[2];
-    debug_assert_eq!(k_shape[3], head_dim, "attention: key head_dim mismatch");
+    assert_eq!(k_shape[3], head_dim, "attention: key head_dim mismatch");
 
     let v_shape = value.layout().shape();
     let val_dim = v_shape[3];
-    debug_assert_eq!(v_shape[2], seq_kv, "attention: value seq_kv mismatch");
+    assert_eq!(v_shape[2], seq_kv, "attention: value seq_kv mismatch");
 
     let scale = T::from(
         options
@@ -325,6 +326,11 @@ fn flash_attention_head<T: FlashGemm>(
     bias: Option<&[T]>,
     p: &FlashAttentionParams<T>,
 ) {
+    debug_assert_eq!(q.len(), p.seq_q * p.head_dim);
+    debug_assert_eq!(k.len(), p.seq_kv * p.head_dim);
+    debug_assert_eq!(v.len(), p.seq_kv * p.val_dim);
+    debug_assert_eq!(output.len(), p.seq_q * p.val_dim);
+
     let neg_inf = T::neg_infinity();
     let FlashAttentionParams {
         scale,
@@ -340,7 +346,7 @@ fn flash_attention_head<T: FlashGemm>(
     let mut row_max = vec![neg_inf; seq_q];
     let mut row_sum = vec![T::zero(); seq_q];
 
-    // Score buffer for entire tile: [seq_q, TILE_KV]
+    // Score buffer: allocated [seq_q, TILE_KV], used as [seq_q, tile_kv] per tile
     let mut scores = vec![T::zero(); seq_q * TILE_KV];
 
     let num_kv_tiles = seq_kv.div_ceil(TILE_KV);
@@ -922,6 +928,89 @@ mod tests {
             (data[0] - 95.5).abs() < 0.1,
             "expected ~95.5, got {}",
             data[0]
+        );
+    }
+
+    #[test]
+    fn test_non_uniform_scores_across_tiles() {
+        // Forces the online softmax correction path: tile 1 has much larger scores
+        // than tile 0, so the correction factor exp(old_max - new_max) < 1.
+        let dev = <crate::FlexDevice as Default>::default();
+        let seq_q = 1;
+        let seq_kv = 128;
+        let head_dim = 1;
+        let val_dim = 1;
+
+        // Q = [1.0]
+        let q_data = vec![1.0f32];
+
+        // K: first 64 keys produce score 0.1, next 64 produce score 5.0
+        let mut k_data = vec![0.0f32; seq_kv];
+        for i in 0..64 {
+            k_data[i] = 0.1;
+        }
+        for i in 64..128 {
+            k_data[i] = 5.0;
+        }
+
+        // V: first 64 = 0.0, next 64 = 1.0
+        let mut v_data = vec![0.0f32; seq_kv];
+        for i in 64..128 {
+            v_data[i] = 1.0;
+        }
+
+        let q: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(q_data, [1, 1, seq_q, head_dim]), &dev);
+        let k: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(k_data, [1, 1, seq_kv, head_dim]), &dev);
+        let v: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(v_data, [1, 1, seq_kv, val_dim]), &dev);
+
+        let result = burn_tensor::module::attention(q, k, v, None, None, Default::default());
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // The large-score keys (tile 2) dominate softmax, so output should be close to 1.0
+        // (the value of those keys). Not exactly 1.0 because the small-score keys
+        // contribute a tiny amount toward 0.0.
+        assert!(data[0] > 0.99, "expected ~1.0, got {}", data[0]);
+    }
+
+    #[test]
+    fn test_partial_last_tile() {
+        // seq_kv=100 is not a multiple of TILE_KV=64, so the last tile has 36 elements.
+        // This exercises the partial-tile gemm and score buffer indexing.
+        let dev = <crate::FlexDevice as Default>::default();
+        let seq_q = 2;
+        let seq_kv = 100;
+        let head_dim = 2;
+        let val_dim = 1;
+
+        // Uniform queries and keys so all scores are equal
+        let q_data = vec![0.1f32, 0.1].repeat(seq_q);
+        let k_data = vec![0.1f32, 0.1].repeat(seq_kv);
+        let v_data: Vec<f32> = (0..seq_kv).map(|i| i as f32).collect();
+
+        let q: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(q_data, [1, 1, seq_q, head_dim]), &dev);
+        let k: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(k_data, [1, 1, seq_kv, head_dim]), &dev);
+        let v: Tensor<Flex, 4> =
+            Tensor::from_data(TensorData::new(v_data, [1, 1, seq_kv, val_dim]), &dev);
+
+        let result = burn_tensor::module::attention(q, k, v, None, None, Default::default());
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // Uniform attention -> mean of 0..99 = 49.5
+        assert_eq!(data.len(), seq_q);
+        assert!(
+            (data[0] - 49.5).abs() < 0.1,
+            "expected ~49.5, got {}",
+            data[0]
+        );
+        assert!(
+            (data[1] - 49.5).abs() < 0.1,
+            "expected ~49.5, got {}",
+            data[1]
         );
     }
 
