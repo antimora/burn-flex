@@ -193,6 +193,16 @@ where
     let mask_head_stride = seq_q * seq_kv;
     let mask_batch_stride = heads * mask_head_stride;
 
+    let params = FlashAttentionParams {
+        scale,
+        softcap,
+        causal_offset,
+        seq_q,
+        seq_kv,
+        head_dim,
+        val_dim,
+    };
+
     for b in 0..batch {
         for h in 0..heads {
             let q_off = b * q_batch_stride + h * q_head_stride;
@@ -208,13 +218,7 @@ where
                 &mut output[o_off..o_off + o_head_stride],
                 mask_data.map(|m| &m[m_off..m_off + mask_head_stride]),
                 bias_data.map(|b| &b[m_off..m_off + mask_head_stride]),
-                seq_q,
-                seq_kv,
-                head_dim,
-                val_dim,
-                scale,
-                softcap,
-                causal_offset,
+                &params,
             );
         }
     }
@@ -236,111 +240,72 @@ trait FlashGemm: Float + Pod + Copy + core::ops::AddAssign {
     ///
     /// # Safety
     /// All pointers must be valid for the given dimensions and strides.
-    unsafe fn block_gemm(
-        m: usize,
-        n: usize,
-        k: usize,
-        dst: *mut Self,
-        dst_cs: isize,
-        dst_rs: isize,
-        read_dst: bool,
-        lhs: *const Self,
-        lhs_cs: isize,
-        lhs_rs: isize,
-        rhs: *const Self,
-        rhs_cs: isize,
-        rhs_rs: isize,
-        alpha: Self,
-        beta: Self,
-    );
+    unsafe fn block_gemm(args: BlockGemmArgs<Self>);
 }
 
-impl FlashGemm for f32 {
-    unsafe fn block_gemm(
-        m: usize,
-        n: usize,
-        k: usize,
-        dst: *mut Self,
-        dst_cs: isize,
-        dst_rs: isize,
-        read_dst: bool,
-        lhs: *const Self,
-        lhs_cs: isize,
-        lhs_rs: isize,
-        rhs: *const Self,
-        rhs_cs: isize,
-        rhs_rs: isize,
-        alpha: Self,
-        beta: Self,
-    ) {
-        unsafe {
-            gemm::gemm(
-                m,
-                n,
-                k,
-                dst,
-                dst_cs,
-                dst_rs,
-                read_dst,
-                lhs,
-                lhs_cs,
-                lhs_rs,
-                rhs,
-                rhs_cs,
-                rhs_rs,
-                alpha,
-                beta,
-                false,
-                false,
-                false,
-                gemm::Parallelism::None,
-            );
-        }
-    }
+/// Arguments for a block matrix multiply: dst = alpha * dst + beta * (lhs @ rhs).
+struct BlockGemmArgs<T> {
+    m: usize,
+    n: usize,
+    k: usize,
+    dst: *mut T,
+    dst_cs: isize,
+    dst_rs: isize,
+    read_dst: bool,
+    lhs: *const T,
+    lhs_cs: isize,
+    lhs_rs: isize,
+    rhs: *const T,
+    rhs_cs: isize,
+    rhs_rs: isize,
+    alpha: T,
+    beta: T,
 }
 
-impl FlashGemm for f64 {
-    unsafe fn block_gemm(
-        m: usize,
-        n: usize,
-        k: usize,
-        dst: *mut Self,
-        dst_cs: isize,
-        dst_rs: isize,
-        read_dst: bool,
-        lhs: *const Self,
-        lhs_cs: isize,
-        lhs_rs: isize,
-        rhs: *const Self,
-        rhs_cs: isize,
-        rhs_rs: isize,
-        alpha: Self,
-        beta: Self,
-    ) {
-        unsafe {
-            gemm::gemm(
-                m,
-                n,
-                k,
-                dst,
-                dst_cs,
-                dst_rs,
-                read_dst,
-                lhs,
-                lhs_cs,
-                lhs_rs,
-                rhs,
-                rhs_cs,
-                rhs_rs,
-                alpha,
-                beta,
-                false,
-                false,
-                false,
-                gemm::Parallelism::None,
-            );
+macro_rules! impl_flash_gemm {
+    ($ty:ty) => {
+        impl FlashGemm for $ty {
+            unsafe fn block_gemm(a: BlockGemmArgs<Self>) {
+                unsafe {
+                    gemm::gemm(
+                        a.m,
+                        a.n,
+                        a.k,
+                        a.dst,
+                        a.dst_cs,
+                        a.dst_rs,
+                        a.read_dst,
+                        a.lhs,
+                        a.lhs_cs,
+                        a.lhs_rs,
+                        a.rhs,
+                        a.rhs_cs,
+                        a.rhs_rs,
+                        a.alpha,
+                        a.beta,
+                        false,
+                        false,
+                        false,
+                        gemm::Parallelism::None,
+                    );
+                }
+            }
         }
-    }
+    };
+}
+
+impl_flash_gemm!(f32);
+impl_flash_gemm!(f64);
+
+/// Parameters for a single (batch, head) flash attention computation.
+struct FlashAttentionParams<T> {
+    scale: T,
+    softcap: Option<T>,
+    causal_offset: Option<isize>,
+    seq_q: usize,
+    seq_kv: usize,
+    head_dim: usize,
+    val_dim: usize,
 }
 
 /// Process a single (batch, head) pair with flash attention.
@@ -358,15 +323,18 @@ fn flash_attention_head<T: FlashGemm>(
     output: &mut [T],
     mask: Option<&[u8]>,
     bias: Option<&[T]>,
-    seq_q: usize,
-    seq_kv: usize,
-    head_dim: usize,
-    val_dim: usize,
-    scale: T,
-    softcap: Option<T>,
-    causal_offset: Option<isize>,
+    p: &FlashAttentionParams<T>,
 ) {
     let neg_inf = T::neg_infinity();
+    let FlashAttentionParams {
+        scale,
+        softcap,
+        causal_offset,
+        seq_q,
+        seq_kv,
+        head_dim,
+        val_dim,
+    } = *p;
 
     // Running softmax state per query row
     let mut row_max = vec![neg_inf; seq_q];
@@ -390,23 +358,23 @@ fn flash_attention_head<T: FlashGemm>(
         //   K row-major: rs=head_dim, cs=1 -> K^T: rs=1, cs=head_dim
         // scores row-major [seq_q, tile_kv]: rs=tile_kv, cs=1
         unsafe {
-            T::block_gemm(
-                seq_q,
-                tile_kv,
-                head_dim,
-                scores.as_mut_ptr(),
-                1,
-                tile_kv as isize,
-                false,
-                q.as_ptr(),
-                1,
-                head_dim as isize,
-                k.as_ptr().add(kv_start * head_dim),
-                head_dim as isize,
-                1,
-                T::zero(),
-                T::one(),
-            );
+            T::block_gemm(BlockGemmArgs {
+                m: seq_q,
+                n: tile_kv,
+                k: head_dim,
+                dst: scores.as_mut_ptr(),
+                dst_cs: 1,
+                dst_rs: tile_kv as isize,
+                read_dst: false,
+                lhs: q.as_ptr(),
+                lhs_cs: 1,
+                lhs_rs: head_dim as isize,
+                rhs: k.as_ptr().add(kv_start * head_dim),
+                rhs_cs: head_dim as isize,
+                rhs_rs: 1,
+                alpha: T::zero(),
+                beta: T::one(),
+            });
         }
 
         // Step 2: Apply scale/softcap/mask/bias, online softmax, rescale output
@@ -415,9 +383,9 @@ fn flash_attention_head<T: FlashGemm>(
 
             let mut tile_max = neg_inf;
 
-            for ki in 0..tile_kv {
+            for (ki, score) in score_row.iter_mut().enumerate() {
                 let kv_idx = kv_start + ki;
-                let mut val = score_row[ki] * scale;
+                let mut val = *score * scale;
 
                 if let Some(cap) = softcap {
                     val = cap * (val / cap).tanh();
@@ -439,7 +407,7 @@ fn flash_attention_head<T: FlashGemm>(
                     val += b[qi * seq_kv + kv_idx];
                 }
 
-                score_row[ki] = val;
+                *score = val;
                 if val > tile_max {
                     tile_max = val;
                 }
@@ -447,8 +415,8 @@ fn flash_attention_head<T: FlashGemm>(
 
             if tile_max == neg_inf {
                 // All masked: zero out scores so gemm contributes nothing
-                for ki in 0..tile_kv {
-                    score_row[ki] = T::zero();
+                for score in score_row.iter_mut() {
+                    *score = T::zero();
                 }
                 continue;
             }
@@ -460,9 +428,9 @@ fn flash_attention_head<T: FlashGemm>(
             };
 
             let mut tile_sum = T::zero();
-            for ki in 0..tile_kv {
-                let e = (score_row[ki] - new_max).exp();
-                score_row[ki] = e;
+            for score in score_row.iter_mut() {
+                let e = (*score - new_max).exp();
+                *score = e;
                 tile_sum += e;
             }
 
@@ -474,8 +442,8 @@ fn flash_attention_head<T: FlashGemm>(
 
             // Rescale existing output accumulator
             let out_row = &mut output[qi * val_dim..(qi + 1) * val_dim];
-            for d in 0..val_dim {
-                out_row[d] = out_row[d] * correction;
+            for o in out_row.iter_mut() {
+                *o = *o * correction;
             }
 
             row_sum[qi] = row_sum[qi] * correction + tile_sum;
@@ -491,23 +459,23 @@ fn flash_attention_head<T: FlashGemm>(
         //
         // dst = 1.0 * dst + 1.0 * P @ V  (accumulate)
         unsafe {
-            T::block_gemm(
-                seq_q,
-                val_dim,
-                tile_kv,
-                output.as_mut_ptr(),
-                1,
-                val_dim as isize,
-                true,
-                scores.as_ptr(),
-                1,
-                tile_kv as isize,
-                v.as_ptr().add(kv_start * val_dim),
-                1,
-                val_dim as isize,
-                T::one(),
-                T::one(),
-            );
+            T::block_gemm(BlockGemmArgs {
+                m: seq_q,
+                n: val_dim,
+                k: tile_kv,
+                dst: output.as_mut_ptr(),
+                dst_cs: 1,
+                dst_rs: val_dim as isize,
+                read_dst: true,
+                lhs: scores.as_ptr(),
+                lhs_cs: 1,
+                lhs_rs: tile_kv as isize,
+                rhs: v.as_ptr().add(kv_start * val_dim),
+                rhs_cs: 1,
+                rhs_rs: val_dim as isize,
+                alpha: T::one(),
+                beta: T::one(),
+            });
         }
     }
 
@@ -517,8 +485,8 @@ fn flash_attention_head<T: FlashGemm>(
         if sum > T::zero() {
             let inv_sum = T::one() / sum;
             let out_row = &mut output[qi * val_dim..(qi + 1) * val_dim];
-            for d in 0..val_dim {
-                out_row[d] = out_row[d] * inv_sum;
+            for o in out_row.iter_mut() {
+                *o = *o * inv_sum;
             }
         }
         // sum == 0 means all positions masked; output stays zero
