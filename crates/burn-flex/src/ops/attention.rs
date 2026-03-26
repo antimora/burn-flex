@@ -138,10 +138,15 @@ where
     let query = query.to_contiguous();
     let key = key.to_contiguous();
     let value = value.to_contiguous();
+    let mask_tensor = mask.map(|m| m.to_contiguous());
+    let bias_tensor = attn_bias.map(|b| b.to_contiguous());
 
     let q_shape = query.layout().shape();
-    let ndims = q_shape.num_dims();
-    assert!(ndims == 4, "attention requires 4D tensors");
+    let k_shape = key.layout().shape();
+    let v_shape = value.layout().shape();
+    assert!(q_shape.num_dims() == 4, "attention: query must be 4D");
+    assert!(k_shape.num_dims() == 4, "attention: key must be 4D");
+    assert!(v_shape.num_dims() == 4, "attention: value must be 4D");
 
     let batch = q_shape[0];
     let heads = q_shape[1];
@@ -149,13 +154,32 @@ where
     let head_dim = q_shape[3];
     assert!(head_dim > 0, "attention: head_dim must be non-zero");
 
-    let k_shape = key.layout().shape();
     let seq_kv = k_shape[2];
-    assert_eq!(k_shape[3], head_dim, "attention: key head_dim mismatch");
-
-    let v_shape = value.layout().shape();
     let val_dim = v_shape[3];
+
+    assert_eq!(k_shape[0], batch, "attention: key batch mismatch");
+    assert_eq!(k_shape[1], heads, "attention: key heads mismatch");
+    assert_eq!(k_shape[3], head_dim, "attention: key head_dim mismatch");
+    assert_eq!(v_shape[0], batch, "attention: value batch mismatch");
+    assert_eq!(v_shape[1], heads, "attention: value heads mismatch");
     assert_eq!(v_shape[2], seq_kv, "attention: value seq_kv mismatch");
+
+    if let Some(ref m) = mask_tensor {
+        let ms = m.layout().shape();
+        assert_eq!(
+            ms[..],
+            [batch, heads, seq_q, seq_kv],
+            "attention: mask shape mismatch"
+        );
+    }
+    if let Some(ref b) = bias_tensor {
+        let bs = b.layout().shape();
+        assert_eq!(
+            bs[..],
+            [batch, heads, seq_q, seq_kv],
+            "attention: bias shape mismatch"
+        );
+    }
 
     let scale = T::from(
         options
@@ -173,11 +197,7 @@ where
     let q_data: &[T] = query.storage();
     let k_data: &[T] = key.storage();
     let v_data: &[T] = value.storage();
-
-    let mask_tensor = mask.map(|m| m.to_contiguous());
     let mask_data: Option<&[u8]> = mask_tensor.as_ref().map(|m| m.bytes());
-
-    let bias_tensor = attn_bias.map(|b| b.to_contiguous());
     let bias_data: Option<&[T]> = bias_tensor.as_ref().map(|b| b.storage());
 
     let mut output = vec![T::zero(); batch * heads * seq_q * val_dim];
@@ -204,6 +224,13 @@ where
         val_dim,
     };
 
+    // Allocate scratch buffers once and reuse across all (batch, head) pairs
+    let mut scratch = ScratchBuffers {
+        row_max: vec![T::neg_infinity(); seq_q],
+        row_sum: vec![T::zero(); seq_q],
+        scores: vec![T::zero(); seq_q * TILE_KV],
+    };
+
     for b in 0..batch {
         for h in 0..heads {
             let q_off = b * q_batch_stride + h * q_head_stride;
@@ -220,6 +247,7 @@ where
                 mask_data.map(|m| &m[m_off..m_off + mask_head_stride]),
                 bias_data.map(|b| &b[m_off..m_off + mask_head_stride]),
                 &params,
+                &mut scratch,
             );
         }
     }
@@ -298,6 +326,13 @@ macro_rules! impl_flash_gemm {
 impl_flash_gemm!(f32);
 impl_flash_gemm!(f64);
 
+/// Scratch buffers reused across (batch, head) pairs to avoid per-head allocation.
+struct ScratchBuffers<T> {
+    row_max: Vec<T>,
+    row_sum: Vec<T>,
+    scores: Vec<T>,
+}
+
 /// Parameters for a single (batch, head) flash attention computation.
 struct FlashAttentionParams<T> {
     scale: T,
@@ -309,6 +344,7 @@ struct FlashAttentionParams<T> {
     val_dim: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Process a single (batch, head) pair with flash attention.
 ///
 /// Uses gemm for the two block matmuls per tile:
@@ -325,6 +361,7 @@ fn flash_attention_head<T: FlashGemm>(
     mask: Option<&[u8]>,
     bias: Option<&[T]>,
     p: &FlashAttentionParams<T>,
+    scratch: &mut ScratchBuffers<T>,
 ) {
     debug_assert_eq!(q.len(), p.seq_q * p.head_dim);
     debug_assert_eq!(k.len(), p.seq_kv * p.head_dim);
@@ -342,12 +379,12 @@ fn flash_attention_head<T: FlashGemm>(
         val_dim,
     } = *p;
 
-    // Running softmax state per query row
-    let mut row_max = vec![neg_inf; seq_q];
-    let mut row_sum = vec![T::zero(); seq_q];
-
-    // Score buffer: allocated [seq_q, TILE_KV], used as [seq_q, tile_kv] per tile
-    let mut scores = vec![T::zero(); seq_q * TILE_KV];
+    // Reset scratch buffers for this (batch, head) pair
+    let row_max = &mut scratch.row_max;
+    row_max.fill(neg_inf);
+    let row_sum = &mut scratch.row_sum;
+    row_sum.fill(T::zero());
+    let scores = &mut scratch.scores;
 
     let num_kv_tiles = seq_kv.div_ceil(TILE_KV);
 
