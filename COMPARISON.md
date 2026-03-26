@@ -209,6 +209,7 @@ All operations listed below are implemented by both backends unless marked other
 | adaptive_avg_pool2d              | Yes       | Yes          |                                     |
 | adaptive_avg_pool2d_backward     | Yes       | Yes          |                                     |
 | interpolate                      | Yes       | Yes          | Nearest, bilinear, bicubic          |
+| attention (SDPA)                 | Yes       | Yes          | Flex: flash attention (tiled online softmax); NdArray: matmul + softmax |
 
 ### Int and Bool Operations
 
@@ -483,6 +484,7 @@ Genuine algorithmic and library improvements:
 | Binary ops (i64) | **1.5-6.4x faster**  | Same COW benefits                         |
 | Matmul (square)  | **1.1-3.4x faster**  | gemm > matrixmultiply                     |
 | Matmul (batched) | **1.8-3.2x faster**  | Better batch parallelism                  |
+| Attention        | **1.2-2.4x faster**  | Flash attention, 2-8.5x lower peak memory |
 | Conv2d           | **1.2-4.0x faster**  | im2col+gemm vs direct                     |
 | Conv1d           | **4.3-9.6x faster**  | Unified 3D avoids overhead                |
 | Pooling          | **1.2-3.1x faster**  | Unified 3D, better parallelism            |
