@@ -1,13 +1,13 @@
-//! Flash attention for CPU.
+//! Attention (scaled dot-product) for CPU.
 //!
 //! Computes: softmax(Q @ K^T * scale + bias) @ V
 //!
-//! Uses the flash attention algorithm: instead of materializing the full
-//! [seq_q, seq_kv] attention scores matrix, tiles over the KV dimension
-//! and maintains running softmax statistics (row max and sum) per query row.
-//! This reduces memory from O(seq_q * seq_kv) to O(seq_q * TILE_KV) and
-//! improves cache locality since individual score rows and V tiles have
-//! good L1 residency.
+//! Two strategies, auto-selected by `attention()` based on sequence length:
+//!
+//! - **Naive** (seq_kv <= 8*TILE_KV): materializes full score matrix, two
+//!   large gemm calls per (batch, head). Faster for short sequences.
+//! - **Flash** (seq_kv > 8*TILE_KV): tiles over KV with online softmax,
+//!   O(TILE_KV) scratch per row. Better cache behavior for long sequences.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -66,6 +66,53 @@ pub fn attention(
     attention_flash(query, key, value, mask, attn_bias, options)
 }
 
+/// Dispatch attention by dtype, casting f16/bf16 to f32 for computation.
+macro_rules! dispatch_attention_dtype {
+    ($query:expr, $key:expr, $value:expr, $mask:expr, $attn_bias:expr, $options:expr, $impl_fn:ident) => {{
+        let query = $query;
+        let key = $key;
+        let value = $value;
+        let mask = $mask;
+        let attn_bias = $attn_bias;
+        let options = $options;
+        let dtype = query.dtype();
+        debug_assert_eq!(key.dtype(), dtype, "attention: key dtype mismatch");
+        debug_assert_eq!(value.dtype(), dtype, "attention: value dtype mismatch");
+        if let Some(ref b) = attn_bias {
+            debug_assert_eq!(b.dtype(), dtype, "attention: attn_bias dtype mismatch");
+        }
+        match dtype {
+            DType::F32 => $impl_fn::<f32>(query, key, value, mask, attn_bias, options),
+            DType::F64 => $impl_fn::<f64>(query, key, value, mask, attn_bias, options),
+            DType::F16 => {
+                use burn_std::f16;
+                let r = $impl_fn::<f32>(
+                    cast_to_f32(query, f16::to_f32),
+                    cast_to_f32(key, f16::to_f32),
+                    cast_to_f32(value, f16::to_f32),
+                    mask,
+                    attn_bias.map(|b| cast_to_f32(b, f16::to_f32)),
+                    options,
+                );
+                cast_from_f32(r, f16::from_f32)
+            }
+            DType::BF16 => {
+                use burn_std::bf16;
+                let r = $impl_fn::<f32>(
+                    cast_to_f32(query, bf16::to_f32),
+                    cast_to_f32(key, bf16::to_f32),
+                    cast_to_f32(value, bf16::to_f32),
+                    mask,
+                    attn_bias.map(|b| cast_to_f32(b, bf16::to_f32)),
+                    options,
+                );
+                cast_from_f32(r, bf16::from_f32)
+            }
+            dtype => panic!("attention: unsupported dtype {:?}", dtype),
+        }
+    }};
+}
+
 /// Flash attention: tiled computation with online softmax. Use directly to bypass auto-selection.
 pub fn attention_flash(
     query: FlexTensor,
@@ -75,42 +122,7 @@ pub fn attention_flash(
     attn_bias: Option<FlexTensor>,
     options: AttentionModuleOptions,
 ) -> FlexTensor {
-    let dtype = query.dtype();
-    debug_assert_eq!(key.dtype(), dtype, "attention: key dtype mismatch");
-    debug_assert_eq!(value.dtype(), dtype, "attention: value dtype mismatch");
-    if let Some(ref b) = attn_bias {
-        debug_assert_eq!(b.dtype(), dtype, "attention: attn_bias dtype mismatch");
-    }
-
-    match dtype {
-        DType::F32 => attention_impl::<f32>(query, key, value, mask, attn_bias, options),
-        DType::F64 => attention_impl::<f64>(query, key, value, mask, attn_bias, options),
-        DType::F16 => {
-            use burn_std::f16;
-            let result = attention_impl::<f32>(
-                cast_to_f32(query, f16::to_f32),
-                cast_to_f32(key, f16::to_f32),
-                cast_to_f32(value, f16::to_f32),
-                mask,
-                attn_bias.map(|b| cast_to_f32(b, f16::to_f32)),
-                options,
-            );
-            cast_from_f32(result, f16::from_f32)
-        }
-        DType::BF16 => {
-            use burn_std::bf16;
-            let result = attention_impl::<f32>(
-                cast_to_f32(query, bf16::to_f32),
-                cast_to_f32(key, bf16::to_f32),
-                cast_to_f32(value, bf16::to_f32),
-                mask,
-                attn_bias.map(|b| cast_to_f32(b, bf16::to_f32)),
-                options,
-            );
-            cast_from_f32(result, bf16::from_f32)
-        }
-        dtype => panic!("attention: unsupported dtype {:?}", dtype),
-    }
+    dispatch_attention_dtype!(query, key, value, mask, attn_bias, options, attention_impl)
 }
 
 fn cast_to_f32<E: burn_backend::Element + Pod + Copy>(
@@ -255,7 +267,7 @@ where
     let mask_head_stride = seq_q * seq_kv;
     let mask_batch_stride = heads * mask_head_stride;
 
-    let params = FlashAttentionParams {
+    let params = AttentionParams {
         scale,
         softcap,
         causal_offset,
@@ -375,7 +387,7 @@ struct ScratchBuffers<T> {
 }
 
 /// Parameters for a single (batch, head) flash attention computation.
-struct FlashAttentionParams<T> {
+struct AttentionParams<T> {
     scale: T,
     softcap: Option<T>,
     causal_offset: Option<isize>,
@@ -401,7 +413,7 @@ fn flash_attention_head<T: FlashGemm>(
     output: &mut [T],
     mask: Option<&[u8]>,
     bias: Option<&[T]>,
-    p: &FlashAttentionParams<T>,
+    p: &AttentionParams<T>,
     scratch: &mut ScratchBuffers<T>,
 ) {
     debug_assert_eq!(q.len(), p.seq_q * p.head_dim);
@@ -410,7 +422,7 @@ fn flash_attention_head<T: FlashGemm>(
     debug_assert_eq!(output.len(), p.seq_q * p.val_dim);
 
     let neg_inf = T::neg_infinity();
-    let FlashAttentionParams {
+    let AttentionParams {
         scale,
         softcap,
         causal_offset,
@@ -577,11 +589,6 @@ fn flash_attention_head<T: FlashGemm>(
     }
 }
 
-// ============================================================================
-// Naive (non-tiled) attention: materializes full [seq_q, seq_kv] score matrix.
-// Uses two large gemm calls per (batch, head) instead of many small tiled ones.
-// ============================================================================
-
 /// Naive attention: mathematically equivalent to flash but without KV tiling.
 ///
 /// Materializes the full [seq_q, seq_kv] score matrix, applies scale/softcap/mask/causal/bias,
@@ -596,50 +603,15 @@ pub fn attention_naive(
     attn_bias: Option<FlexTensor>,
     options: AttentionModuleOptions,
 ) -> FlexTensor {
-    let dtype = query.dtype();
-    debug_assert_eq!(key.dtype(), dtype, "attention_naive: key dtype mismatch");
-    debug_assert_eq!(
-        value.dtype(),
-        dtype,
-        "attention_naive: value dtype mismatch"
-    );
-    if let Some(ref b) = attn_bias {
-        debug_assert_eq!(
-            b.dtype(),
-            dtype,
-            "attention_naive: attn_bias dtype mismatch"
-        );
-    }
-
-    match dtype {
-        DType::F32 => attention_naive_impl::<f32>(query, key, value, mask, attn_bias, options),
-        DType::F64 => attention_naive_impl::<f64>(query, key, value, mask, attn_bias, options),
-        DType::F16 => {
-            use burn_std::f16;
-            let result = attention_naive_impl::<f32>(
-                cast_to_f32(query, f16::to_f32),
-                cast_to_f32(key, f16::to_f32),
-                cast_to_f32(value, f16::to_f32),
-                mask,
-                attn_bias.map(|b| cast_to_f32(b, f16::to_f32)),
-                options,
-            );
-            cast_from_f32(result, f16::from_f32)
-        }
-        DType::BF16 => {
-            use burn_std::bf16;
-            let result = attention_naive_impl::<f32>(
-                cast_to_f32(query, bf16::to_f32),
-                cast_to_f32(key, bf16::to_f32),
-                cast_to_f32(value, bf16::to_f32),
-                mask,
-                attn_bias.map(|b| cast_to_f32(b, bf16::to_f32)),
-                options,
-            );
-            cast_from_f32(result, bf16::from_f32)
-        }
-        dtype => panic!("attention_naive: unsupported dtype {:?}", dtype),
-    }
+    dispatch_attention_dtype!(
+        query,
+        key,
+        value,
+        mask,
+        attn_bias,
+        options,
+        attention_naive_impl
+    )
 }
 
 fn attention_naive_impl<T>(
@@ -739,6 +711,16 @@ where
     let mask_head_stride = seq_q * seq_kv;
     let mask_batch_stride = heads * mask_head_stride;
 
+    let params = AttentionParams {
+        scale,
+        softcap,
+        causal_offset,
+        seq_q,
+        seq_kv,
+        head_dim,
+        val_dim,
+    };
+
     for b in 0..batch {
         for h in 0..heads {
             let q_off = b * q_batch_stride + h * q_head_stride;
@@ -753,15 +735,11 @@ where
                 &v_data[v_off..v_off + v_head_stride],
                 &mut output[o_off..o_off + o_head_stride],
                 &mut scores,
-                mask_data.map(|m| &m[m_off..m_off + mask_head_stride]),
-                bias_data.map(|b| &b[m_off..m_off + mask_head_stride]),
-                scale,
-                softcap,
-                causal_offset,
-                seq_q,
-                seq_kv,
-                head_dim,
-                val_dim,
+                &params,
+                (
+                    mask_data.map(|m| &m[m_off..m_off + mask_head_stride]),
+                    bias_data.map(|b| &b[m_off..m_off + mask_head_stride]),
+                ),
             );
         }
     }
@@ -779,26 +757,28 @@ where
 /// 1. scores[seq_q, seq_kv] = Q @ K^T              (one gemm)
 /// 2. Apply scale/softcap/mask/causal/bias + softmax (per-row)
 /// 3. output[seq_q, val_dim] = scores @ V            (one gemm)
-#[allow(clippy::too_many_arguments)]
 fn naive_attention_head<T: FlashGemm>(
     q: &[T],
     k: &[T],
     v: &[T],
     output: &mut [T],
     scores: &mut [T],
-    mask: Option<&[u8]>,
-    bias: Option<&[T]>,
-    scale: T,
-    softcap: Option<T>,
-    causal_offset: Option<isize>,
-    seq_q: usize,
-    seq_kv: usize,
-    head_dim: usize,
-    val_dim: usize,
+    p: &AttentionParams<T>,
+    mask_bias: (Option<&[u8]>, Option<&[T]>),
 ) {
+    let (mask, bias) = mask_bias;
     let neg_inf = T::neg_infinity();
+    let AttentionParams {
+        scale,
+        softcap,
+        causal_offset,
+        seq_q,
+        seq_kv,
+        head_dim,
+        val_dim,
+    } = *p;
 
-    // Step 1: scores[seq_q, seq_kv] = Q[seq_q, head_dim] @ K[seq_kv, head_dim]^T
+    // scores = Q @ K^T
     unsafe {
         T::block_gemm(BlockGemmArgs {
             m: seq_q,
@@ -819,7 +799,6 @@ fn naive_attention_head<T: FlashGemm>(
         });
     }
 
-    // Step 2: Per-row scale/softcap/mask/causal/bias + softmax
     for qi in 0..seq_q {
         let row = &mut scores[qi * seq_kv..(qi + 1) * seq_kv];
 
@@ -871,7 +850,7 @@ fn naive_attention_head<T: FlashGemm>(
         }
     }
 
-    // Step 3: output[seq_q, val_dim] = scores[seq_q, seq_kv] @ V[seq_kv, val_dim]
+    // output = softmax(scores) @ V
     unsafe {
         T::block_gemm(BlockGemmArgs {
             m: seq_q,

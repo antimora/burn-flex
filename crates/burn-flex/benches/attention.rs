@@ -56,10 +56,6 @@ fn make_bias<B: Backend>(batch: usize, heads: usize, seq_q: usize, seq_k: usize)
     )
 }
 
-// ============================================================================
-// Flex flash attention (through burn_tensor::module::attention)
-// ============================================================================
-
 macro_rules! bench_attention {
     ($backend:ty, $mod_name:ident, $name:literal) => {
         #[divan::bench_group(name = $name)]
@@ -275,10 +271,6 @@ macro_rules! bench_attention {
 
 bench_attention!(burn_flex::Flex, flex, "Flex");
 bench_attention!(burn_ndarray::NdArray, ndarray, "NdArray");
-
-// ============================================================================
-// Flex naive attention (direct call, bypassing Backend trait)
-// ============================================================================
 
 /// Extract FlexTensor from Tensor<Flex, 4>.
 fn to_flex(t: Tensor<burn_flex::Flex, 4>) -> burn_flex::FlexTensor {
