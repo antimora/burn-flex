@@ -1514,18 +1514,11 @@ mod tests {
         // With additive bias
         run_both(1, 2, 8, 8, 16, 16, false, true, default, "with_bias");
         // Mask + bias + causal (exercises all scoring paths)
-        run_both(
-            2,
-            2,
-            16,
-            128,
-            32,
-            32,
-            true,
-            true,
-            causal,
-            "mask_bias_causal",
-        );
+        run_both(2, 2, 16, 128, 32, 32, true, true, causal, "mask_bias_causal");
+        // Partial last tile: seq_kv=100 is not a multiple of TILE_KV (64)
+        run_both(1, 1, 4, 100, 16, 16, false, false, default, "partial_tile");
+        // Partial tile + causal (tile boundary masking)
+        run_both(1, 2, 8, 100, 16, 16, false, false, causal, "partial_tile_causal");
     }
 
     #[test]

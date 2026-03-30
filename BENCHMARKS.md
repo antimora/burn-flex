@@ -749,14 +749,14 @@ allocations from ~12 (NdArray fallback) to 3.
 
 ### Self-Attention
 
-| Config          | Flex (auto) | Flex naive | Flex flash | NdArray | Speedup vs NdArray |
-| --------------- | ----------- | ---------- | ---------- | ------- | ------------------ |
-| h8, s64, d64    | 189 us      | 189 us     | 191 us     | 446 us  | **2.4x**           |
-| h12, s128, d64  | 1.04 ms     | 1.04 ms    | 1.12 ms    | 1.57 ms | **1.5x**           |
-| h12, s256, d64  | 3.95 ms     | 3.95 ms    | 4.29 ms    | 6.27 ms | **1.6x**           |
-| h12, s512, d64  | 15.6 ms     | 15.6 ms    | 16.8 ms    | 23.3 ms | **1.5x**           |
-| h32, s256, d128 | 16.2 ms     | 16.2 ms    | 17.6 ms    | 18.1 ms | **1.1x**           |
-| b4, h12, s128   | 4.25 ms     | 4.25 ms    | 4.57 ms    | 5.66 ms | **1.3x**           |
+| Config          | Flex (auto) | Flex naive | NdArray | Speedup vs NdArray |
+| --------------- | ----------- | ---------- | ------- | ------------------ |
+| h8, s64, d64    | 185 us      | 195 us     | 464 us  | **2.5x**           |
+| h12, s128, d64  | 1.07 ms     | 1.08 ms    | 1.64 ms | **1.5x**           |
+| h12, s256, d64  | 4.06 ms     | 4.09 ms    | 6.31 ms | **1.6x**           |
+| h12, s512, d64  | 15.9 ms     | 15.9 ms    | 24.0 ms | **1.5x**           |
+| h32, s256, d128 | 16.2 ms     | 16.3 ms    | 17.9 ms | **1.1x**           |
+| b4, h12, s128   | 4.16 ms     | 4.33 ms    | 5.87 ms | **1.4x**           |
 
 For these shapes, auto-select picks naive (5-10% faster than flash at these lengths).
 
