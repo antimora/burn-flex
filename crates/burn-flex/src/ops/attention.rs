@@ -1418,8 +1418,7 @@ mod tests {
 
         fn make_f32(shape: &[usize]) -> crate::FlexTensor {
             let len: usize = shape.iter().product();
-            let data: Vec<f32> =
-                (0..len).map(|i| ((i % 997) as f32 / 997.0) - 0.5).collect();
+            let data: Vec<f32> = (0..len).map(|i| ((i % 997) as f32 / 997.0) - 0.5).collect();
             crate::FlexTensor::new(
                 Bytes::from_elems(data),
                 Layout::contiguous(Shape::from(shape.to_vec())),
@@ -1429,7 +1428,8 @@ mod tests {
 
         fn make_bool_mask(shape: &[usize]) -> crate::FlexTensor {
             let len: usize = shape.iter().product();
-            let data: Vec<u8> = (0..len).map(|i| (i % 3 == 0) as u8).collect();
+            // Pseudo-random mask using a simple hash to vary pattern across rows
+            let data: Vec<u8> = (0..len).map(|i| ((i.wrapping_mul(997)) % 100 < 30) as u8).collect();
             crate::FlexTensor::new(
                 Bytes::from_elems(data),
                 Layout::contiguous(Shape::from(shape.to_vec())),
