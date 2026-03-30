@@ -1555,10 +1555,13 @@ mod tests {
     /// Verify f16 cast-to-f32 round-trip produces correct results for both paths.
     #[test]
     fn test_f16_attention() {
-        use burn_std::{Bytes, Shape, f16};
         use crate::Layout;
+        use burn_std::{Bytes, Shape, f16};
 
-        let q_f16: Vec<f16> = [1.0f32, 0.0, 0.0, 1.0].iter().map(|&v| f16::from_f32(v)).collect();
+        let q_f16: Vec<f16> = [1.0f32, 0.0, 0.0, 1.0]
+            .iter()
+            .map(|&v| f16::from_f32(v))
+            .collect();
         let v_f16: Vec<f16> = [10.0f32, 20.0].iter().map(|&v| f16::from_f32(v)).collect();
         let q = crate::FlexTensor::new(
             Bytes::from_elems(q_f16.clone()),
@@ -1573,7 +1576,14 @@ mod tests {
         );
 
         // Test through both paths explicitly
-        let flash = super::attention_flash(q.clone(), k.clone(), v.clone(), None, None, Default::default());
+        let flash = super::attention_flash(
+            q.clone(),
+            k.clone(),
+            v.clone(),
+            None,
+            None,
+            Default::default(),
+        );
         let naive = super::attention_naive(q, k, v, None, None, Default::default());
 
         let flash_data: &[f16] = flash.storage();
