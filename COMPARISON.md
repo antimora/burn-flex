@@ -191,25 +191,25 @@ All operations listed below are implemented by both backends unless marked other
 
 ### Module Operations (ModuleOps)
 
-| Operation                        | burn-flex | burn-ndarray | Notes                               |
-| -------------------------------- | --------- | ------------ | ----------------------------------- |
-| conv1d                           | Yes       | Yes          | Flex: delegates to conv3d           |
-| conv2d                           | Yes       | Yes          | Flex: delegates to conv3d           |
-| conv3d                           | Yes       | Yes          | Flex: unified implementation        |
-| conv_transpose1d                 | Yes       | Yes          | Flex: delegates to conv_transpose3d |
-| conv_transpose2d                 | Yes       | Yes          | Flex: delegates to conv_transpose3d |
-| conv_transpose3d                 | Yes       | Yes          | Flex: unified implementation        |
-| deform_conv2d                    | Yes       | Yes          |                                     |
-| deform_conv2d_backward           | Yes       | Yes          |                                     |
-| avg_pool2d                       | Yes       | Yes          | Flex: delegates to pool3d           |
-| avg_pool2d_backward              | Yes       | Yes          |                                     |
-| max_pool2d                       | Yes       | Yes          | Flex: delegates to pool3d           |
-| max_pool2d_with_indices          | Yes       | Yes          |                                     |
-| max_pool2d_with_indices_backward | Yes       | Yes          |                                     |
-| adaptive_avg_pool2d              | Yes       | Yes          |                                     |
-| adaptive_avg_pool2d_backward     | Yes       | Yes          |                                     |
-| interpolate                      | Yes       | Yes          | Nearest, bilinear, bicubic          |
-| attention (SDPA)                 | Yes       | Yes          | Flex: flash attention (tiled online softmax); NdArray: matmul + softmax |
+| Operation                        | burn-flex | burn-ndarray | Notes                                                                                   |
+| -------------------------------- | --------- | ------------ | --------------------------------------------------------------------------------------- |
+| conv1d                           | Yes       | Yes          | Flex: delegates to conv3d                                                               |
+| conv2d                           | Yes       | Yes          | Flex: delegates to conv3d                                                               |
+| conv3d                           | Yes       | Yes          | Flex: unified implementation                                                            |
+| conv_transpose1d                 | Yes       | Yes          | Flex: delegates to conv_transpose3d                                                     |
+| conv_transpose2d                 | Yes       | Yes          | Flex: delegates to conv_transpose3d                                                     |
+| conv_transpose3d                 | Yes       | Yes          | Flex: unified implementation                                                            |
+| deform_conv2d                    | Yes       | Yes          |                                                                                         |
+| deform_conv2d_backward           | Yes       | Yes          |                                                                                         |
+| avg_pool2d                       | Yes       | Yes          | Flex: delegates to pool3d                                                               |
+| avg_pool2d_backward              | Yes       | Yes          |                                                                                         |
+| max_pool2d                       | Yes       | Yes          | Flex: delegates to pool3d                                                               |
+| max_pool2d_with_indices          | Yes       | Yes          |                                                                                         |
+| max_pool2d_with_indices_backward | Yes       | Yes          |                                                                                         |
+| adaptive_avg_pool2d              | Yes       | Yes          |                                                                                         |
+| adaptive_avg_pool2d_backward     | Yes       | Yes          |                                                                                         |
+| interpolate                      | Yes       | Yes          | Nearest, bilinear, bicubic                                                              |
+| attention (SDPA)                 | Yes       | Yes          | Flex: auto-selects naive or flash by score matrix size; NdArray: matmul + softmax        |
 
 ### Int and Bool Operations
 

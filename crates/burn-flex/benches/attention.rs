@@ -1,15 +1,14 @@
-//! Benchmarks comparing Flex vs NdArray backends for scaled dot-product attention.
+//! Benchmarks comparing attention implementations.
 //!
 //! Run with:
 //! ```bash
 //! cargo bench --bench attention
 //! ```
 //!
-//! Covers typical transformer configurations:
-//!   - GPT-2 style: 12 heads, 64 head_dim
-//!   - BERT style: 12 heads, 64 head_dim, various seq lengths
-//!   - Large model: 32 heads, 128 head_dim
-//!   - With causal masking and additive bias variants
+//! Compares:
+//!   - Flex (auto): auto-selects naive or flash based on seq_kv
+//!   - Flex (naive): explicit naive path (full score matrix, O(seq_q * seq_kv) memory)
+//!   - NdArray backend (reference)
 
 use burn_tensor::module::attention;
 use burn_tensor::ops::AttentionModuleOptions;
@@ -20,14 +19,13 @@ use divan::{AllocProfiler, Bencher};
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
 fn main() {
-    println!("Attention Benchmarks: Flex vs NdArray");
+    println!("Attention Benchmarks: Flex (auto) vs Flex (naive) vs NdArray");
     println!("Memory allocation tracking enabled");
     println!();
     divan::main();
 }
 
 /// Create Q, K, V tensors for attention benchmarking.
-/// Shape: [batch, heads, seq_len, head_dim] for Q/K, [batch, heads, seq_len, val_dim] for V.
 fn make_qkv<B: Backend>(
     batch: usize,
     heads: usize,
@@ -69,7 +67,6 @@ macro_rules! bench_attention {
             mod self_attention {
                 use super::*;
 
-                // Small: batch=1, 8 heads, seq=64, dim=64
                 #[divan::bench]
                 fn b1_h8_s64_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 8, 64, 64, 64);
@@ -85,7 +82,6 @@ macro_rules! bench_attention {
                     });
                 }
 
-                // GPT-2 small: batch=1, 12 heads, seq=128, dim=64
                 #[divan::bench]
                 fn b1_h12_s128_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 128, 128, 64);
@@ -101,7 +97,6 @@ macro_rules! bench_attention {
                     });
                 }
 
-                // Medium: batch=1, 12 heads, seq=256, dim=64
                 #[divan::bench]
                 fn b1_h12_s256_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 256, 256, 64);
@@ -117,7 +112,6 @@ macro_rules! bench_attention {
                     });
                 }
 
-                // Long sequence: batch=1, 12 heads, seq=512, dim=64
                 #[divan::bench]
                 fn b1_h12_s512_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 512, 512, 64);
@@ -133,7 +127,6 @@ macro_rules! bench_attention {
                     });
                 }
 
-                // Large model: batch=1, 32 heads, seq=256, dim=128
                 #[divan::bench]
                 fn b1_h32_s256_d128(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 32, 256, 256, 128);
@@ -149,7 +142,6 @@ macro_rules! bench_attention {
                     });
                 }
 
-                // Batched: batch=4, 12 heads, seq=128, dim=64
                 #[divan::bench]
                 fn b4_h12_s128_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(4, 12, 128, 128, 64);
@@ -243,7 +235,6 @@ macro_rules! bench_attention {
             mod cross_attention {
                 use super::*;
 
-                // Decoder cross-attention: seq_q=128, seq_k=512
                 #[divan::bench]
                 fn b1_h12_sq128_sk512_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 128, 512, 64);
@@ -259,7 +250,6 @@ macro_rules! bench_attention {
                     });
                 }
 
-                // Short query, long key: seq_q=32, seq_k=1024
                 #[divan::bench]
                 fn b1_h12_sq32_sk1024_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 32, 1024, 64);
@@ -281,3 +271,171 @@ macro_rules! bench_attention {
 
 bench_attention!(burn_flex::Flex, flex, "Flex");
 bench_attention!(burn_ndarray::NdArray, ndarray, "NdArray");
+
+/// Extract FlexTensor from Tensor<Flex, 4>.
+fn to_flex(t: Tensor<burn_flex::Flex, 4>) -> burn_flex::FlexTensor {
+    t.into_primitive().tensor()
+}
+
+/// Helper to call attention_naive with Tensor<Flex, 4> inputs.
+fn naive_attention(
+    q: Tensor<burn_flex::Flex, 4>,
+    k: Tensor<burn_flex::Flex, 4>,
+    v: Tensor<burn_flex::Flex, 4>,
+    bias: Option<Tensor<burn_flex::Flex, 4>>,
+    options: AttentionModuleOptions,
+) -> burn_flex::FlexTensor {
+    burn_flex::ops::attention::attention_naive(
+        to_flex(q),
+        to_flex(k),
+        to_flex(v),
+        None,
+        bias.map(to_flex),
+        options,
+    )
+}
+
+#[divan::bench_group(name = "Flex (naive)")]
+mod flex_naive {
+    use super::*;
+    type B = burn_flex::Flex;
+
+    #[divan::bench_group(name = "self_attention")]
+    mod self_attention {
+        use super::*;
+
+        #[divan::bench]
+        fn b1_h8_s64_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 8, 64, 64, 64);
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
+        }
+
+        #[divan::bench]
+        fn b1_h12_s128_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 128, 128, 64);
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
+        }
+
+        #[divan::bench]
+        fn b1_h12_s256_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 256, 256, 64);
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
+        }
+
+        #[divan::bench]
+        fn b1_h12_s512_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 512, 512, 64);
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
+        }
+
+        #[divan::bench]
+        fn b1_h32_s256_d128(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 32, 256, 256, 128);
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
+        }
+
+        #[divan::bench]
+        fn b4_h12_s128_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(4, 12, 128, 128, 64);
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
+        }
+    }
+
+    #[divan::bench_group(name = "causal")]
+    mod causal {
+        use super::*;
+
+        fn causal_opts() -> AttentionModuleOptions {
+            AttentionModuleOptions {
+                is_causal: true,
+                ..Default::default()
+            }
+        }
+
+        #[divan::bench]
+        fn b1_h12_s128_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 128, 128, 64);
+            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, causal_opts()));
+        }
+
+        #[divan::bench]
+        fn b1_h12_s256_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 256, 256, 64);
+            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, causal_opts()));
+        }
+
+        #[divan::bench]
+        fn b1_h12_s512_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 512, 512, 64);
+            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, causal_opts()));
+        }
+    }
+
+    #[divan::bench_group(name = "with_bias")]
+    mod with_bias {
+        use super::*;
+
+        #[divan::bench]
+        fn b1_h12_s128_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 128, 128, 64);
+            let bias = make_bias::<B>(1, 12, 128, 128);
+            bencher.bench(|| {
+                naive_attention(
+                    q.clone(),
+                    k.clone(),
+                    v.clone(),
+                    Some(bias.clone()),
+                    Default::default(),
+                )
+            });
+        }
+
+        #[divan::bench]
+        fn b1_h12_s256_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 256, 256, 64);
+            let bias = make_bias::<B>(1, 12, 256, 256);
+            bencher.bench(|| {
+                naive_attention(
+                    q.clone(),
+                    k.clone(),
+                    v.clone(),
+                    Some(bias.clone()),
+                    Default::default(),
+                )
+            });
+        }
+    }
+
+    #[divan::bench_group(name = "cross_attention")]
+    mod cross_attention {
+        use super::*;
+
+        #[divan::bench]
+        fn b1_h12_sq128_sk512_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 128, 512, 64);
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
+        }
+
+        #[divan::bench]
+        fn b1_h12_sq32_sk1024_d64(bencher: Bencher) {
+            let (q, k, v) = make_qkv::<B>(1, 12, 32, 1024, 64);
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
+        }
+    }
+}

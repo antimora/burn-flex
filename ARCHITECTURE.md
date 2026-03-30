@@ -54,11 +54,11 @@ production. This includes:
 default = ["std", "simd", "rayon"]
 ```
 
-| Feature | Default | Description                                            |
-| ------- | ------- | ------------------------------------------------------ |
-| `std`   | Yes     | Standard library support                               |
+| Feature | Default | Description                                                      |
+| ------- | ------- | ---------------------------------------------------------------- |
+| `std`   | Yes     | Standard library support                                         |
 | `simd`  | Yes     | Portable SIMD via macerator (enables `macerator`, `aligned-vec`) |
-| `rayon` | Yes     | Parallel execution for large tensors                   |
+| `rayon` | Yes     | Parallel execution for large tensors                             |
 
 `gemm` is an always-on required dependency (not behind a feature flag).
 
@@ -327,10 +327,9 @@ impl Backend for Flex {
 
 ## FusionBackend
 
-burn-flex does not implement `FusionBackend`. Without JIT compilation, fusion adds tracking
-overhead with no performance benefit. Deferred operations would still execute one-by-one with
-intermediate allocations. For CPU with fusion, use `burn-cpu` (which has cubecl's MLIR-based JIT
-runtime).
+burn-flex does not implement `FusionBackend`. Without JIT compilation, fusion adds tracking overhead
+with no performance benefit. Deferred operations would still execute one-by-one with intermediate
+allocations. For CPU with fusion, use `burn-cpu` (which has cubecl's MLIR-based JIT runtime).
 
 ---
 
@@ -356,8 +355,8 @@ where
 
 ### SIMD Kernels
 
-Portable SIMD via macerator, with automatic dispatch per architecture (NEON, AVX2, SSE, WASM SIMD128) and
-a scalar fallback module for unsupported platforms:
+Portable SIMD via macerator, with automatic dispatch per architecture (NEON, AVX2, SSE, WASM
+SIMD128) and a scalar fallback module for unsupported platforms:
 
 ```rust
 use macerator::{Simd, with_simd, vload_unaligned, vstore_unaligned};
@@ -374,7 +373,8 @@ my_kernel(src, dst);
 
 The `simd/` module is organized as:
 
-- `portable.rs`: macerator-based binary, comparison, and boolean ops (auto-dispatches to NEON/AVX2/SSE/SIMD128/scalar)
+- `portable.rs`: macerator-based binary, comparison, and boolean ops (auto-dispatches to
+  NEON/AVX2/SSE/SIMD128/scalar)
 - `kernels.rs`: macerator-based reduction kernels (sum, scatter-add)
 - `scalar.rs`: fallback for builds without the `simd` feature (bool ops only)
 - `aligned.rs`: SIMD-aligned memory allocation
@@ -598,6 +598,29 @@ accumulation:
 | f16   | Native (sequential)                    |
 | bf16  | Convert to f32, compute, convert back  |
 
+### Attention (Scaled Dot-Product)
+
+Computes `softmax(Q @ K^T * scale + bias) @ V` with fused scale, softcap, masking (bool + causal),
+and additive bias. Auto-selects between two strategies:
+
+**Naive attention** (seq_q * seq_kv <= 256K): Materializes the full [seq_q, seq_kv] score matrix. Per (batch,
+head), issues two gemm calls: one for `Q @ K^T` and one for `softmax(scores) @ V`. The softmax loop
+applies scale/softcap/mask/bias and normalizes in two passes (find-max, then exp-and-sum). NaN-safe:
+fully-masked rows produce zero output, not NaN.
+
+**Flash attention** (seq_q * seq_kv > 256K): Tiles over the KV dimension in chunks of TILE_KV (64 on
+native, 32 on WASM). Each tile does a small score gemm, online softmax update (running max/sum with
+correction factor to rescale previous tiles), and a value accumulation gemm. Memory is
+`O(seq_q * TILE_KV)` per head instead of `O(seq_q * seq_kv)`.
+
+**Why two strategies**: Benchmarks show naive is 5-10% faster for typical transformer shapes
+(seq <= 512) because two large gemm calls amortize kernel dispatch overhead better than many small
+tiled ones. Flash wins when the score matrix exceeds L2 cache. The threshold is `NAIVE_SCORE_BUDGET`
+(256K elements = 1 MB for f32).
+
+Both paths share: gemm via `gemm::gemm`, dtype dispatch with f16/bf16 upcast to f32, scratch buffer
+reuse across (batch, head) pairs.
+
 ### Unfold (Zero-Copy Strided View)
 
 Unfold extracts sliding windows from a tensor along a dimension. Unlike most backends that copy
@@ -643,7 +666,7 @@ Logical view:
 
 **Performance**
 
-| Metric          | Flex                        | NdArray                        |
+| Metric          | Flex                         | NdArray                        |
 | --------------- | ---------------------------- | ------------------------------ |
 | Time complexity | O(1)                         | O(output_elements)             |
 | Memory          | 56-136 bytes (metadata only) | Megabytes (copies all windows) |
@@ -661,13 +684,13 @@ directly on strided tensors via `StridedIter`.
 
 ### Implemented
 
-| Optimization               | Benefit                             | Notes                                        |
-| -------------------------- | ----------------------------------- | -------------------------------------------- |
-| **Arc-based COW**          | O(1) clone, 2.6-4.2x faster ops     | `is_unique()` enables true in-place mutation |
-| **Portable SIMD (macerator)** | ~1.5-1.7x for contiguous ops     | Auto-dispatches to NEON/AVX2/SSE/SIMD128    |
-| **Rayon parallelism**      | Scales with cores for large tensors | Threshold: 4M elements (memory-bound ops)    |
-| **Row-based 2D iteration** | 5.9x faster for transposed tensors  | Replaces per-element StridedIter             |
-| **In-place mutation**      | Eliminates allocation               | When tensor is unique and contiguous         |
+| Optimization                  | Benefit                             | Notes                                        |
+| ----------------------------- | ----------------------------------- | -------------------------------------------- |
+| **Arc-based COW**             | O(1) clone, 2.6-4.2x faster ops     | `is_unique()` enables true in-place mutation |
+| **Portable SIMD (macerator)** | ~1.5-1.7x for contiguous ops        | Auto-dispatches to NEON/AVX2/SSE/SIMD128     |
+| **Rayon parallelism**         | Scales with cores for large tensors | Threshold: 4M elements (memory-bound ops)    |
+| **Row-based 2D iteration**    | 5.9x faster for transposed tensors  | Replaces per-element StridedIter             |
+| **In-place mutation**         | Eliminates allocation               | When tensor is unique and contiguous         |
 
 ### Considered but Skipped
 
@@ -675,7 +698,7 @@ directly on strided tensors via `StridedIter`.
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cache blocking / loop tiling** | Requires architecture-specific tile sizes. M3 has 128KB L1, but optimal tile size varies by operation, data type, and cache hierarchy. Adds complexity without portable benefit.              |
 | **Software prefetching**         | ARM64 `_prefetch` intrinsic is unstable (requires nightly Rust). Apple Silicon has excellent hardware prefetchers that detect strided access patterns automatically. Benefit likely marginal. |
-| **Kernel fusion**                | Outside burn-flex scope. Fusion is handled at the Burn framework level via `burn-fusion`. This backend focuses on single-operation efficiency.                                               |
+| **Kernel fusion**                | Outside burn-flex scope. Fusion is handled at the Burn framework level via `burn-fusion`. This backend focuses on single-operation efficiency.                                                |
 | **Hand-tuned intrinsics**        | Portable SIMD via macerator covers NEON/AVX2/SSE/SIMD128 with a single implementation. Hand-tuned per-arch intrinsics add maintenance burden with marginal benefit for memory-bound ops.      |
 
 ### Why Element-wise Ops are Memory-Bound
@@ -692,8 +715,8 @@ execute 100+ FLOPs in the time it takes to load one cache line from RAM. This me
 
 ## Zero-Copy Loading
 
-`Bytes` from burn-std supports zero-copy scenarios (mmap, external buffers). `FlexTensor` wraps
-this in `Arc` for cheap cloning while preserving zero-copy capabilities.
+`Bytes` from burn-std supports zero-copy scenarios (mmap, external buffers). `FlexTensor` wraps this
+in `Arc` for cheap cloning while preserving zero-copy capabilities.
 
 ## Thread Safety
 
