@@ -1416,25 +1416,29 @@ mod tests {
         use burn_backend::ops::AttentionModuleOptions;
         use burn_std::{Bytes, Shape};
 
-        fn make_f32(shape: &[usize]) -> crate::FlexTensor {
+        /// Deterministic tensor for cross-validation tests.
+        ///
+        /// Uses `i * 997 % N` as a cheap hash: 997 is prime and coprime to
+        /// any power-of-two length, so the sequence visits all residues before
+        /// repeating. For f32 this gives values in [-0.5, 0.5]. For bool masks
+        /// it gives ~30% density with an irregular pattern that varies across
+        /// rows (unlike a regular `i % 3` stride).
+        fn make_tensor(shape: &[usize], dtype: burn_backend::DType) -> crate::FlexTensor {
             let len: usize = shape.iter().product();
-            let data: Vec<f32> = (0..len).map(|i| ((i % 997) as f32 / 997.0) - 0.5).collect();
-            crate::FlexTensor::new(
-                Bytes::from_elems(data),
-                Layout::contiguous(Shape::from(shape.to_vec())),
-                burn_backend::DType::F32,
-            )
-        }
-
-        fn make_bool_mask(shape: &[usize]) -> crate::FlexTensor {
-            let len: usize = shape.iter().product();
-            // Pseudo-random mask using a simple hash to vary pattern across rows
-            let data: Vec<u8> = (0..len).map(|i| ((i.wrapping_mul(997)) % 100 < 30) as u8).collect();
-            crate::FlexTensor::new(
-                Bytes::from_elems(data),
-                Layout::contiguous(Shape::from(shape.to_vec())),
-                burn_backend::DType::Bool(burn_std::BoolStore::Native),
-            )
+            let layout = Layout::contiguous(Shape::from(shape.to_vec()));
+            match dtype {
+                burn_backend::DType::F32 => {
+                    let data: Vec<f32> =
+                        (0..len).map(|i| ((i % 997) as f32 / 997.0) - 0.5).collect();
+                    crate::FlexTensor::new(Bytes::from_elems(data), layout, dtype)
+                }
+                burn_backend::DType::Bool(_) => {
+                    let data: Vec<u8> =
+                        (0..len).map(|i| (i.wrapping_mul(997) % 100 < 30) as u8).collect();
+                    crate::FlexTensor::new(Bytes::from_elems(data), layout, dtype)
+                }
+                _ => unreachable!(),
+            }
         }
 
         fn run_both(
@@ -1449,12 +1453,14 @@ mod tests {
             options: AttentionModuleOptions,
             label: &str,
         ) {
-            let q = make_f32(&[batch, heads, seq_q, head_dim]);
-            let k = make_f32(&[batch, heads, seq_kv, head_dim]);
-            let v = make_f32(&[batch, heads, seq_kv, val_dim]);
+            let f32_dt = burn_backend::DType::F32;
+            let bool_dt = burn_backend::DType::Bool(burn_std::BoolStore::Native);
+            let q = make_tensor(&[batch, heads, seq_q, head_dim], f32_dt);
+            let k = make_tensor(&[batch, heads, seq_kv, head_dim], f32_dt);
+            let v = make_tensor(&[batch, heads, seq_kv, val_dim], f32_dt);
             let score_shape = [batch, heads, seq_q, seq_kv];
-            let mask = with_mask.then(|| make_bool_mask(&score_shape));
-            let bias = with_bias.then(|| make_f32(&score_shape));
+            let mask = with_mask.then(|| make_tensor(&score_shape, bool_dt));
+            let bias = with_bias.then(|| make_tensor(&score_shape, f32_dt));
 
             let flash = super::attention_flash(
                 q.clone(),
