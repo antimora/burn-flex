@@ -1457,7 +1457,9 @@ mod tests {
             let mask = if with_mask {
                 // ~30% of positions masked (every 3rd position)
                 let mask_len = batch * heads * seq_q * seq_kv;
-                let mask_data: Vec<u8> = (0..mask_len).map(|i| if i % 3 == 0 { 1 } else { 0 }).collect();
+                let mask_data: Vec<u8> = (0..mask_len)
+                    .map(|i| if i % 3 == 0 { 1 } else { 0 })
+                    .collect();
                 Some(crate::FlexTensor::new(
                     Bytes::from_elems(mask_data),
                     Layout::contiguous(mask_shape),
@@ -1479,8 +1481,12 @@ mod tests {
             };
 
             let flash = super::attention_flash(
-                q.clone(), k.clone(), v.clone(),
-                mask.clone(), bias.clone(), options,
+                q.clone(),
+                k.clone(),
+                v.clone(),
+                mask.clone(),
+                bias.clone(),
+                options,
             );
             let naive = super::attention_naive(q, k, v, mask, bias, options);
 
@@ -1516,7 +1522,18 @@ mod tests {
         // Basic: single tile
         run_both(1, 1, 4, 4, 8, 8, false, false, default, "basic_4x4");
         // Multi-head, multi-batch
-        run_both(2, 4, 8, 8, 16, 16, false, false, default, "multi_head_batch");
+        run_both(
+            2,
+            4,
+            8,
+            8,
+            16,
+            16,
+            false,
+            false,
+            default,
+            "multi_head_batch",
+        );
         // Cross-attention
         run_both(1, 2, 4, 32, 16, 16, false, false, default, "cross_attn");
         // Multi-tile (seq_kv > TILE_KV)
@@ -1532,7 +1549,18 @@ mod tests {
         // With additive bias
         run_both(1, 2, 8, 8, 16, 16, false, true, default, "with_bias");
         // Mask + bias + causal (exercises all scoring paths)
-        run_both(2, 2, 16, 128, 32, 32, true, true, causal, "mask_bias_causal");
+        run_both(
+            2,
+            2,
+            16,
+            128,
+            32,
+            32,
+            true,
+            true,
+            causal,
+            "mask_bias_causal",
+        );
     }
 
     #[test]
