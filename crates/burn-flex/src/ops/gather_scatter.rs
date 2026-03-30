@@ -1059,4 +1059,27 @@ mod tests {
         let data: Vec<i64> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![40, 10, 30]);
     }
+
+    #[test]
+    fn test_gather_with_i32_indices() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], [4]));
+        let indices = FlexTensor::from_data(TensorData::new(vec![3i32, 0, 2], [3]));
+
+        let result = gather::<f32>(tensor, 0, indices);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![40.0, 10.0, 30.0]);
+    }
+
+    #[test]
+    fn test_select_with_i32_indices() {
+        let tensor = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0],
+            [3, 2],
+        ));
+        let indices = FlexTensor::from_data(TensorData::new(vec![2i32, 0], [2]));
+
+        let result = select::<f32>(tensor, 0, indices);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![5.0, 6.0, 1.0, 2.0]);
+    }
 }

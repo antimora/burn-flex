@@ -1330,4 +1330,15 @@ mod tests {
         let t = Flex::int_random(shape, dist, &device, IntDType::U8);
         assert_eq!(t.dtype(), DType::U8);
     }
+
+    #[test]
+    fn test_int_mean_i32() {
+        use burn_backend::{DType, ops::IntTensorOps};
+
+        let t = FlexTensor::from_data(TensorData::new(vec![10i32, 20, 30], [3]));
+        let result = Flex::int_mean(t);
+        assert_eq!(result.dtype(), DType::I32);
+        let data: Vec<i32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![20]); // (10 + 20 + 30) / 3 = 20
+    }
 }
