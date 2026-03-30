@@ -263,14 +263,30 @@ impl FlexTensor {
         let n = self.layout.num_elements();
         let mut dst = Vec::with_capacity(n);
 
-        // Fast path for 2D tensors (common for transpose)
+        // Fast path for 2D tensors (common for transpose).
+        // Uses cache-blocked reads to reduce L2/L3 pressure when the inner
+        // stride is large (e.g., reading a transposed matrix).
         if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
+            const TILE: usize = 16;
             let offset = self.layout.start_offset() as isize;
-            for row in 0..rows {
-                let row_start = offset + row as isize * row_stride;
-                for col in 0..cols {
-                    let idx = (row_start + col as isize * col_stride) as usize;
-                    dst.push(src[idx]);
+            // SAFETY: we fill exactly `rows * cols == n` elements in row-major order.
+            unsafe { dst.set_len(n) };
+
+            // Tile over columns (the scattered source dimension) so that
+            // each tile's source reads stay within a few cache lines.
+            for col_tile in (0..cols).step_by(TILE) {
+                let col_end = (col_tile + TILE).min(cols);
+                let tile_cols = col_end - col_tile;
+                for row in 0..rows {
+                    let row_base =
+                        offset + row as isize * row_stride + col_tile as isize * col_stride;
+                    let dst_base = row * cols + col_tile;
+                    for c in 0..tile_cols {
+                        let idx = (row_base + c as isize * col_stride) as usize;
+                        unsafe {
+                            *dst.get_unchecked_mut(dst_base + c) = src[idx];
+                        }
+                    }
                 }
             }
         } else {

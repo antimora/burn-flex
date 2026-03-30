@@ -219,12 +219,18 @@ where
     match dtype {
         DType::F32 => scalar_op_typed(tensor, scalar as f32, f32_op),
         DType::F64 => scalar_op_typed(tensor, scalar, f64_op),
-        DType::F16 => scalar_op_typed(tensor, f16::from_f64(scalar), |a: f16, b: f16| {
-            f16::from_f32(f32_op(a.to_f32(), b.to_f32()))
-        }),
-        DType::BF16 => scalar_op_typed(tensor, bf16::from_f64(scalar), |a: bf16, b: bf16| {
-            bf16::from_f32(f32_op(a.to_f32(), b.to_f32()))
-        }),
+        DType::F16 => {
+            let s = scalar as f32;
+            scalar_op_typed(tensor, f16::from_f32(s), |a: f16, _| {
+                f16::from_f32(f32_op(a.to_f32(), s))
+            })
+        }
+        DType::BF16 => {
+            let s = scalar as f32;
+            scalar_op_typed(tensor, bf16::from_f32(s), |a: bf16, _| {
+                bf16::from_f32(f32_op(a.to_f32(), s))
+            })
+        }
         _ => panic!("scalar_op: unsupported dtype {:?}", dtype),
     }
 }
