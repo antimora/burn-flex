@@ -1,5 +1,6 @@
 //! Gather and scatter operations for indexed tensor access.
 
+use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::{DType, Element};
@@ -11,27 +12,29 @@ use rayon::prelude::*;
 
 use crate::{FlexTensor, Layout};
 
-/// Read indices from a tensor, converting any int dtype to i64.
-fn read_indices(tensor: &FlexTensor) -> Vec<i64> {
+/// Read indices from a tensor as i64. Zero-copy for i64 tensors.
+fn read_indices(tensor: &FlexTensor) -> Cow<'_, [i64]> {
     match tensor.dtype() {
-        DType::I64 => tensor.storage::<i64>().to_vec(),
-        DType::I32 => tensor.storage::<i32>().iter().map(|&v| v as i64).collect(),
-        DType::I16 => tensor.storage::<i16>().iter().map(|&v| v as i64).collect(),
-        DType::I8 => tensor.storage::<i8>().iter().map(|&v| v as i64).collect(),
-        DType::U64 => tensor
-            .storage::<u64>()
-            .iter()
-            .map(|&v| {
-                debug_assert!(
-                    v <= i64::MAX as u64,
-                    "read_indices: u64 index {v} exceeds i64::MAX"
-                );
-                v as i64
-            })
-            .collect(),
-        DType::U32 => tensor.storage::<u32>().iter().map(|&v| v as i64).collect(),
-        DType::U16 => tensor.storage::<u16>().iter().map(|&v| v as i64).collect(),
-        DType::U8 => tensor.storage::<u8>().iter().map(|&v| v as i64).collect(),
+        DType::I64 => Cow::Borrowed(tensor.storage::<i64>()),
+        DType::I32 => Cow::Owned(tensor.storage::<i32>().iter().map(|&v| v as i64).collect()),
+        DType::I16 => Cow::Owned(tensor.storage::<i16>().iter().map(|&v| v as i64).collect()),
+        DType::I8 => Cow::Owned(tensor.storage::<i8>().iter().map(|&v| v as i64).collect()),
+        DType::U64 => Cow::Owned(
+            tensor
+                .storage::<u64>()
+                .iter()
+                .map(|&v| {
+                    debug_assert!(
+                        v <= i64::MAX as u64,
+                        "read_indices: u64 index {v} exceeds i64::MAX"
+                    );
+                    v as i64
+                })
+                .collect(),
+        ),
+        DType::U32 => Cow::Owned(tensor.storage::<u32>().iter().map(|&v| v as i64).collect()),
+        DType::U16 => Cow::Owned(tensor.storage::<u16>().iter().map(|&v| v as i64).collect()),
+        DType::U8 => Cow::Owned(tensor.storage::<u8>().iter().map(|&v| v as i64).collect()),
         other => panic!("read_indices: unsupported index dtype {:?}", other),
     }
 }
