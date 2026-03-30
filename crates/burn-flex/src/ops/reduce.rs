@@ -13,6 +13,8 @@ use burn_std::{Bytes, Shape, bf16, f16};
 use crate::strided_index::StridedIter;
 use crate::{FlexTensor, Layout};
 
+use super::INDEX_DTYPE;
+
 #[cfg(feature = "simd")]
 use crate::simd::kernels;
 
@@ -1365,19 +1367,19 @@ fn max_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
     let cap = outer_size.max(1) * inner_size.max(1);
 
     let mut values: Vec<E> = Vec::with_capacity(cap);
-    let mut indices: Vec<i64> = Vec::with_capacity(cap);
+    let mut indices: Vec<isize> = Vec::with_capacity(cap);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
             let first_idx = start_offset + outer * dim_size * inner_size + inner;
             let mut max_val = data[first_idx];
-            let mut max_idx: i64 = 0;
+            let mut max_idx: isize = 0;
             for d in 1..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
                 if val.is_nan() || val > max_val {
                     max_val = val;
-                    max_idx = d as i64;
+                    max_idx = d as isize;
                 }
             }
             values.push(max_val);
@@ -1393,7 +1395,7 @@ fn max_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
     let idx_tensor = FlexTensor::new(
         Bytes::from_elems(indices),
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     );
     (val_tensor, idx_tensor)
 }
@@ -1418,19 +1420,19 @@ fn min_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
     let cap = outer_size.max(1) * inner_size.max(1);
 
     let mut values: Vec<E> = Vec::with_capacity(cap);
-    let mut indices: Vec<i64> = Vec::with_capacity(cap);
+    let mut indices: Vec<isize> = Vec::with_capacity(cap);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
             let first_idx = start_offset + outer * dim_size * inner_size + inner;
             let mut min_val = data[first_idx];
-            let mut min_idx: i64 = 0;
+            let mut min_idx: isize = 0;
             for d in 1..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
                 if val.is_nan() || val < min_val {
                     min_val = val;
-                    min_idx = d as i64;
+                    min_idx = d as isize;
                 }
             }
             values.push(min_val);
@@ -1446,7 +1448,7 @@ fn min_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
     let idx_tensor = FlexTensor::new(
         Bytes::from_elems(indices),
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     );
     (val_tensor, idx_tensor)
 }
@@ -1470,19 +1472,19 @@ fn max_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let cap = outer_size.max(1) * inner_size.max(1);
 
     let mut values: Vec<E> = Vec::with_capacity(cap);
-    let mut indices: Vec<i64> = Vec::with_capacity(cap);
+    let mut indices: Vec<isize> = Vec::with_capacity(cap);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
             let first_idx = start_offset + outer * dim_size * inner_size + inner;
             let mut max_val = data[first_idx];
-            let mut max_idx: i64 = 0;
+            let mut max_idx: isize = 0;
             for d in 1..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
                 if val > max_val {
                     max_val = val;
-                    max_idx = d as i64;
+                    max_idx = d as isize;
                 }
             }
             values.push(max_val);
@@ -1498,7 +1500,7 @@ fn max_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let idx_tensor = FlexTensor::new(
         Bytes::from_elems(indices),
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     );
     (val_tensor, idx_tensor)
 }
@@ -1522,19 +1524,19 @@ fn min_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let cap = outer_size.max(1) * inner_size.max(1);
 
     let mut values: Vec<E> = Vec::with_capacity(cap);
-    let mut indices: Vec<i64> = Vec::with_capacity(cap);
+    let mut indices: Vec<isize> = Vec::with_capacity(cap);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
             let first_idx = start_offset + outer * dim_size * inner_size + inner;
             let mut min_val = data[first_idx];
-            let mut min_idx: i64 = 0;
+            let mut min_idx: isize = 0;
             for d in 1..dim_size {
                 let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
                 let val = data[idx];
                 if val < min_val {
                     min_val = val;
-                    min_idx = d as i64;
+                    min_idx = d as isize;
                 }
             }
             values.push(min_val);
@@ -1550,7 +1552,7 @@ fn min_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let idx_tensor = FlexTensor::new(
         Bytes::from_elems(indices),
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     );
     (val_tensor, idx_tensor)
 }
@@ -1764,11 +1766,11 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
-    let mut result: Vec<i64> = Vec::with_capacity(out_size);
+    let mut result: Vec<isize> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let mut max_idx: i64 = 0;
+            let mut max_idx: isize = 0;
             let mut max_val: Option<E> = None;
 
             for d in 0..dim_size {
@@ -1776,7 +1778,7 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
                 let val = data[idx];
                 if max_val.is_none() || val > max_val.unwrap() {
                     max_val = Some(val);
-                    max_idx = d as i64;
+                    max_idx = d as isize;
                 }
             }
             result.push(max_idx);
@@ -1787,7 +1789,7 @@ fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
     FlexTensor::new(
         bytes,
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     )
 }
 
@@ -1817,11 +1819,11 @@ fn argext_half<E: Element + bytemuck::Pod>(
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
-    let mut result: Vec<i64> = Vec::with_capacity(out_size);
+    let mut result: Vec<isize> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let mut best_idx: i64 = 0;
+            let mut best_idx: isize = 0;
             let mut best_val: Option<f32> = None;
 
             for d in 0..dim_size {
@@ -1829,7 +1831,7 @@ fn argext_half<E: Element + bytemuck::Pod>(
                 let val = to_f32(data[idx]);
                 if best_val.is_none() || is_better(val, best_val.unwrap()) {
                     best_val = Some(val);
-                    best_idx = d as i64;
+                    best_idx = d as isize;
                 }
             }
             result.push(best_idx);
@@ -1840,7 +1842,7 @@ fn argext_half<E: Element + bytemuck::Pod>(
     FlexTensor::new(
         bytes,
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     )
 }
 
@@ -1870,11 +1872,11 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
-    let mut result: Vec<i64> = Vec::with_capacity(out_size);
+    let mut result: Vec<isize> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let mut min_idx: i64 = 0;
+            let mut min_idx: isize = 0;
             let mut min_val: Option<E> = None;
 
             for d in 0..dim_size {
@@ -1882,7 +1884,7 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
                 let val = data[idx];
                 if min_val.is_none() || val < min_val.unwrap() {
                     min_val = Some(val);
-                    min_idx = d as i64;
+                    min_idx = d as isize;
                 }
             }
             result.push(min_idx);
@@ -1893,7 +1895,7 @@ fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
     FlexTensor::new(
         bytes,
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     )
 }
 
@@ -1924,11 +1926,11 @@ fn argmax_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
-    let mut result: Vec<i64> = Vec::with_capacity(out_size);
+    let mut result: Vec<isize> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let mut max_idx: i64 = 0;
+            let mut max_idx: isize = 0;
             let mut max_val: Option<E> = None;
 
             for d in 0..dim_size {
@@ -1936,7 +1938,7 @@ fn argmax_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
                 let val = data[idx];
                 if max_val.is_none() || val.is_nan() || val > max_val.unwrap() {
                     max_val = Some(val);
-                    max_idx = d as i64;
+                    max_idx = d as isize;
                 }
             }
             result.push(max_idx);
@@ -1947,7 +1949,7 @@ fn argmax_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
     FlexTensor::new(
         bytes,
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     )
 }
 
@@ -1978,11 +1980,11 @@ fn argmin_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
-    let mut result: Vec<i64> = Vec::with_capacity(out_size);
+    let mut result: Vec<isize> = Vec::with_capacity(out_size);
 
     for outer in 0..outer_size.max(1) {
         for inner in 0..inner_size.max(1) {
-            let mut min_idx: i64 = 0;
+            let mut min_idx: isize = 0;
             let mut min_val: Option<E> = None;
 
             for d in 0..dim_size {
@@ -1990,7 +1992,7 @@ fn argmin_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
                 let val = data[idx];
                 if min_val.is_none() || val.is_nan() || val < min_val.unwrap() {
                     min_val = Some(val);
-                    min_idx = d as i64;
+                    min_idx = d as isize;
                 }
             }
             result.push(min_idx);
@@ -2001,7 +2003,7 @@ fn argmin_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
     FlexTensor::new(
         bytes,
         Layout::contiguous(Shape::from(out_shape)),
-        DType::I64,
+        INDEX_DTYPE,
     )
 }
 
@@ -2013,6 +2015,22 @@ fn argmin_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
 mod tests {
     use super::*;
     use burn_backend::TensorData;
+
+    /// Read index values from raw bytes, respecting platform pointer width.
+    /// Index tensors store `isize` values, which are 8 bytes on 64-bit and 4 bytes on 32-bit.
+    fn read_index_bytes(bytes: &[u8]) -> Vec<i64> {
+        #[cfg(target_pointer_width = "64")]
+        {
+            bytemuck::cast_slice::<u8, i64>(bytes).to_vec()
+        }
+        #[cfg(target_pointer_width = "32")]
+        {
+            bytemuck::cast_slice::<u8, i32>(bytes)
+                .iter()
+                .map(|&v| v as i64)
+                .collect()
+        }
+    }
 
     #[test]
     fn test_sum_1d() {
@@ -2130,8 +2148,7 @@ mod tests {
         let result = argmax(tensor, 0);
 
         assert_eq!(result.layout().shape().to_vec(), vec![1]);
-        let result_data = result.into_data();
-        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         assert_eq!(values, vec![1]); // index of 5.0
     }
 
@@ -2143,8 +2160,7 @@ mod tests {
         let result = argmax(tensor, 1);
 
         assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
-        let result_data = result.into_data();
-        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         assert_eq!(values, vec![1, 0]); // indices of max in each row
     }
 
@@ -2156,8 +2172,7 @@ mod tests {
         let result = argmin(tensor, 1);
 
         assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
-        let result_data = result.into_data();
-        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         assert_eq!(values, vec![0, 1]); // indices of min in each row
     }
 
@@ -2204,8 +2219,7 @@ mod tests {
         let result = argmax(tensor, 0);
 
         assert_eq!(result.layout().shape().to_vec(), vec![1]);
-        let result_data = result.into_data();
-        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         assert_eq!(values, vec![1]); // index of 5
     }
 
@@ -2269,8 +2283,7 @@ mod tests {
         assert!(flipped.layout().strides()[0] < 0);
 
         let result = argmax(flipped, 0);
-        let result_data = result.into_data();
-        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         // In flipped view [4, 2, 3, 5, 1], max is 5 at index 3
         assert_eq!(values, vec![3]);
     }
@@ -2286,8 +2299,7 @@ mod tests {
 
         let result = argmax(flipped, 1);
         assert_eq!(result.layout().shape().to_vec(), vec![2, 1]);
-        let result_data = result.into_data();
-        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         // Row 0: [3, 5, 1] -> max at index 1
         // Row 1: [4, 2, 6] -> max at index 2
         assert_eq!(values, vec![1, 2]);
@@ -2303,8 +2315,7 @@ mod tests {
         assert!(flipped.layout().strides()[0] < 0);
 
         let result = argmin(flipped, 0);
-        let result_data = result.into_data();
-        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         // In flipped view [3, 2, 4, 1, 5], min is 1 at index 3
         assert_eq!(values, vec![3]);
     }
@@ -2387,7 +2398,7 @@ mod tests {
         assert_eq!(result.layout().shape().to_vec(), vec![2, 4, 3, 1]);
 
         // Verify values are valid indices (0..5)
-        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         for &v in &values {
             assert!(v >= 0 && v < 5, "argmax index out of range: {v}");
         }
@@ -2395,7 +2406,7 @@ mod tests {
         // Also test argmax on dim 2 of permuted tensor
         let result = argmax(permuted, 2);
         assert_eq!(result.layout().shape().to_vec(), vec![2, 4, 1, 5]);
-        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         for &v in &values {
             assert!(v >= 0 && v < 3, "argmax index out of range: {v}");
         }
@@ -2413,7 +2424,7 @@ mod tests {
         let result = argmin(permuted, 3);
         assert_eq!(result.layout().shape().to_vec(), vec![2, 4, 3, 1]);
 
-        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         for &v in &values {
             assert!(v >= 0 && v < 5, "argmin index out of range: {v}");
         }
@@ -2431,7 +2442,7 @@ mod tests {
         let result = argmax(tensor, 1);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 80, 80]);
 
-        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         assert_eq!(values.len(), 6400);
         for &v in &values {
             assert!(v >= 0 && v < 84, "argmax index out of range: {v}");
@@ -2478,7 +2489,7 @@ mod tests {
 
         let result = argmax(permuted, 2);
         assert_eq!(result.layout().shape().to_vec(), vec![2, 3, 1]);
-        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         // For each row along dim 2, the second element (from the original dim 0 of 2x3 blocks)
         // is always larger: [1 vs 4] -> idx 1, [2 vs 5] -> idx 1, etc.
         assert_eq!(values, vec![1, 1, 1, 1, 1, 1]);
@@ -2508,7 +2519,7 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(data, [1, 3]));
         let (values, indices) = max_dim_with_indices(tensor, 1);
         let vals: Vec<f32> = bytemuck::cast_slice(&values.into_data().bytes).to_vec();
-        let idxs: Vec<i64> = bytemuck::cast_slice(&indices.into_data().bytes).to_vec();
+        let idxs = read_index_bytes(&indices.into_data().bytes);
         assert!(vals[0].is_nan());
         assert_eq!(idxs[0], 1); // NaN is at index 1
     }
@@ -2518,7 +2529,7 @@ mod tests {
         let data: Vec<f32> = vec![1.0, f32::NAN, 3.0];
         let tensor = FlexTensor::from_data(TensorData::new(data, [1, 3]));
         let result = argmax(tensor, 1);
-        let values: Vec<i64> = bytemuck::cast_slice(&result.into_data().bytes).to_vec();
+        let values = read_index_bytes(&result.into_data().bytes);
         assert_eq!(values[0], 1); // NaN is at index 1
     }
 

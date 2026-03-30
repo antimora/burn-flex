@@ -1,5 +1,14 @@
 //! Backend operations implementations.
 
+use burn_backend::DType;
+
+/// The `DType` that matches `isize` on the current platform.
+#[cfg(target_pointer_width = "64")]
+pub(crate) const INDEX_DTYPE: DType = DType::I64;
+/// The `DType` that matches `isize` on the current platform.
+#[cfg(target_pointer_width = "32")]
+pub(crate) const INDEX_DTYPE: DType = DType::I32;
+
 /// Wrapper for raw mutable pointers that can be sent across rayon threads.
 ///
 /// # Safety

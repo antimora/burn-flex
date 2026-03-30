@@ -12,42 +12,106 @@ use rayon::prelude::*;
 
 use crate::{FlexTensor, Layout};
 
-/// Read indices from a tensor as i64. Zero-copy for i64 tensors.
-fn read_indices(tensor: &FlexTensor) -> Cow<'_, [i64]> {
+/// Read indices from a tensor as `isize`. Zero-copy when the tensor's dtype
+/// matches the platform's pointer width (i64 on 64-bit, i32 on 32-bit).
+fn read_indices(tensor: &FlexTensor) -> Cow<'_, [isize]> {
     match tensor.dtype() {
-        DType::I64 => Cow::Borrowed(tensor.storage::<i64>()),
-        DType::I32 => Cow::Owned(tensor.storage::<i32>().iter().map(|&v| v as i64).collect()),
-        DType::I16 => Cow::Owned(tensor.storage::<i16>().iter().map(|&v| v as i64).collect()),
-        DType::I8 => Cow::Owned(tensor.storage::<i8>().iter().map(|&v| v as i64).collect()),
+        #[cfg(target_pointer_width = "64")]
+        DType::I64 => {
+            // SAFETY: i64 and isize have identical size, alignment, and repr on 64-bit.
+            let data = tensor.storage::<i64>();
+            Cow::Borrowed(unsafe {
+                core::slice::from_raw_parts(data.as_ptr() as *const isize, data.len())
+            })
+        }
+        #[cfg(target_pointer_width = "32")]
+        DType::I64 => Cow::Owned(
+            tensor
+                .storage::<i64>()
+                .iter()
+                .map(|&v| {
+                    isize::try_from(v).unwrap_or_else(|_| {
+                        panic!("read_indices: i64 index {v} out of isize range")
+                    })
+                })
+                .collect(),
+        ),
+        #[cfg(target_pointer_width = "64")]
+        DType::I32 => Cow::Owned(
+            tensor
+                .storage::<i32>()
+                .iter()
+                .map(|&v| v as isize)
+                .collect(),
+        ),
+        #[cfg(target_pointer_width = "32")]
+        DType::I32 => {
+            // SAFETY: i32 and isize have identical size, alignment, and repr on 32-bit.
+            let data = tensor.storage::<i32>();
+            Cow::Borrowed(unsafe {
+                core::slice::from_raw_parts(data.as_ptr() as *const isize, data.len())
+            })
+        }
+        DType::I16 => Cow::Owned(
+            tensor
+                .storage::<i16>()
+                .iter()
+                .map(|&v| v as isize)
+                .collect(),
+        ),
+        DType::I8 => Cow::Owned(tensor.storage::<i8>().iter().map(|&v| v as isize).collect()),
         DType::U64 => Cow::Owned(
             tensor
                 .storage::<u64>()
                 .iter()
                 .map(|&v| {
-                    debug_assert!(
-                        v <= i64::MAX as u64,
-                        "read_indices: u64 index {v} exceeds i64::MAX"
-                    );
-                    v as i64
+                    isize::try_from(v).unwrap_or_else(|_| {
+                        panic!("read_indices: u64 index {v} out of isize range")
+                    })
                 })
                 .collect(),
         ),
-        DType::U32 => Cow::Owned(tensor.storage::<u32>().iter().map(|&v| v as i64).collect()),
-        DType::U16 => Cow::Owned(tensor.storage::<u16>().iter().map(|&v| v as i64).collect()),
-        DType::U8 => Cow::Owned(tensor.storage::<u8>().iter().map(|&v| v as i64).collect()),
+        #[cfg(target_pointer_width = "64")]
+        DType::U32 => Cow::Owned(
+            tensor
+                .storage::<u32>()
+                .iter()
+                .map(|&v| v as isize)
+                .collect(),
+        ),
+        #[cfg(target_pointer_width = "32")]
+        DType::U32 => Cow::Owned(
+            tensor
+                .storage::<u32>()
+                .iter()
+                .map(|&v| {
+                    isize::try_from(v).unwrap_or_else(|_| {
+                        panic!("read_indices: u32 index {v} out of isize range")
+                    })
+                })
+                .collect(),
+        ),
+        DType::U16 => Cow::Owned(
+            tensor
+                .storage::<u16>()
+                .iter()
+                .map(|&v| v as isize)
+                .collect(),
+        ),
+        DType::U8 => Cow::Owned(tensor.storage::<u8>().iter().map(|&v| v as isize).collect()),
         other => panic!("read_indices: unsupported index dtype {:?}", other),
     }
 }
 
 #[cold]
 #[inline(never)]
-fn index_oob(raw: i64, dim_size: usize) -> ! {
+fn index_oob(raw: isize, dim_size: usize) -> ! {
     panic!("index {raw} out of bounds for dimension of size {dim_size}");
 }
 
 /// Validate an index is non-negative and within bounds, panicking with a clear message otherwise.
 #[inline(always)]
-fn checked_index(raw: i64, dim_size: usize) -> usize {
+fn checked_index(raw: isize, dim_size: usize) -> usize {
     if raw < 0 || raw as usize >= dim_size {
         index_oob(raw, dim_size);
     }
@@ -162,7 +226,7 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
 #[inline]
 fn gather_2d<E: Element + Pod + Default + Copy + Send + Sync>(
     tensor_data: &[E],
-    indices_data: &[i64],
+    indices_data: &[isize],
     tensor_rows: usize,
     tensor_cols: usize,
     indices_rows: usize,
@@ -355,7 +419,7 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
 #[allow(clippy::too_many_arguments)]
 fn scatter_add_2d<E: Copy + core::ops::AddAssign>(
     result: &mut [E],
-    indices_data: &[i64],
+    indices_data: &[isize],
     value_data: &[E],
     tensor_rows: usize,
     tensor_cols: usize,
@@ -525,7 +589,7 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
 #[inline]
 fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
     tensor_data: &[E],
-    indices_data: &[i64],
+    indices_data: &[isize],
     tensor_rows: usize,
     tensor_cols: usize,
     num_indices: usize,
@@ -708,7 +772,7 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
 #[inline]
 fn select_add_2d<E: Copy + core::ops::AddAssign>(
     result: &mut [E],
-    indices_data: &[i64],
+    indices_data: &[isize],
     value_data: &[E],
     tensor_rows: usize,
     tensor_cols: usize,
