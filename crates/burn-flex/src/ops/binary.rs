@@ -220,14 +220,16 @@ where
         DType::F32 => scalar_op_typed(tensor, scalar as f32, f32_op),
         DType::F64 => scalar_op_typed(tensor, scalar, f64_op),
         DType::F16 => {
-            let s = scalar as f32;
-            scalar_op_typed(tensor, f16::from_f32(s), |a: f16, _| {
+            let scalar_f16 = f16::from_f32(scalar as f32);
+            let s = scalar_f16.to_f32();
+            scalar_op_typed(tensor, scalar_f16, |a: f16, _| {
                 f16::from_f32(f32_op(a.to_f32(), s))
             })
         }
         DType::BF16 => {
-            let s = scalar as f32;
-            scalar_op_typed(tensor, bf16::from_f32(s), |a: bf16, _| {
+            let scalar_bf16 = bf16::from_f32(scalar as f32);
+            let s = scalar_bf16.to_f32();
+            scalar_op_typed(tensor, scalar_bf16, |a: bf16, _| {
                 bf16::from_f32(f32_op(a.to_f32(), s))
             })
         }
@@ -814,6 +816,46 @@ mod tests {
         result.into_data().assert_approx_eq::<bf16>(
             &TensorData::new(expected, vec![3]),
             Tolerance::absolute(bf16::from_f32(0.1)),
+        );
+    }
+
+    #[test]
+    fn test_scalar_f16_non_representable() {
+        // 0.1 is not exactly representable in f16; verify the scalar is rounded
+        // to f16 precision before the op (matching dtype semantics).
+        let a_vals: Vec<f16> = vec![1.0, 2.0, 3.0].into_iter().map(f16::from_f32).collect();
+        let a = FlexTensor::from_data(TensorData::new(a_vals, vec![3]));
+
+        let s_f16 = f16::from_f32(0.1);
+        let result = scalar_op(a, 0.1, |x, y| x * y, |x, y| x * y);
+        let expected: Vec<f16> = vec![1.0, 2.0, 3.0]
+            .into_iter()
+            .map(|v| f16::from_f32(f16::from_f32(v).to_f32() * s_f16.to_f32()))
+            .collect();
+        result.into_data().assert_approx_eq::<f16>(
+            &TensorData::new(expected, vec![3]),
+            Tolerance::absolute(f16::from_f32(0.001)),
+        );
+    }
+
+    #[test]
+    fn test_scalar_bf16_non_representable() {
+        // 1.1 is not exactly representable in bf16; verify dtype rounding.
+        let a_vals: Vec<bf16> = vec![1.0, 2.0, 3.0]
+            .into_iter()
+            .map(bf16::from_f32)
+            .collect();
+        let a = FlexTensor::from_data(TensorData::new(a_vals, vec![3]));
+
+        let s_bf16 = bf16::from_f32(1.1);
+        let result = scalar_op(a, 1.1, |x, y| x * y, |x, y| x * y);
+        let expected: Vec<bf16> = vec![1.0, 2.0, 3.0]
+            .into_iter()
+            .map(|v| bf16::from_f32(bf16::from_f32(v).to_f32() * s_bf16.to_f32()))
+            .collect();
+        result.into_data().assert_approx_eq::<bf16>(
+            &TensorData::new(expected, vec![3]),
+            Tolerance::absolute(bf16::from_f32(0.01)),
         );
     }
 }
