@@ -6,8 +6,8 @@
 //! ```
 //!
 //! Compares:
-//!   - Flex flash attention (tiled, O(seq_q * TILE_KV) memory)
-//!   - Flex naive attention (full score matrix, O(seq_q * seq_kv) memory)
+//!   - Flex (auto): auto-selects naive or flash based on seq_kv
+//!   - Flex (naive): explicit naive path (full score matrix, O(seq_q * seq_kv) memory)
 //!   - NdArray backend (reference)
 
 use burn_tensor::module::attention;
@@ -19,7 +19,7 @@ use divan::{AllocProfiler, Bencher};
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
 fn main() {
-    println!("Attention Benchmarks: Flash vs Naive vs NdArray");
+    println!("Attention Benchmarks: Flex (auto) vs Flex (naive) vs NdArray");
     println!("Memory allocation tracking enabled");
     println!();
     divan::main();

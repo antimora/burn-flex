@@ -741,8 +741,8 @@ Flex auto-selects between two gemm-backed strategies:
 
 - **Naive** (seq_kv <= 512): Materializes full [seq_q, seq_kv] score matrix. Two large gemm calls
   per (batch, head) amortize dispatch overhead better than many small tiled calls.
-- **Flash** (seq_kv > 512): Tiles over KV dimension with online softmax. O(seq_q _ TILE_KV) memory
-  per head instead of O(seq_q _ seq_kv).
+- **Flash** (seq_kv > 512): Tiles over KV dimension with online softmax. `O(seq_q * TILE_KV)` memory
+  per head instead of `O(seq_q * seq_kv)`.
 
 Both fuse scale + softcap + masking + bias + softmax into a single pass, reducing intermediate
 allocations from ~12 (NdArray fallback) to 3.

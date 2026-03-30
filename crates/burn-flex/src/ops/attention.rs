@@ -42,8 +42,10 @@ const NAIVE_SEQ_KV_THRESHOLD: usize = 8 * TILE_KV;
 
 /// Auto-selecting attention: picks the fastest strategy based on sequence length.
 ///
-/// - seq_kv <= 512: naive attention (two large gemm calls, full score matrix)
-/// - seq_kv > 512: flash attention (tiled online softmax, O(TILE_KV) memory per row)
+/// - seq_kv <= `NAIVE_SEQ_KV_THRESHOLD`: naive attention (two large gemm calls, full score matrix)
+/// - seq_kv > `NAIVE_SEQ_KV_THRESHOLD`: flash attention (tiled online softmax, O(TILE_KV) memory per row)
+///
+/// `NAIVE_SEQ_KV_THRESHOLD` = `8 * TILE_KV`: 512 on native targets, 256 on wasm.
 pub fn attention(
     query: FlexTensor,
     key: FlexTensor,
@@ -671,6 +673,30 @@ where
 
     let seq_kv = k_shape[2];
     let val_dim = v_shape[3];
+
+    assert_eq!(k_shape[0], batch, "attention_naive: key batch mismatch");
+    assert_eq!(k_shape[1], heads, "attention_naive: key heads mismatch");
+    assert_eq!(k_shape[3], head_dim, "attention_naive: key head_dim mismatch");
+    assert_eq!(v_shape[0], batch, "attention_naive: value batch mismatch");
+    assert_eq!(v_shape[1], heads, "attention_naive: value heads mismatch");
+    assert_eq!(v_shape[2], seq_kv, "attention_naive: value seq_kv mismatch");
+
+    if let Some(ref m) = mask_tensor {
+        let ms = m.layout().shape();
+        assert_eq!(
+            ms[..],
+            [batch, heads, seq_q, seq_kv],
+            "attention_naive: mask shape mismatch"
+        );
+    }
+    if let Some(ref b) = bias_tensor {
+        let bs = b.layout().shape();
+        assert_eq!(
+            bs[..],
+            [batch, heads, seq_q, seq_kv],
+            "attention_naive: bias shape mismatch"
+        );
+    }
 
     let scale = T::from(
         options
@@ -1417,7 +1443,8 @@ mod tests {
                 burn_backend::DType::F32,
             );
 
-            let flash = super::attention(q.clone(), k.clone(), v.clone(), None, None, options);
+            let flash =
+                super::attention_flash(q.clone(), k.clone(), v.clone(), None, None, options);
             let naive = super::attention_naive(q, k, v, None, None, options);
 
             let flash_data: &[f32] = flash.storage();
