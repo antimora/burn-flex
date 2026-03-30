@@ -544,24 +544,24 @@ where
     match lhs.dtype() {
         DType::I64 => compare_elem_typed(lhs, i64_rhs, i64_cmp),
         DType::U64 => compare_elem_typed(lhs, u64_rhs, u64_cmp),
-        DType::I32 => {
-            compare_elem_typed(lhs, i64_rhs as i32, |a: i32, b: i32| i64_cmp(a as i64, b as i64))
-        }
-        DType::I16 => {
-            compare_elem_typed(lhs, i64_rhs as i16, |a: i16, b: i16| i64_cmp(a as i64, b as i64))
-        }
-        DType::I8 => {
-            compare_elem_typed(lhs, i64_rhs as i8, |a: i8, b: i8| i64_cmp(a as i64, b as i64))
-        }
-        DType::U32 => {
-            compare_elem_typed(lhs, i64_rhs as u32, |a: u32, b: u32| i64_cmp(a as i64, b as i64))
-        }
-        DType::U16 => {
-            compare_elem_typed(lhs, i64_rhs as u16, |a: u16, b: u16| i64_cmp(a as i64, b as i64))
-        }
-        DType::U8 => {
-            compare_elem_typed(lhs, i64_rhs as u8, |a: u8, b: u8| i64_cmp(a as i64, b as i64))
-        }
+        DType::I32 => compare_elem_typed(lhs, i64_rhs as i32, |a: i32, b: i32| {
+            i64_cmp(a as i64, b as i64)
+        }),
+        DType::I16 => compare_elem_typed(lhs, i64_rhs as i16, |a: i16, b: i16| {
+            i64_cmp(a as i64, b as i64)
+        }),
+        DType::I8 => compare_elem_typed(lhs, i64_rhs as i8, |a: i8, b: i8| {
+            i64_cmp(a as i64, b as i64)
+        }),
+        DType::U32 => compare_elem_typed(lhs, i64_rhs as u32, |a: u32, b: u32| {
+            i64_cmp(a as i64, b as i64)
+        }),
+        DType::U16 => compare_elem_typed(lhs, i64_rhs as u16, |a: u16, b: u16| {
+            i64_cmp(a as i64, b as i64)
+        }),
+        DType::U8 => compare_elem_typed(lhs, i64_rhs as u8, |a: u8, b: u8| {
+            i64_cmp(a as i64, b as i64)
+        }),
         other => panic!("compare_int_elem: unsupported dtype {:?}", other),
     }
 }
