@@ -455,10 +455,20 @@ impl IntTensorOps<Flex> for Flex {
         shape: Shape,
         distribution: Distribution,
         _device: &Device<Flex>,
+        dtype: IntDType,
     ) -> IntTensor<Flex> {
         let mut seed = crate::backend::SEED.lock().unwrap();
         let mut rng = seed.take().unwrap_or_else(crate::backend::get_seeded_rng);
-        let data = TensorData::random::<i64, _, _>(shape, distribution, &mut rng);
+        let data = match dtype {
+            IntDType::I64 => TensorData::random::<i64, _, _>(shape, distribution, &mut rng),
+            IntDType::I32 => TensorData::random::<i32, _, _>(shape, distribution, &mut rng),
+            IntDType::I16 => TensorData::random::<i16, _, _>(shape, distribution, &mut rng),
+            IntDType::I8 => TensorData::random::<i8, _, _>(shape, distribution, &mut rng),
+            IntDType::U64 => TensorData::random::<u64, _, _>(shape, distribution, &mut rng),
+            IntDType::U32 => TensorData::random::<u32, _, _>(shape, distribution, &mut rng),
+            IntDType::U16 => TensorData::random::<u16, _, _>(shape, distribution, &mut rng),
+            IntDType::U8 => TensorData::random::<u8, _, _>(shape, distribution, &mut rng),
+        };
         *seed = Some(rng);
         FlexTensor::from_data(data)
     }

@@ -37,10 +37,6 @@ impl Device for FlexDevice {
     fn from_id(_id: DeviceId) -> Self {
         Self
     }
-
-    fn device_count(_kind: u16) -> usize {
-        1
-    }
 }
 
 impl DeviceOps for FlexDevice {}
@@ -77,6 +73,10 @@ impl Backend for Flex {
         let rng = FlexRng::seed_from_u64(seed);
         let mut seed_lock = SEED.lock().unwrap();
         *seed_lock = Some(rng);
+    }
+
+    fn device_count(_type_id: u16) -> usize {
+        1
     }
 
     fn dtype_usage(_device: &Self::Device, dtype: DType) -> DTypeUsageSet {
