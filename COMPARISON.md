@@ -209,7 +209,7 @@ All operations listed below are implemented by both backends unless marked other
 | adaptive_avg_pool2d              | Yes       | Yes          |                                                                                         |
 | adaptive_avg_pool2d_backward     | Yes       | Yes          |                                                                                         |
 | interpolate                      | Yes       | Yes          | Nearest, bilinear, bicubic                                                              |
-| attention (SDPA)                 | Yes       | Yes          | Flex: auto-selects naive (seq_kv<=512) or flash (seq_kv>512); NdArray: matmul + softmax |
+| attention (SDPA)                 | Yes       | Yes          | Flex: auto-selects naive or flash by score matrix size; NdArray: matmul + softmax        |
 
 ### Int and Bool Operations
 

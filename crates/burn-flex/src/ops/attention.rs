@@ -32,20 +32,17 @@ const TILE_KV: usize = 32;
 #[cfg(not(target_family = "wasm"))]
 const TILE_KV: usize = 64;
 
-/// Auto-selection threshold: use naive attention when seq_kv <= this value.
+/// Max score matrix size (in elements) for the naive path.
 ///
-/// Benchmarks (Apple M3 Max) show naive attention is ~5-10% faster than flash
-/// for seq_kv <= 512 because two large gemm calls amortize dispatch overhead
-/// better than many small tiled ones. Flash attention wins at longer sequences
-/// where the full score matrix exceeds L2 cache.
-const NAIVE_SEQ_KV_THRESHOLD: usize = 8 * TILE_KV;
+/// Naive attention materializes a [seq_q, seq_kv] score matrix per head.
+/// When this exceeds the budget, flash attention is used instead.
+/// 256K elements = 1 MB for f32, fits comfortably in L2.
+const NAIVE_SCORE_BUDGET: usize = 256 * 1024;
 
 /// Auto-selecting attention: picks the fastest strategy based on sequence length.
 ///
-/// - seq_kv <= `NAIVE_SEQ_KV_THRESHOLD`: naive attention (two large gemm calls, full score matrix)
-/// - seq_kv > `NAIVE_SEQ_KV_THRESHOLD`: flash attention (tiled online softmax, O(TILE_KV) memory per row)
-///
-/// `NAIVE_SEQ_KV_THRESHOLD` = `8 * TILE_KV`: 512 on native targets, 256 on wasm.
+/// Uses naive attention when the score matrix (seq_q * seq_kv) fits within
+/// `NAIVE_SCORE_BUDGET`. Falls back to flash attention for larger shapes.
 pub fn attention(
     query: FlexTensor,
     key: FlexTensor,
@@ -55,12 +52,18 @@ pub fn attention(
     options: AttentionModuleOptions,
 ) -> FlexTensor {
     debug_assert!(
+        query.layout().shape().num_dims() == 4,
+        "attention: query must be 4D, got {}D",
+        query.layout().shape().num_dims()
+    );
+    debug_assert!(
         key.layout().shape().num_dims() == 4,
         "attention: key must be 4D, got {}D",
         key.layout().shape().num_dims()
     );
+    let seq_q = query.layout().shape()[2];
     let seq_kv = key.layout().shape()[2];
-    if seq_kv <= NAIVE_SEQ_KV_THRESHOLD {
+    if seq_q * seq_kv <= NAIVE_SCORE_BUDGET {
         return attention_naive(query, key, value, mask, attn_bias, options);
     }
     attention_flash(query, key, value, mask, attn_bias, options)
@@ -1547,5 +1550,41 @@ mod tests {
 
         assert!((data[0] - 13.30).abs() < 0.1, "got {}", data[0]);
         assert!((data[1] - 16.70).abs() < 0.1, "got {}", data[1]);
+    }
+
+    /// Verify f16 cast-to-f32 round-trip produces correct results for both paths.
+    #[test]
+    fn test_f16_attention() {
+        use burn_std::{Bytes, Shape, f16};
+        use crate::Layout;
+
+        let q_f16: Vec<f16> = [1.0f32, 0.0, 0.0, 1.0].iter().map(|&v| f16::from_f32(v)).collect();
+        let v_f16: Vec<f16> = [10.0f32, 20.0].iter().map(|&v| f16::from_f32(v)).collect();
+        let q = crate::FlexTensor::new(
+            Bytes::from_elems(q_f16.clone()),
+            Layout::contiguous(Shape::from(vec![1, 1, 2, 2])),
+            burn_backend::DType::F16,
+        );
+        let k = q.clone();
+        let v = crate::FlexTensor::new(
+            Bytes::from_elems(v_f16),
+            Layout::contiguous(Shape::from(vec![1, 1, 2, 1])),
+            burn_backend::DType::F16,
+        );
+
+        // Test through both paths explicitly
+        let flash = super::attention_flash(q.clone(), k.clone(), v.clone(), None, None, Default::default());
+        let naive = super::attention_naive(q, k, v, None, None, Default::default());
+
+        let flash_data: &[f16] = flash.storage();
+        let naive_data: &[f16] = naive.storage();
+
+        // softmax([1/sqrt(2), 0]) = [0.670, 0.330] -> row0: ~13.3, row1: ~16.7
+        for (label, data) in [("flash", flash_data), ("naive", naive_data)] {
+            let r0 = data[0].to_f32();
+            let r1 = data[1].to_f32();
+            assert!((r0 - 13.30).abs() < 0.2, "{label} row0: got {r0}");
+            assert!((r1 - 16.70).abs() < 0.2, "{label} row1: got {r1}");
+        }
     }
 }

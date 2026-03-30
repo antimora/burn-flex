@@ -22,10 +22,10 @@ is thread-safe by design.
 - **Convolutions**: Unified 3D implementation with im2col + gemm. Conv1d/2d delegate to conv3d.
   Supports groups, dilation, padding.
 - **Attention**: Auto-selecting between two gemm-backed strategies based on sequence length. Short
-  sequences (seq_kv <= 8 * TILE_KV, i.e. 512 on native, 256 on wasm) use naive attention with two
-  large gemm calls for lower overhead. Long sequences use tiled flash attention with online softmax
-  for O(TILE_KV) memory per row. Both support causal masking, additive bias (ALiBi), softcap,
-  custom scale, and cross-attention.
+  sequences (score matrix seq_q * seq_kv <= 256K elements) use naive attention with two large gemm
+  calls for lower overhead. Larger shapes use tiled flash attention with online softmax for
+  O(TILE_KV) memory per row. Both support causal masking, additive bias (ALiBi), softcap, custom
+  scale, and cross-attention.
 - **Pooling**: Max pool, avg pool, adaptive avg pool. All via unified 3D with backward pass support.
 - **Conv Transpose**: Scatter-based transposed convolutions for upsampling.
 - **Portable SIMD**: Uses [macerator](https://crates.io/crates/macerator) for automatic dispatch:

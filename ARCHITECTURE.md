@@ -603,20 +603,20 @@ accumulation:
 Computes `softmax(Q @ K^T * scale + bias) @ V` with fused scale, softcap, masking (bool + causal),
 and additive bias. Auto-selects between two strategies:
 
-**Naive attention** (seq_kv <= 512): Materializes the full [seq_q, seq_kv] score matrix. Per (batch,
+**Naive attention** (seq_q * seq_kv <= 256K): Materializes the full [seq_q, seq_kv] score matrix. Per (batch,
 head), issues two gemm calls: one for `Q @ K^T` and one for `softmax(scores) @ V`. The softmax loop
 applies scale/softcap/mask/bias and normalizes in two passes (find-max, then exp-and-sum). NaN-safe:
 fully-masked rows produce zero output, not NaN.
 
-**Flash attention** (seq_kv > 512): Tiles over the KV dimension in chunks of TILE_KV (64 on native,
-32 on WASM). Each tile does a small score gemm, online softmax update (running max/sum with
-correction factor to rescale previous tiles), and a value accumulation gemm. Memory is O(seq_q _
-TILE_KV) per head instead of O(seq_q _ seq_kv).
+**Flash attention** (seq_q * seq_kv > 256K): Tiles over the KV dimension in chunks of TILE_KV (64 on
+native, 32 on WASM). Each tile does a small score gemm, online softmax update (running max/sum with
+correction factor to rescale previous tiles), and a value accumulation gemm. Memory is
+`O(seq_q * TILE_KV)` per head instead of `O(seq_q * seq_kv)`.
 
-**Why two strategies**: Benchmarks show naive is 5-10% faster for seq_kv <= 512 because two large
-gemm calls amortize kernel dispatch overhead better than 2 _ ceil(seq_kv / 64) small ones. Flash
-wins at longer sequences where the full score matrix exceeds L2 cache. The threshold is `8 _
-TILE_KV` (512 on native targets).
+**Why two strategies**: Benchmarks show naive is 5-10% faster for typical transformer shapes
+(seq <= 512) because two large gemm calls amortize kernel dispatch overhead better than many small
+tiled ones. Flash wins when the score matrix exceeds L2 cache. The threshold is `NAIVE_SCORE_BUDGET`
+(256K elements = 1 MB for f32).
 
 Both paths share: gemm via `gemm::gemm`, dtype dispatch with f16/bf16 upcast to f32, scratch buffer
 reuse across (batch, head) pairs.
