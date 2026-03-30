@@ -59,6 +59,11 @@ pub fn mask_fill_i64(tensor: FlexTensor, mask: FlexTensor, value: i64) -> FlexTe
     mask_fill(tensor, mask, value)
 }
 
+/// Mask fill for u64.
+pub fn mask_fill_u64(tensor: FlexTensor, mask: FlexTensor, value: u64) -> FlexTensor {
+    mask_fill(tensor, mask, value)
+}
+
 /// Mask fill for bool tensors.
 pub fn mask_fill_bool(tensor: FlexTensor, mask: FlexTensor, value: bool) -> FlexTensor {
     let (tensor, mask) = crate::ops::expand::broadcast_binary(tensor, mask);

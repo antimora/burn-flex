@@ -2,16 +2,26 @@
 
 use alloc::vec::Vec;
 use burn_backend::{
-    DType, Distribution, ExecutionError, Scalar, TensorData,
+    DType, Distribution, ExecutionError, FloatDType, Scalar, TensorData,
     ops::IntTensorOps,
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
-use burn_std::{Bytes, IntDType, Shape, Slice};
+use burn_std::{Bytes, IntDType, Shape, Slice, bf16, f16};
 use num_traits::ToPrimitive;
 
 use crate::Layout;
 use crate::ops::binary::{binary_op_typed, int_binary_op, int_scalar_op, scalar_op_typed};
 use crate::{Flex, FlexTensor, ops::matmul};
+
+/// Convert a Scalar to (i64, u64) pair for the given dtype.
+/// Only the matching type's conversion is validated; the other gets a dummy 0.
+fn scalar_to_int_pair(dtype: DType, rhs: &Scalar) -> (i64, u64) {
+    if dtype == DType::U64 {
+        (0, rhs.to_u64().unwrap())
+    } else {
+        (rhs.to_i64().unwrap(), 0)
+    }
+}
 
 impl IntTensorOps<Flex> for Flex {
     fn int_from_data(data: TensorData, _device: &Device<Flex>) -> IntTensor<Flex> {
@@ -59,6 +69,9 @@ impl IntTensorOps<Flex> for Flex {
         mask: BoolTensor<Flex>,
         value: Scalar,
     ) -> IntTensor<Flex> {
+        if tensor.dtype() == DType::U64 {
+            return crate::ops::mask::mask_fill_u64(tensor, mask, value.to_u64().unwrap());
+        }
         crate::ops::mask::mask_fill_i64(tensor, mask, value.to_i64().unwrap())
     }
 
@@ -117,7 +130,8 @@ impl IntTensorOps<Flex> for Flex {
         rhs: Scalar,
         _out_dtype: burn_std::BoolDType,
     ) -> BoolTensor<Flex> {
-        crate::ops::comparison::int_equal_elem(lhs, rhs.to_i64().unwrap())
+        let (i, u) = scalar_to_int_pair(lhs.dtype(), &rhs);
+        crate::ops::comparison::int_equal_elem(lhs, i, u)
     }
 
     fn int_greater(
@@ -133,7 +147,8 @@ impl IntTensorOps<Flex> for Flex {
         rhs: Scalar,
         _out_dtype: burn_std::BoolDType,
     ) -> BoolTensor<Flex> {
-        crate::ops::comparison::int_greater_elem(lhs, rhs.to_i64().unwrap())
+        let (i, u) = scalar_to_int_pair(lhs.dtype(), &rhs);
+        crate::ops::comparison::int_greater_elem(lhs, i, u)
     }
 
     fn int_greater_equal(
@@ -149,7 +164,8 @@ impl IntTensorOps<Flex> for Flex {
         rhs: Scalar,
         _out_dtype: burn_std::BoolDType,
     ) -> BoolTensor<Flex> {
-        crate::ops::comparison::int_greater_equal_elem(lhs, rhs.to_i64().unwrap())
+        let (i, u) = scalar_to_int_pair(lhs.dtype(), &rhs);
+        crate::ops::comparison::int_greater_equal_elem(lhs, i, u)
     }
 
     fn int_lower(
@@ -165,7 +181,8 @@ impl IntTensorOps<Flex> for Flex {
         rhs: Scalar,
         _out_dtype: burn_std::BoolDType,
     ) -> BoolTensor<Flex> {
-        crate::ops::comparison::int_lower_elem(lhs, rhs.to_i64().unwrap())
+        let (i, u) = scalar_to_int_pair(lhs.dtype(), &rhs);
+        crate::ops::comparison::int_lower_elem(lhs, i, u)
     }
 
     fn int_lower_equal(
@@ -181,7 +198,8 @@ impl IntTensorOps<Flex> for Flex {
         rhs: Scalar,
         _out_dtype: burn_std::BoolDType,
     ) -> BoolTensor<Flex> {
-        crate::ops::comparison::int_lower_equal_elem(lhs, rhs.to_i64().unwrap())
+        let (i, u) = scalar_to_int_pair(lhs.dtype(), &rhs);
+        crate::ops::comparison::int_lower_equal_elem(lhs, i, u)
     }
 
     fn int_add(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> IntTensor<Flex> {
@@ -189,6 +207,11 @@ impl IntTensorOps<Flex> for Flex {
     }
 
     fn int_add_scalar(lhs: IntTensor<Flex>, rhs: Scalar) -> IntTensor<Flex> {
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| {
+                a.wrapping_add(b)
+            });
+        }
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a + b)
     }
 
@@ -197,6 +220,11 @@ impl IntTensorOps<Flex> for Flex {
     }
 
     fn int_sub_scalar(lhs: IntTensor<Flex>, rhs: Scalar) -> IntTensor<Flex> {
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| {
+                a.wrapping_sub(b)
+            });
+        }
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a - b)
     }
 
@@ -205,6 +233,11 @@ impl IntTensorOps<Flex> for Flex {
     }
 
     fn int_mul_scalar(lhs: IntTensor<Flex>, rhs: Scalar) -> IntTensor<Flex> {
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| {
+                a.wrapping_mul(b)
+            });
+        }
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a * b)
     }
 
@@ -245,29 +278,49 @@ impl IntTensorOps<Flex> for Flex {
     // i64/u64 > 2^24 lose precision when converted to f32 (matches PyTorch).
     fn int_into_float(
         tensor: IntTensor<Flex>,
-        _out_dtype: burn_std::FloatDType,
+        out_dtype: burn_std::FloatDType,
     ) -> FloatTensor<Flex> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
-        let dtype = tensor.dtype();
+        let src = tensor.dtype();
+        let out_dt = DType::from(out_dtype);
 
-        let float_data: Vec<f32> = match dtype {
-            DType::I64 => tensor.storage::<i64>().iter().map(|x| *x as f32).collect(),
-            DType::I32 => tensor.storage::<i32>().iter().map(|x| *x as f32).collect(),
-            DType::I16 => tensor.storage::<i16>().iter().map(|x| *x as f32).collect(),
-            DType::I8 => tensor.storage::<i8>().iter().map(|x| *x as f32).collect(),
-            DType::U64 => tensor.storage::<u64>().iter().map(|x| *x as f32).collect(),
-            DType::U32 => tensor.storage::<u32>().iter().map(|x| *x as f32).collect(),
-            DType::U16 => tensor.storage::<u16>().iter().map(|x| *x as f32).collect(),
-            DType::U8 => tensor.storage::<u8>().iter().map(|x| *x as f32).collect(),
-            _ => panic!("int_into_float: unsupported dtype {:?}", dtype),
-        };
+        // Read source ints, applying conversion per-element.
+        // Each arm binds `$x` to the native int value; `$conv` must work for all int types.
+        macro_rules! read_ints {
+            (|$x:ident| $conv:expr) => {
+                match src {
+                    DType::I64 => tensor.storage::<i64>().iter().map(|&$x| $conv).collect(),
+                    DType::I32 => tensor.storage::<i32>().iter().map(|&$x| $conv).collect(),
+                    DType::I16 => tensor.storage::<i16>().iter().map(|&$x| $conv).collect(),
+                    DType::I8 => tensor.storage::<i8>().iter().map(|&$x| $conv).collect(),
+                    DType::U64 => tensor.storage::<u64>().iter().map(|&$x| $conv).collect(),
+                    DType::U32 => tensor.storage::<u32>().iter().map(|&$x| $conv).collect(),
+                    DType::U16 => tensor.storage::<u16>().iter().map(|&$x| $conv).collect(),
+                    DType::U8 => tensor.storage::<u8>().iter().map(|&$x| $conv).collect(),
+                    _ => panic!("int_into_float: unsupported source dtype {:?}", src),
+                }
+            };
+        }
 
-        FlexTensor::new(
-            Bytes::from_elems(float_data),
-            Layout::contiguous(shape),
-            DType::F32,
-        )
+        match out_dtype {
+            FloatDType::F64 => {
+                let data: Vec<f64> = read_ints!(|x| x as f64);
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }
+            FloatDType::F32 | FloatDType::Flex32 => {
+                let data: Vec<f32> = read_ints!(|x| x as f32);
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }
+            FloatDType::F16 => {
+                let data: Vec<f16> = read_ints!(|x| f16::from_f32(x as f32));
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }
+            FloatDType::BF16 => {
+                let data: Vec<bf16> = read_ints!(|x| bf16::from_f32(x as f32));
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }
+        }
     }
 
     fn int_swap_dims(tensor: IntTensor<Flex>, dim1: usize, dim2: usize) -> IntTensor<Flex> {
@@ -355,6 +408,9 @@ impl IntTensorOps<Flex> for Flex {
     }
 
     fn bitwise_and_scalar(lhs: IntTensor<Flex>, rhs: Scalar) -> IntTensor<Flex> {
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| a & b);
+        }
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a & b)
     }
 
@@ -363,6 +419,9 @@ impl IntTensorOps<Flex> for Flex {
     }
 
     fn bitwise_or_scalar(lhs: IntTensor<Flex>, rhs: Scalar) -> IntTensor<Flex> {
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| a | b);
+        }
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a | b)
     }
 
@@ -371,6 +430,9 @@ impl IntTensorOps<Flex> for Flex {
     }
 
     fn bitwise_xor_scalar(lhs: IntTensor<Flex>, rhs: Scalar) -> IntTensor<Flex> {
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, rhs.to_u64().unwrap(), |a: u64, b: u64| a ^ b);
+        }
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| a ^ b)
     }
 

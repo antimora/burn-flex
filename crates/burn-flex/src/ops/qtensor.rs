@@ -1,5 +1,6 @@
 //! Quantized tensor operations for the Flex backend.
 
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use burn_backend::{
@@ -10,9 +11,33 @@ use burn_backend::{
     },
     tensor::{Device, FloatTensor, IntTensor, QuantizedTensor},
 };
-use burn_std::{Bytes, Shape, Slice};
+use burn_std::{Bytes, Shape, Slice, bf16, f16};
 
 use crate::{Flex, FlexQTensor, FlexTensor, Layout};
+
+/// Read a contiguous float tensor's storage as f32 values, regardless of source dtype.
+/// Returns a borrowed slice for F32 (zero-copy) and an owned Vec for other types.
+fn float_storage_as_f32(tensor: &FlexTensor) -> Cow<'_, [f32]> {
+    match tensor.dtype() {
+        DType::F32 => Cow::Borrowed(tensor.storage::<f32>()),
+        DType::F64 => Cow::Owned(tensor.storage::<f64>().iter().map(|&x| x as f32).collect()),
+        DType::F16 => Cow::Owned(
+            tensor
+                .storage::<f16>()
+                .iter()
+                .map(|x| f32::from(*x))
+                .collect(),
+        ),
+        DType::BF16 => Cow::Owned(
+            tensor
+                .storage::<bf16>()
+                .iter()
+                .map(|x| f32::from(*x))
+                .collect(),
+        ),
+        other => panic!("float_storage_as_f32: unsupported dtype {:?}", other),
+    }
+}
 
 impl QTensorOps<Flex> for Flex {
     fn q_from_data(data: TensorData, _device: &Device<Flex>) -> QuantizedTensor<Flex> {
@@ -47,7 +72,7 @@ impl QTensorOps<Flex> for Flex {
     fn quantize_dynamic(tensor: FloatTensor<Flex>, scheme: &QuantScheme) -> QuantizedTensor<Flex> {
         let shape = tensor.shape();
         let tensor = tensor.to_contiguous();
-        let float_data: &[f32] = tensor.storage();
+        let float_data = float_storage_as_f32(&tensor);
         let (a, b) = scheme.value.range();
         let range = b - a;
 
@@ -55,7 +80,7 @@ impl QTensorOps<Flex> for Flex {
             QuantLevel::Tensor => {
                 // Pass 1: find alpha = max(|min|, |max|)
                 let mut alpha: f32 = 0.0;
-                for &x in float_data {
+                for &x in &*float_data {
                     let abs = x.abs();
                     if abs > alpha {
                         alpha = abs;
@@ -125,7 +150,7 @@ impl QTensorOps<Flex> for Flex {
     ) -> QuantizedTensor<Flex> {
         let shape = tensor.shape();
         let tensor = tensor.to_contiguous();
-        let float_data: &[f32] = tensor.storage();
+        let float_data = float_storage_as_f32(&tensor);
 
         // Extract and validate scales from the qparams tensor
         let scales_tensor = qparams.scales.to_contiguous();

@@ -505,118 +505,113 @@ pub fn not_equal_elem(lhs: FlexTensor, rhs: f64) -> FlexTensor {
 
 // Integer comparison functions
 
-fn compare_int<Cmp>(lhs: FlexTensor, rhs: FlexTensor, cmp: Cmp) -> FlexTensor
+fn compare_int<I64Cmp, U64Cmp>(
+    lhs: FlexTensor,
+    rhs: FlexTensor,
+    i64_cmp: I64Cmp,
+    u64_cmp: U64Cmp,
+) -> FlexTensor
 where
-    Cmp: Fn(i64, i64) -> bool,
+    I64Cmp: Fn(i64, i64) -> bool,
+    U64Cmp: Fn(u64, u64) -> bool,
 {
-    debug_assert_eq!(lhs.dtype(), DType::I64, "compare_int: expected I64 dtype");
-    debug_assert_eq!(rhs.dtype(), DType::I64, "compare_int: expected I64 dtype");
-
-    // Broadcast to same shape if needed
     let (lhs, rhs) = crate::ops::expand::broadcast_binary(lhs, rhs);
 
-    let shape = lhs.layout().shape().clone();
-    let lhs_storage: &[i64] = lhs.storage();
-    let rhs_storage: &[i64] = rhs.storage();
-
-    let result: Vec<u8> = match (
-        lhs.layout().contiguous_offsets(),
-        rhs.layout().contiguous_offsets(),
-    ) {
-        (Some((l_start, l_end)), Some((r_start, r_end))) => {
-            let l_slice = &lhs_storage[l_start..l_end];
-            let r_slice = &rhs_storage[r_start..r_end];
-            l_slice
-                .iter()
-                .zip(r_slice)
-                .map(|(&a, &b)| cmp(a, b) as u8)
-                .collect()
-        }
-        _ => {
-            let lhs_iter = StridedIter::new(lhs.layout());
-            let rhs_iter = StridedIter::new(rhs.layout());
-            lhs_iter
-                .zip(rhs_iter)
-                .map(|(li, ri)| cmp(lhs_storage[li], rhs_storage[ri]) as u8)
-                .collect()
-        }
-    };
-
-    make_bool_tensor(result, shape)
+    match lhs.dtype() {
+        DType::I64 => compare_typed(lhs, &rhs, i64_cmp),
+        DType::U64 => compare_typed(lhs, &rhs, u64_cmp),
+        DType::I32 => compare_typed(lhs, &rhs, |a: i32, b: i32| i64_cmp(a as i64, b as i64)),
+        DType::I16 => compare_typed(lhs, &rhs, |a: i16, b: i16| i64_cmp(a as i64, b as i64)),
+        DType::I8 => compare_typed(lhs, &rhs, |a: i8, b: i8| i64_cmp(a as i64, b as i64)),
+        DType::U32 => compare_typed(lhs, &rhs, |a: u32, b: u32| i64_cmp(a as i64, b as i64)),
+        DType::U16 => compare_typed(lhs, &rhs, |a: u16, b: u16| i64_cmp(a as i64, b as i64)),
+        DType::U8 => compare_typed(lhs, &rhs, |a: u8, b: u8| i64_cmp(a as i64, b as i64)),
+        other => panic!("compare_int: unsupported dtype {:?}", other),
+    }
 }
 
-fn compare_int_elem<Cmp>(lhs: FlexTensor, rhs: i64, cmp: Cmp) -> FlexTensor
+fn compare_int_elem<I64Cmp, U64Cmp>(
+    lhs: FlexTensor,
+    i64_rhs: i64,
+    u64_rhs: u64,
+    i64_cmp: I64Cmp,
+    u64_cmp: U64Cmp,
+) -> FlexTensor
 where
-    Cmp: Fn(i64, i64) -> bool,
+    I64Cmp: Fn(i64, i64) -> bool,
+    U64Cmp: Fn(u64, u64) -> bool,
 {
-    debug_assert_eq!(
-        lhs.dtype(),
-        DType::I64,
-        "compare_int_elem: expected I64 dtype"
-    );
-
-    let shape = lhs.layout().shape().clone();
-    let lhs_storage: &[i64] = lhs.storage();
-
-    let result: Vec<u8> = match lhs.layout().contiguous_offsets() {
-        Some((start, end)) => lhs_storage[start..end]
-            .iter()
-            .map(|&a| cmp(a, rhs) as u8)
-            .collect(),
-        None => StridedIter::new(lhs.layout())
-            .map(|idx| cmp(lhs_storage[idx], rhs) as u8)
-            .collect(),
-    };
-
-    make_bool_tensor(result, shape)
+    match lhs.dtype() {
+        DType::I64 => compare_elem_typed(lhs, i64_rhs, i64_cmp),
+        DType::U64 => compare_elem_typed(lhs, u64_rhs, u64_cmp),
+        DType::I32 => {
+            compare_elem_typed(lhs, i64_rhs as i32, |a: i32, b: i32| i64_cmp(a as i64, b as i64))
+        }
+        DType::I16 => {
+            compare_elem_typed(lhs, i64_rhs as i16, |a: i16, b: i16| i64_cmp(a as i64, b as i64))
+        }
+        DType::I8 => {
+            compare_elem_typed(lhs, i64_rhs as i8, |a: i8, b: i8| i64_cmp(a as i64, b as i64))
+        }
+        DType::U32 => {
+            compare_elem_typed(lhs, i64_rhs as u32, |a: u32, b: u32| i64_cmp(a as i64, b as i64))
+        }
+        DType::U16 => {
+            compare_elem_typed(lhs, i64_rhs as u16, |a: u16, b: u16| i64_cmp(a as i64, b as i64))
+        }
+        DType::U8 => {
+            compare_elem_typed(lhs, i64_rhs as u8, |a: u8, b: u8| i64_cmp(a as i64, b as i64))
+        }
+        other => panic!("compare_int_elem: unsupported dtype {:?}", other),
+    }
 }
 
 pub fn int_greater(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare_int(lhs, rhs, |a, b| a > b)
+    compare_int(lhs, rhs, |a, b| a > b, |a, b| a > b)
 }
 
-pub fn int_greater_elem(lhs: FlexTensor, rhs: i64) -> FlexTensor {
-    compare_int_elem(lhs, rhs, |a, b| a > b)
+pub fn int_greater_elem(lhs: FlexTensor, i64_rhs: i64, u64_rhs: u64) -> FlexTensor {
+    compare_int_elem(lhs, i64_rhs, u64_rhs, |a, b| a > b, |a, b| a > b)
 }
 
 pub fn int_greater_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare_int(lhs, rhs, |a, b| a >= b)
+    compare_int(lhs, rhs, |a, b| a >= b, |a, b| a >= b)
 }
 
-pub fn int_greater_equal_elem(lhs: FlexTensor, rhs: i64) -> FlexTensor {
-    compare_int_elem(lhs, rhs, |a, b| a >= b)
+pub fn int_greater_equal_elem(lhs: FlexTensor, i64_rhs: i64, u64_rhs: u64) -> FlexTensor {
+    compare_int_elem(lhs, i64_rhs, u64_rhs, |a, b| a >= b, |a, b| a >= b)
 }
 
 pub fn int_lower(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare_int(lhs, rhs, |a, b| a < b)
+    compare_int(lhs, rhs, |a, b| a < b, |a, b| a < b)
 }
 
-pub fn int_lower_elem(lhs: FlexTensor, rhs: i64) -> FlexTensor {
-    compare_int_elem(lhs, rhs, |a, b| a < b)
+pub fn int_lower_elem(lhs: FlexTensor, i64_rhs: i64, u64_rhs: u64) -> FlexTensor {
+    compare_int_elem(lhs, i64_rhs, u64_rhs, |a, b| a < b, |a, b| a < b)
 }
 
 pub fn int_lower_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare_int(lhs, rhs, |a, b| a <= b)
+    compare_int(lhs, rhs, |a, b| a <= b, |a, b| a <= b)
 }
 
-pub fn int_lower_equal_elem(lhs: FlexTensor, rhs: i64) -> FlexTensor {
-    compare_int_elem(lhs, rhs, |a, b| a <= b)
+pub fn int_lower_equal_elem(lhs: FlexTensor, i64_rhs: i64, u64_rhs: u64) -> FlexTensor {
+    compare_int_elem(lhs, i64_rhs, u64_rhs, |a, b| a <= b, |a, b| a <= b)
 }
 
 pub fn int_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare_int(lhs, rhs, |a, b| a == b)
+    compare_int(lhs, rhs, |a, b| a == b, |a, b| a == b)
 }
 
-pub fn int_equal_elem(lhs: FlexTensor, rhs: i64) -> FlexTensor {
-    compare_int_elem(lhs, rhs, |a, b| a == b)
+pub fn int_equal_elem(lhs: FlexTensor, i64_rhs: i64, u64_rhs: u64) -> FlexTensor {
+    compare_int_elem(lhs, i64_rhs, u64_rhs, |a, b| a == b, |a, b| a == b)
 }
 
 pub fn int_not_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare_int(lhs, rhs, |a, b| a != b)
+    compare_int(lhs, rhs, |a, b| a != b, |a, b| a != b)
 }
 
-pub fn int_not_equal_elem(lhs: FlexTensor, rhs: i64) -> FlexTensor {
-    compare_int_elem(lhs, rhs, |a, b| a != b)
+pub fn int_not_equal_elem(lhs: FlexTensor, i64_rhs: i64, u64_rhs: u64) -> FlexTensor {
+    compare_int_elem(lhs, i64_rhs, u64_rhs, |a, b| a != b, |a, b| a != b)
 }
 
 pub fn bool_not_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
