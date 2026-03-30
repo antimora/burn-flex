@@ -570,7 +570,7 @@ impl FloatTensorOps<Flex> for Flex {
         indices_dtype: burn_std::IntDType,
     ) -> (FloatTensor<Flex>, IntTensor<Flex>) {
         let (values, indices) = crate::ops::reduce::max_dim_with_indices(tensor, dim);
-        if DType::from(indices_dtype) != DType::I64 {
+        if indices.dtype() != DType::from(indices_dtype) {
             (values, Flex::int_cast(indices, indices_dtype))
         } else {
             (values, indices)
@@ -583,7 +583,7 @@ impl FloatTensorOps<Flex> for Flex {
         indices_dtype: burn_std::IntDType,
     ) -> (FloatTensor<Flex>, IntTensor<Flex>) {
         let (values, indices) = crate::ops::reduce::min_dim_with_indices(tensor, dim);
-        if DType::from(indices_dtype) != DType::I64 {
+        if indices.dtype() != DType::from(indices_dtype) {
             (values, Flex::int_cast(indices, indices_dtype))
         } else {
             (values, indices)
@@ -864,7 +864,7 @@ impl FloatTensorOps<Flex> for Flex {
         out_dtype: burn_std::IntDType,
     ) -> IntTensor<Flex> {
         let result = crate::ops::reduce::argmax(tensor, dim);
-        if DType::from(out_dtype) != DType::I64 {
+        if result.dtype() != DType::from(out_dtype) {
             Flex::int_cast(result, out_dtype)
         } else {
             result
@@ -877,7 +877,7 @@ impl FloatTensorOps<Flex> for Flex {
         out_dtype: burn_std::IntDType,
     ) -> IntTensor<Flex> {
         let result = crate::ops::reduce::argmin(tensor, dim);
-        if DType::from(out_dtype) != DType::I64 {
+        if result.dtype() != DType::from(out_dtype) {
             Flex::int_cast(result, out_dtype)
         } else {
             result

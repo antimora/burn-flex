@@ -79,16 +79,31 @@ impl IntTensorOps<Flex> for Flex {
         mask: BoolTensor<Flex>,
         value: Scalar,
     ) -> IntTensor<Flex> {
-        let v = value.to_i64().unwrap();
         match tensor.dtype() {
-            DType::I64 => crate::ops::mask::mask_fill(tensor, mask, v),
-            DType::I32 => crate::ops::mask::mask_fill(tensor, mask, v as i32),
-            DType::I16 => crate::ops::mask::mask_fill(tensor, mask, v as i16),
-            DType::I8 => crate::ops::mask::mask_fill(tensor, mask, v as i8),
-            DType::U64 => crate::ops::mask::mask_fill(tensor, mask, value.to_u64().unwrap()),
-            DType::U32 => crate::ops::mask::mask_fill(tensor, mask, v as u32),
-            DType::U16 => crate::ops::mask::mask_fill(tensor, mask, v as u16),
-            DType::U8 => crate::ops::mask::mask_fill(tensor, mask, v as u8),
+            DType::I64 => {
+                crate::ops::mask::mask_fill(tensor, mask, value.to_i64().unwrap())
+            }
+            DType::I32 => {
+                crate::ops::mask::mask_fill(tensor, mask, value.to_i64().unwrap() as i32)
+            }
+            DType::I16 => {
+                crate::ops::mask::mask_fill(tensor, mask, value.to_i64().unwrap() as i16)
+            }
+            DType::I8 => {
+                crate::ops::mask::mask_fill(tensor, mask, value.to_i64().unwrap() as i8)
+            }
+            DType::U64 => {
+                crate::ops::mask::mask_fill(tensor, mask, value.to_u64().unwrap())
+            }
+            DType::U32 => {
+                crate::ops::mask::mask_fill(tensor, mask, value.to_u64().unwrap() as u32)
+            }
+            DType::U16 => {
+                crate::ops::mask::mask_fill(tensor, mask, value.to_u64().unwrap() as u16)
+            }
+            DType::U8 => {
+                crate::ops::mask::mask_fill(tensor, mask, value.to_u64().unwrap() as u8)
+            }
             dt => panic!("int_mask_fill: unsupported dtype {:?}", dt),
         }
     }

@@ -301,7 +301,7 @@ impl QTensorOps<Flex> for Flex {
         out_dtype: burn_std::IntDType,
     ) -> IntTensor<Flex> {
         let result = crate::ops::reduce::argmax(tensor.tensor, dim);
-        if DType::from(out_dtype) != DType::I64 {
+        if result.dtype() != DType::from(out_dtype) {
             Flex::int_cast(result, out_dtype)
         } else {
             result
@@ -314,7 +314,7 @@ impl QTensorOps<Flex> for Flex {
         out_dtype: burn_std::IntDType,
     ) -> IntTensor<Flex> {
         let result = crate::ops::reduce::argmin(tensor.tensor, dim);
-        if DType::from(out_dtype) != DType::I64 {
+        if result.dtype() != DType::from(out_dtype) {
             Flex::int_cast(result, out_dtype)
         } else {
             result
