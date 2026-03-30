@@ -676,7 +676,10 @@ where
 
     assert_eq!(k_shape[0], batch, "attention_naive: key batch mismatch");
     assert_eq!(k_shape[1], heads, "attention_naive: key heads mismatch");
-    assert_eq!(k_shape[3], head_dim, "attention_naive: key head_dim mismatch");
+    assert_eq!(
+        k_shape[3], head_dim,
+        "attention_naive: key head_dim mismatch"
+    );
     assert_eq!(v_shape[0], batch, "attention_naive: value batch mismatch");
     assert_eq!(v_shape[1], heads, "attention_naive: value heads mismatch");
     assert_eq!(v_shape[2], seq_kv, "attention_naive: value seq_kv mismatch");
