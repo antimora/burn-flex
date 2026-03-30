@@ -72,10 +72,11 @@ where
     }
 
     // General path for views/slices with offset or extra storage
-    let result = match layout.strided_blocks() {
+    let blocks = layout.strided_blocks();
+    let result = match &blocks {
         // Single contiguous block (with offset)
         StridedBlocks::Single { start, len } => {
-            src[start..start + len].iter().map(|&x| op(x)).collect()
+            src[*start..*start + *len].iter().map(|&x| op(x)).collect()
         }
         // Strided: iterate over contiguous blocks
         StridedBlocks::Multiple {
@@ -83,7 +84,8 @@ where
             num_blocks,
             ..
         } => {
-            let blocks = layout.strided_blocks();
+            let block_len = *block_len;
+            let num_blocks = *num_blocks;
             let mut result = Vec::with_capacity(n);
 
             if block_len == 1 {

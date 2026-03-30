@@ -3,7 +3,7 @@
 All benchmarks run on Apple M3 Max, comparing burn-flex against burn-ndarray. Default features
 enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
-**Date**: 2026-02-08
+**Date**: 2026-03-30
 
 ## How to Read
 
@@ -37,8 +37,8 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 | Operation | Size      | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
 | --------- | --------- | ------ | ------- | -------- | -------- | ----------- |
-| add       | 256x256   | 49 us  | 56 us   | **1.1x** | 262 KB   | 524 KB      |
-| add       | 1024x1024 | 979 us | 1.30 ms | **1.3x** | 4.2 MB   | 8.4 MB      |
+| add       | 256x256   | 48 us  | 45 us   | 0.94x    | 262 KB   | 524 KB      |
+| add       | 1024x1024 | 972 us | 986 us  | **1.0x** | 4.2 MB   | 8.4 MB      |
 
 ---
 
@@ -72,8 +72,8 @@ ndarray's vectorized internals.
 
 | Operation | Size      | Flex    | NdArray | Speedup  |
 | --------- | --------- | ------- | ------- | -------- |
-| int_add   | 256x256   | 57 us   | 65 us   | **1.1x** |
-| int_add   | 1024x1024 | 1.50 ms | 1.40 ms | 0.93x    |
+| int_add   | 256x256   | 58 us   | 49 us   | 0.85x    |
+| int_add   | 1024x1024 | 1.41 ms | 1.07 ms | 0.76x    |
 
 ---
 
@@ -123,9 +123,9 @@ ndarray's vectorized internals.
 
 | Config          | Flex   | NdArray | Speedup  |
 | --------------- | ------ | ------- | -------- |
-| LHS transposed  | 162 us | 197 us  | **1.2x** |
-| RHS transposed  | 187 us | 184 us  | 1.0x     |
-| Both transposed | 189 us | 218 us  | **1.2x** |
+| LHS transposed  | 143 us | 177 us  | **1.2x** |
+| RHS transposed  | 174 us | 176 us  | 1.0x     |
+| Both transposed | 176 us | 214 us  | **1.2x** |
 
 ### Batched (f32)
 
@@ -282,8 +282,8 @@ Flex: zero-alloc single-pass on i64 data. NdArray: reshape + max_dim + alloc.
 
 | Size      | Flex    | NdArray | Speedup  |
 | --------- | ------- | ------- | -------- |
-| 256x256   | 6.4 us  | 6.5 us  | 1.0x     |
-| 1024x1024 | 53.5 us | 102 us  | **1.9x** |
+| 256x256   | 6.1 us  | 6.2 us  | 1.0x     |
+| 1024x1024 | 50.9 us | 94.8 us | **1.9x** |
 
 ### Sum Dim on Transposed
 
@@ -432,8 +432,8 @@ Flex: select directly on u8 data. NdArray default: bool->int->select->compare.
 
 | Operation | Size      | Flex    | NdArray | Speedup |
 | --------- | --------- | ------- | ------- | ------- |
-| exp       | 256x256   | 81 us   | 83 us   | 1.0x    |
-| exp       | 1024x1024 | 1.30 ms | 1.34 ms | 1.0x    |
+| exp       | 256x256   | 79 us   | 83 us   | **1.1x** |
+| exp       | 1024x1024 | 1.30 ms | 1.32 ms | 1.0x    |
 
 ---
 
@@ -460,8 +460,8 @@ Flex: select directly on u8 data. NdArray default: bool->int->select->compare.
 
 | Operation | Size      | Flex   | NdArray | Speedup  |
 | --------- | --------- | ------ | ------- | -------- |
-| greater   | 256x256   | 53 us  | 51 us   | 0.96x    |
-| greater   | 1024x1024 | 972 us | 1.21 ms | **1.2x** |
+| greater   | 256x256   | 52 us  | 43 us   | 0.83x    |
+| greater   | 1024x1024 | 993 us | 939 us  | 0.94x    |
 
 ### Broadcast Comparisons
 

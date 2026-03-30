@@ -263,14 +263,38 @@ impl FlexTensor {
         let n = self.layout.num_elements();
         let mut dst = Vec::with_capacity(n);
 
-        // Fast path for 2D tensors (common for transpose)
-        if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides() {
+        // Fast path for 2D positive-stride tensors (common for transpose).
+        // Tiles both dimensions so source reads stay within a bounded memory
+        // region per tile, reducing L2/L3 cache pressure for transposed matrices
+        // where one stride is large.
+        if let Some((rows, cols, row_stride, col_stride)) = self.layout.as_2d_strides()
+            && row_stride >= 0
+            && col_stride >= 0
+        {
+            const TILE: usize = 16;
             let offset = self.layout.start_offset() as isize;
-            for row in 0..rows {
-                let row_start = offset + row as isize * row_stride;
-                for col in 0..cols {
-                    let idx = (row_start + col as isize * col_stride) as usize;
-                    dst.push(src[idx]);
+
+            // SAFETY: capacity is n. The tiled loops visit every (row, col)
+            // pair exactly once, writing all n positions. Indices are bounded:
+            // dst_base + c = row * cols + col_tile + c < rows * cols == n.
+            debug_assert_eq!(rows * cols, n, "2D strides must cover all elements");
+            unsafe { dst.set_len(n) };
+
+            for row_tile in (0..rows).step_by(TILE) {
+                let row_end = (row_tile + TILE).min(rows);
+                for col_tile in (0..cols).step_by(TILE) {
+                    let col_end = (col_tile + TILE).min(cols);
+                    for row in row_tile..row_end {
+                        let row_base =
+                            offset + row as isize * row_stride + col_tile as isize * col_stride;
+                        let dst_base = row * cols + col_tile;
+                        for c in 0..(col_end - col_tile) {
+                            let idx = (row_base + c as isize * col_stride) as usize;
+                            unsafe {
+                                *dst.get_unchecked_mut(dst_base + c) = src[idx];
+                            }
+                        }
+                    }
                 }
             }
         } else {
