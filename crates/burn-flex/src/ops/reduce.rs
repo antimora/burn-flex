@@ -15,6 +15,16 @@ use crate::{FlexTensor, Layout};
 
 use super::INDEX_DTYPE;
 
+/// Assert that a dimension size fits in `isize`, which is required for index-producing
+/// operations (argmax, argmin, *_with_indices) that store dimension indices as `isize`.
+#[inline(always)]
+fn assert_dim_fits_isize(dim_size: usize, dim: usize) {
+    assert!(
+        dim_size <= isize::MAX as usize,
+        "dimension {dim} has size {dim_size} which exceeds isize::MAX"
+    );
+}
+
 #[cfg(feature = "simd")]
 use crate::simd::kernels;
 
@@ -557,8 +567,9 @@ fn min_impl<E: Element + bytemuck::Pod + PartialOrd>(tensor: &FlexTensor) -> Fle
 // Argmax / Argmin
 // ============================================================================
 
-/// Argmax along a dimension, returning indices as i64.
+/// Argmax along a dimension, returning indices as isize (INDEX_DTYPE).
 pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
+    assert_dim_fits_isize(tensor.layout().shape()[dim], dim);
     match tensor.dtype() {
         DType::F32 => argmax_float_impl::<f32>(&tensor, dim),
         DType::F64 => argmax_float_impl::<f64>(&tensor, dim),
@@ -572,8 +583,9 @@ pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
     }
 }
 
-/// Argmin along a dimension, returning indices as i64.
+/// Argmin along a dimension, returning indices as isize (INDEX_DTYPE).
 pub fn argmin(tensor: FlexTensor, dim: usize) -> FlexTensor {
+    assert_dim_fits_isize(tensor.layout().shape()[dim], dim);
     match tensor.dtype() {
         DType::F32 => argmin_float_impl::<f32>(&tensor, dim),
         DType::F64 => argmin_float_impl::<f64>(&tensor, dim),
@@ -1129,10 +1141,9 @@ pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 
 /// Max along a dimension with indices, returning (values, indices) in a single pass.
 pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
-    assert!(
-        tensor.layout().shape()[dim] > 0,
-        "max_dim_with_indices: dimension {dim} has size 0"
-    );
+    let dim_len = tensor.layout().shape()[dim];
+    assert!(dim_len > 0, "max_dim_with_indices: dimension {dim} has size 0");
+    assert_dim_fits_isize(dim_len, dim);
     match tensor.dtype() {
         DType::F32 => max_dim_with_indices_float_impl::<f32>(&tensor, dim),
         DType::F64 => max_dim_with_indices_float_impl::<f64>(&tensor, dim),
@@ -1158,10 +1169,9 @@ pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
 
 /// Min along a dimension with indices, returning (values, indices) in a single pass.
 pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
-    assert!(
-        tensor.layout().shape()[dim] > 0,
-        "min_dim_with_indices: dimension {dim} has size 0"
-    );
+    let dim_len = tensor.layout().shape()[dim];
+    assert!(dim_len > 0, "min_dim_with_indices: dimension {dim} has size 0");
+    assert_dim_fits_isize(dim_len, dim);
     match tensor.dtype() {
         DType::F32 => min_dim_with_indices_float_impl::<f32>(&tensor, dim),
         DType::F64 => min_dim_with_indices_float_impl::<f64>(&tensor, dim),

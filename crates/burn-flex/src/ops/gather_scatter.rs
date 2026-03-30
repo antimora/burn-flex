@@ -19,6 +19,7 @@ fn read_indices(tensor: &FlexTensor) -> Cow<'_, [isize]> {
         #[cfg(target_pointer_width = "64")]
         DType::I64 => {
             // SAFETY: i64 and isize have identical size, alignment, and repr on 64-bit.
+            const { assert!(size_of::<i64>() == size_of::<isize>()) };
             let data = tensor.storage::<i64>();
             Cow::Borrowed(unsafe {
                 core::slice::from_raw_parts(data.as_ptr() as *const isize, data.len())
@@ -47,6 +48,7 @@ fn read_indices(tensor: &FlexTensor) -> Cow<'_, [isize]> {
         #[cfg(target_pointer_width = "32")]
         DType::I32 => {
             // SAFETY: i32 and isize have identical size, alignment, and repr on 32-bit.
+            const { assert!(size_of::<i32>() == size_of::<isize>()) };
             let data = tensor.storage::<i32>();
             Cow::Borrowed(unsafe {
                 core::slice::from_raw_parts(data.as_ptr() as *const isize, data.len())
