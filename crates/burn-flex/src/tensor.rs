@@ -285,9 +285,8 @@ impl FlexTensor {
                 for col_tile in (0..cols).step_by(TILE) {
                     let col_end = (col_tile + TILE).min(cols);
                     for row in row_tile..row_end {
-                        let row_base = offset
-                            + row as isize * row_stride
-                            + col_tile as isize * col_stride;
+                        let row_base =
+                            offset + row as isize * row_stride + col_tile as isize * col_stride;
                         let dst_base = row * cols + col_tile;
                         for c in 0..(col_end - col_tile) {
                             let idx = (row_base + c as isize * col_stride) as usize;
