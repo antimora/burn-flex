@@ -7,7 +7,7 @@ use burn_backend::{
     ops::{FloatTensorOps, GridSampleOptions},
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
-use burn_std::{Bytes, Shape, Slice, bf16, f16};
+use burn_std::{Bytes, IntDType, Shape, Slice, bf16, f16};
 
 use crate::Layout;
 use num_traits::ToPrimitive;
@@ -52,35 +52,70 @@ impl FloatTensorOps<Flex> for Flex {
         tensor
     }
 
-    fn float_into_int(
-        tensor: FloatTensor<Flex>,
-        _out_dtype: burn_std::IntDType,
-    ) -> IntTensor<Flex> {
+    fn float_into_int(tensor: FloatTensor<Flex>, out_dtype: burn_std::IntDType) -> IntTensor<Flex> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
-        let dtype = tensor.dtype();
+        let src = tensor.dtype();
+        let out_dt = DType::from(out_dtype);
 
-        let int_data: Vec<i64> = match dtype {
-            DType::F32 => tensor.storage::<f32>().iter().map(|x| *x as i64).collect(),
-            DType::F64 => tensor.storage::<f64>().iter().map(|x| *x as i64).collect(),
-            DType::F16 => tensor
-                .storage::<f16>()
-                .iter()
-                .map(|x| f32::from(*x) as i64)
-                .collect(),
-            DType::BF16 => tensor
-                .storage::<bf16>()
-                .iter()
-                .map(|x| f32::from(*x) as i64)
-                .collect(),
-            _ => panic!("float_into_int: unsupported dtype {:?}", dtype),
-        };
+        // Read source floats as f64 (lossless for f32/f16/bf16).
+        macro_rules! read_floats {
+            (|$x:ident| $conv:expr) => {
+                match src {
+                    DType::F32 => tensor
+                        .storage::<f32>()
+                        .iter()
+                        .map(|v| {
+                            let $x = *v as f64;
+                            $conv
+                        })
+                        .collect(),
+                    DType::F64 => tensor
+                        .storage::<f64>()
+                        .iter()
+                        .map(|v| {
+                            let $x = *v;
+                            $conv
+                        })
+                        .collect(),
+                    DType::F16 => tensor
+                        .storage::<f16>()
+                        .iter()
+                        .map(|v| {
+                            let $x = f32::from(*v) as f64;
+                            $conv
+                        })
+                        .collect(),
+                    DType::BF16 => tensor
+                        .storage::<bf16>()
+                        .iter()
+                        .map(|v| {
+                            let $x = f32::from(*v) as f64;
+                            $conv
+                        })
+                        .collect(),
+                    _ => panic!("float_into_int: unsupported source dtype {:?}", src),
+                }
+            };
+        }
 
-        FlexTensor::new(
-            Bytes::from_elems(int_data),
-            Layout::contiguous(shape),
-            DType::I64,
-        )
+        macro_rules! convert {
+            ($int_ty:ty) => {{
+                let data: Vec<$int_ty> = read_floats!(|x| x as $int_ty);
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }};
+        }
+
+        match out_dtype {
+            IntDType::I64 => convert!(i64),
+            IntDType::I32 => convert!(i32),
+            IntDType::I16 => convert!(i16),
+            IntDType::I8 => convert!(i8),
+            IntDType::U64 => convert!(u64),
+            IntDType::U32 => convert!(u32),
+            IntDType::U16 => convert!(u16),
+            IntDType::U8 => convert!(u8),
+        }
     }
 
     fn float_empty(shape: Shape, _device: &Device<Flex>, dtype: FloatDType) -> FloatTensor<Flex> {
@@ -1088,5 +1123,29 @@ mod tests {
         assert_eq!(result.shape().to_vec(), vec![3, 3]);
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn test_float_into_int_i32() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([1.5f32, -2.7, 0.0, 255.9]));
+        let result = Flex::float_into_int(t, IntDType::I32);
+        assert_eq!(result.dtype(), burn_backend::DType::I32);
+        let data: Vec<i32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1, -2, 0, 255]);
+    }
+
+    #[test]
+    fn test_float_into_int_u8() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([0.0f32, 1.9, 127.5, 255.0]));
+        let result = Flex::float_into_int(t, IntDType::U8);
+        assert_eq!(result.dtype(), burn_backend::DType::U8);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![0, 1, 127, 255]);
     }
 }

@@ -7,7 +7,7 @@ use burn_backend::{
     ops::BoolTensorOps,
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
-use burn_std::{Bytes, Shape, Slice};
+use burn_std::{Bytes, FloatDType, IntDType, Shape, Slice, bf16, f16};
 
 use crate::{Flex, FlexTensor, Layout};
 
@@ -56,43 +56,75 @@ impl BoolTensorOps<Flex> for Flex {
         crate::ops::slice::slice_assign(tensor, slices, value)
     }
 
-    fn bool_into_int(tensor: BoolTensor<Flex>, _out_dtype: burn_std::IntDType) -> IntTensor<Flex> {
+    fn bool_into_int(tensor: BoolTensor<Flex>, out_dtype: burn_std::IntDType) -> IntTensor<Flex> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
-        // Bool is stored as u8 internally (0 = false, non-zero = true)
-        // Use bytes() directly since storage() checks dtype
-        let int_data: Vec<i64> = tensor
-            .bytes()
-            .iter()
-            .map(|&x| if x != 0 { 1i64 } else { 0i64 })
-            .collect();
+        let out_dt = DType::from(out_dtype);
+        let bools = tensor.bytes();
 
-        FlexTensor::new(
-            Bytes::from_elems(int_data),
-            Layout::contiguous(shape),
-            DType::I64,
-        )
+        macro_rules! convert {
+            ($int_ty:ty) => {{
+                let data: Vec<$int_ty> =
+                    bools.iter().map(|&x| if x != 0 { 1 } else { 0 }).collect();
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }};
+        }
+
+        match out_dtype {
+            IntDType::I64 => convert!(i64),
+            IntDType::I32 => convert!(i32),
+            IntDType::I16 => convert!(i16),
+            IntDType::I8 => convert!(i8),
+            IntDType::U64 => convert!(u64),
+            IntDType::U32 => convert!(u32),
+            IntDType::U16 => convert!(u16),
+            IntDType::U8 => convert!(u8),
+        }
     }
 
     fn bool_into_float(
         tensor: BoolTensor<Flex>,
-        _out_dtype: burn_std::FloatDType,
+        out_dtype: burn_std::FloatDType,
     ) -> FloatTensor<Flex> {
         let tensor = tensor.to_contiguous();
         let shape = tensor.layout().shape().clone();
-        // Bool is stored as u8 internally (0 = false, non-zero = true)
-        // Use bytes() directly since storage() checks dtype
-        let float_data: Vec<f32> = tensor
-            .bytes()
-            .iter()
-            .map(|&x| if x != 0 { 1.0f32 } else { 0.0f32 })
-            .collect();
+        let out_dt = DType::from(out_dtype);
+        let bools = tensor.bytes();
 
-        FlexTensor::new(
-            Bytes::from_elems(float_data),
-            Layout::contiguous(shape),
-            DType::F32,
-        )
+        match out_dtype {
+            FloatDType::F64 => {
+                let data: Vec<f64> = bools
+                    .iter()
+                    .map(|&x| if x != 0 { 1.0 } else { 0.0 })
+                    .collect();
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }
+            FloatDType::F32 | FloatDType::Flex32 => {
+                let data: Vec<f32> = bools
+                    .iter()
+                    .map(|&x| if x != 0 { 1.0 } else { 0.0 })
+                    .collect();
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }
+            FloatDType::F16 => {
+                let one = f16::from_f32(1.0);
+                let zero = f16::from_f32(0.0);
+                let data: Vec<f16> = bools
+                    .iter()
+                    .map(|&x| if x != 0 { one } else { zero })
+                    .collect();
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }
+            FloatDType::BF16 => {
+                let one = bf16::from_f32(1.0);
+                let zero = bf16::from_f32(0.0);
+                let data: Vec<bf16> = bools
+                    .iter()
+                    .map(|&x| if x != 0 { one } else { zero })
+                    .collect();
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), out_dt)
+            }
+        }
     }
 
     fn bool_swap_dims(tensor: BoolTensor<Flex>, dim1: usize, dim2: usize) -> BoolTensor<Flex> {
@@ -641,5 +673,29 @@ mod tests {
         let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
 
         assert_eq!(data, vec![0i64, 1, 1, 0]);
+    }
+
+    #[test]
+    fn test_bool_into_int_u8() {
+        use burn_backend::ops::BoolTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(burn_tensor::TensorData::from([true, false, true]));
+        let result = Flex::bool_into_int(t, IntDType::U8);
+        assert_eq!(result.dtype(), burn_backend::DType::U8);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1u8, 0, 1]);
+    }
+
+    #[test]
+    fn test_bool_into_float_f64() {
+        use burn_backend::ops::BoolTensorOps;
+        use burn_std::FloatDType;
+
+        let t = crate::FlexTensor::from_data(burn_tensor::TensorData::from([true, false, true]));
+        let result = Flex::bool_into_float(t, FloatDType::F64);
+        assert_eq!(result.dtype(), burn_backend::DType::F64);
+        let data: Vec<f64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1.0f64, 0.0, 1.0]);
     }
 }
