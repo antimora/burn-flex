@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::{
     DType, Distribution, ExecutionError, FloatDType, Scalar, TensorData,
-    ops::{FloatTensorOps, GridSampleOptions},
+    ops::{FloatTensorOps, GridSampleOptions, IntTensorOps},
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
 use burn_std::{Bytes, IntDType, Shape, Slice, bf16, f16};
@@ -567,17 +567,27 @@ impl FloatTensorOps<Flex> for Flex {
     fn float_max_dim_with_indices(
         tensor: FloatTensor<Flex>,
         dim: usize,
-        _indices_dtype: burn_std::IntDType,
+        indices_dtype: burn_std::IntDType,
     ) -> (FloatTensor<Flex>, IntTensor<Flex>) {
-        crate::ops::reduce::max_dim_with_indices(tensor, dim)
+        let (values, indices) = crate::ops::reduce::max_dim_with_indices(tensor, dim);
+        if DType::from(indices_dtype) != DType::I64 {
+            (values, Flex::int_cast(indices, indices_dtype))
+        } else {
+            (values, indices)
+        }
     }
 
     fn float_min_dim_with_indices(
         tensor: FloatTensor<Flex>,
         dim: usize,
-        _indices_dtype: burn_std::IntDType,
+        indices_dtype: burn_std::IntDType,
     ) -> (FloatTensor<Flex>, IntTensor<Flex>) {
-        crate::ops::reduce::min_dim_with_indices(tensor, dim)
+        let (values, indices) = crate::ops::reduce::min_dim_with_indices(tensor, dim);
+        if DType::from(indices_dtype) != DType::I64 {
+            (values, Flex::int_cast(indices, indices_dtype))
+        } else {
+            (values, indices)
+        }
     }
 
     fn float_any(tensor: FloatTensor<Flex>, _out_dtype: burn_std::BoolDType) -> BoolTensor<Flex> {
@@ -851,17 +861,27 @@ impl FloatTensorOps<Flex> for Flex {
     fn float_argmax(
         tensor: FloatTensor<Flex>,
         dim: usize,
-        _out_dtype: burn_std::IntDType,
+        out_dtype: burn_std::IntDType,
     ) -> IntTensor<Flex> {
-        crate::ops::reduce::argmax(tensor, dim)
+        let result = crate::ops::reduce::argmax(tensor, dim);
+        if DType::from(out_dtype) != DType::I64 {
+            Flex::int_cast(result, out_dtype)
+        } else {
+            result
+        }
     }
 
     fn float_argmin(
         tensor: FloatTensor<Flex>,
         dim: usize,
-        _out_dtype: burn_std::IntDType,
+        out_dtype: burn_std::IntDType,
     ) -> IntTensor<Flex> {
-        crate::ops::reduce::argmin(tensor, dim)
+        let result = crate::ops::reduce::argmin(tensor, dim);
+        if DType::from(out_dtype) != DType::I64 {
+            Flex::int_cast(result, out_dtype)
+        } else {
+            result
+        }
     }
 
     fn float_expand(tensor: FloatTensor<Flex>, shape: Shape) -> FloatTensor<Flex> {
@@ -1147,5 +1167,69 @@ mod tests {
         assert_eq!(result.dtype(), burn_backend::DType::U8);
         let data: Vec<u8> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![0, 1, 127, 255]);
+    }
+
+    #[test]
+    fn test_float_argmax_i32_out_dtype() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([[1.0f32, 3.0, 2.0]]));
+        let result = Flex::float_argmax(t, 1, IntDType::I32);
+        assert_eq!(result.dtype(), burn_backend::DType::I32);
+        let data: Vec<i32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1]);
+    }
+
+    #[test]
+    fn test_float_argmin_i32_out_dtype() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([[3.0f32, 1.0, 2.0]]));
+        let result = Flex::float_argmin(t, 1, IntDType::I32);
+        assert_eq!(result.dtype(), burn_backend::DType::I32);
+        let data: Vec<i32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1]);
+    }
+
+    #[test]
+    fn test_float_argmax_i64_out_dtype() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([[1.0f32, 3.0, 2.0]]));
+        let result = Flex::float_argmax(t, 1, IntDType::I64);
+        assert_eq!(result.dtype(), burn_backend::DType::I64);
+        let data: Vec<i64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1]);
+    }
+
+    #[test]
+    fn test_float_max_dim_with_indices_i32() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([[1.0f32, 5.0], [3.0, 2.0]]));
+        let (values, indices) = Flex::float_max_dim_with_indices(t, 1, IntDType::I32);
+        assert_eq!(indices.dtype(), burn_backend::DType::I32);
+        let idx: Vec<i32> = indices.into_data().to_vec().unwrap();
+        assert_eq!(idx, vec![1, 0]);
+        let vals: Vec<f32> = values.into_data().to_vec().unwrap();
+        assert_eq!(vals, vec![5.0, 3.0]);
+    }
+
+    #[test]
+    fn test_float_min_dim_with_indices_i32() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([[1.0f32, 5.0], [3.0, 2.0]]));
+        let (values, indices) = Flex::float_min_dim_with_indices(t, 1, IntDType::I32);
+        assert_eq!(indices.dtype(), burn_backend::DType::I32);
+        let idx: Vec<i32> = indices.into_data().to_vec().unwrap();
+        assert_eq!(idx, vec![0, 1]);
+        let vals: Vec<f32> = values.into_data().to_vec().unwrap();
+        assert_eq!(vals, vec![1.0, 2.0]);
     }
 }
