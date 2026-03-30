@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use burn_backend::{
     DType, ExecutionError, TensorData, TensorMetadata,
-    ops::QTensorOps,
+    ops::{IntTensorOps, QTensorOps},
     quantization::{
         QuantLevel, QuantScheme, QuantStore, QuantizationParametersPrimitive, QuantizedBytes,
     },
@@ -298,17 +298,27 @@ impl QTensorOps<Flex> for Flex {
     fn q_argmax(
         tensor: QuantizedTensor<Flex>,
         dim: usize,
-        _out_dtype: burn_std::IntDType,
+        out_dtype: burn_std::IntDType,
     ) -> IntTensor<Flex> {
-        crate::ops::reduce::argmax(tensor.tensor, dim)
+        let result = crate::ops::reduce::argmax(tensor.tensor, dim);
+        if result.dtype() != DType::from(out_dtype) {
+            Flex::int_cast(result, out_dtype)
+        } else {
+            result
+        }
     }
 
     fn q_argmin(
         tensor: QuantizedTensor<Flex>,
         dim: usize,
-        _out_dtype: burn_std::IntDType,
+        out_dtype: burn_std::IntDType,
     ) -> IntTensor<Flex> {
-        crate::ops::reduce::argmin(tensor.tensor, dim)
+        let result = crate::ops::reduce::argmin(tensor.tensor, dim);
+        if result.dtype() != DType::from(out_dtype) {
+            Flex::int_cast(result, out_dtype)
+        } else {
+            result
+        }
     }
 
     fn q_gather(

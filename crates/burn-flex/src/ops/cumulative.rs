@@ -4,7 +4,7 @@ use alloc::vec;
 use burn_backend::Element;
 use burn_std::Bytes;
 use bytemuck::Pod;
-use num_traits::Num;
+use num_traits::{Bounded, Num};
 
 use crate::{FlexTensor, Layout};
 
@@ -158,10 +158,6 @@ pub fn cumsum_f64(tensor: FlexTensor, dim: usize) -> FlexTensor {
     cumsum::<f64>(tensor, dim)
 }
 
-pub fn cumsum_i64(tensor: FlexTensor, dim: usize) -> FlexTensor {
-    cumsum::<i64>(tensor, dim)
-}
-
 pub fn cumprod_f32(tensor: FlexTensor, dim: usize) -> FlexTensor {
     cumprod::<f32>(tensor, dim)
 }
@@ -170,8 +166,12 @@ pub fn cumprod_f64(tensor: FlexTensor, dim: usize) -> FlexTensor {
     cumprod::<f64>(tensor, dim)
 }
 
-pub fn cumprod_i64(tensor: FlexTensor, dim: usize) -> FlexTensor {
-    cumprod::<i64>(tensor, dim)
+/// Cumulative min along a dimension.
+pub fn cummin<E: Element + Pod + Default + Copy + Ord + Bounded>(
+    tensor: FlexTensor,
+    dim: usize,
+) -> FlexTensor {
+    cumulative_op(tensor, dim, E::max_value(), Ord::min)
 }
 
 pub fn cummin_f32(tensor: FlexTensor, dim: usize) -> FlexTensor {
@@ -186,13 +186,12 @@ pub fn cummin_f64(tensor: FlexTensor, dim: usize) -> FlexTensor {
     })
 }
 
-pub fn cummin_i64(tensor: FlexTensor, dim: usize) -> FlexTensor {
-    cumulative_op(
-        tensor,
-        dim,
-        i64::MAX,
-        |acc, val| if val < acc { val } else { acc },
-    )
+/// Cumulative max along a dimension.
+pub fn cummax<E: Element + Pod + Default + Copy + Ord + Bounded>(
+    tensor: FlexTensor,
+    dim: usize,
+) -> FlexTensor {
+    cumulative_op(tensor, dim, E::min_value(), Ord::max)
 }
 
 pub fn cummax_f32(tensor: FlexTensor, dim: usize) -> FlexTensor {
@@ -205,15 +204,6 @@ pub fn cummax_f64(tensor: FlexTensor, dim: usize) -> FlexTensor {
     cumulative_op(tensor, dim, f64::NEG_INFINITY, |acc, val| {
         if val.is_nan() || val > acc { val } else { acc }
     })
-}
-
-pub fn cummax_i64(tensor: FlexTensor, dim: usize) -> FlexTensor {
-    cumulative_op(
-        tensor,
-        dim,
-        i64::MIN,
-        |acc, val| if val > acc { val } else { acc },
-    )
 }
 
 pub fn cumsum_half<E: Element + Pod + Default + Copy>(
@@ -336,7 +326,7 @@ mod tests {
     #[test]
     fn test_cumsum_i64() {
         let tensor = FlexTensor::from_data(TensorData::new(vec![1i64, 2, 3, 4], [4]));
-        let result = cumsum_i64(tensor, 0);
+        let result = cumsum::<i64>(tensor, 0);
         let data: Vec<i64> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1, 3, 6, 10]);
     }
