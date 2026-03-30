@@ -856,8 +856,23 @@ fn reduce_bool_dim_int(
     combine: fn(bool, bool) -> bool,
 ) -> FlexTensor {
     let tensor = tensor.to_contiguous();
-    let data: &[i64] = tensor.storage();
-    reduce_bool_dim_with(&tensor, dim, init, combine, |idx| data[idx] != 0)
+    macro_rules! dispatch {
+        ($ty:ty) => {{
+            let data: &[$ty] = tensor.storage();
+            reduce_bool_dim_with(&tensor, dim, init, combine, |idx| data[idx] != 0)
+        }};
+    }
+    match tensor.dtype() {
+        DType::I64 => dispatch!(i64),
+        DType::I32 => dispatch!(i32),
+        DType::I16 => dispatch!(i16),
+        DType::I8 => dispatch!(i8),
+        DType::U64 => dispatch!(u64),
+        DType::U32 => dispatch!(u32),
+        DType::U16 => dispatch!(u16),
+        DType::U8 => dispatch!(u8),
+        other => panic!("reduce_bool_dim_int: unsupported dtype {:?}", other),
+    }
 }
 
 /// Reduce along a dimension producing a bool tensor (for bool any/all_dim).

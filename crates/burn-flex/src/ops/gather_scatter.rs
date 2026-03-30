@@ -11,6 +11,21 @@ use rayon::prelude::*;
 
 use crate::{FlexTensor, Layout};
 
+/// Read indices from a tensor, converting any int dtype to i64.
+fn read_indices(tensor: &FlexTensor) -> Vec<i64> {
+    match tensor.dtype() {
+        DType::I64 => tensor.storage::<i64>().to_vec(),
+        DType::I32 => tensor.storage::<i32>().iter().map(|&v| v as i64).collect(),
+        DType::I16 => tensor.storage::<i16>().iter().map(|&v| v as i64).collect(),
+        DType::I8 => tensor.storage::<i8>().iter().map(|&v| v as i64).collect(),
+        DType::U64 => tensor.storage::<u64>().iter().map(|&v| v as i64).collect(),
+        DType::U32 => tensor.storage::<u32>().iter().map(|&v| v as i64).collect(),
+        DType::U16 => tensor.storage::<u16>().iter().map(|&v| v as i64).collect(),
+        DType::U8 => tensor.storage::<u8>().iter().map(|&v| v as i64).collect(),
+        other => panic!("read_indices: unsupported index dtype {:?}", other),
+    }
+}
+
 #[cold]
 #[inline(never)]
 fn index_oob(raw: i64, dim_size: usize) -> ! {
@@ -63,7 +78,7 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     }
 
     let tensor_data: &[E] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
 
     // Calculate strides for tensor (row-major)
     let tensor_strides: Vec<usize> = compute_strides(tensor_shape);
@@ -75,7 +90,7 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     if ndims == 2 {
         let result = gather_2d::<E>(
             tensor_data,
-            indices_data,
+            &indices_data,
             tensor_shape[0],
             tensor_shape[1],
             indices_shape[0],
@@ -277,7 +292,7 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
     }
 
     let tensor_data: &[E] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
     let value_data: &[E] = value.storage();
 
     let mut result: Vec<E> = tensor_data.to_vec();
@@ -291,7 +306,7 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
     if ndims == 2 {
         scatter_add_2d(
             &mut result,
-            indices_data,
+            &indices_data,
             value_data,
             tensor_shape[0],
             tensor_shape[1],
@@ -386,7 +401,7 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
     );
 
     let tensor_data: &[E] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
     let num_indices = indices_data.len();
 
     // Build output shape: replace dim with num_indices
@@ -398,7 +413,7 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
     if ndims == 2 {
         let result = select_2d::<E>(
             tensor_data,
-            indices_data,
+            &indices_data,
             tensor_shape[0],
             tensor_shape[1],
             num_indices,
@@ -613,7 +628,7 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
     );
 
     let tensor_data: &[E] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
     let value_data: &[E] = value.storage();
     let num_indices = indices_data.len();
 
@@ -640,7 +655,7 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
     if ndims == 2 {
         select_add_2d(
             &mut result,
-            indices_data,
+            &indices_data,
             value_data,
             tensor_shape[0],
             tensor_shape[1],
@@ -845,7 +860,7 @@ pub fn scatter_or(
     }
 
     let tensor_data: &[u8] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
     let value_data: &[u8] = value.storage();
 
     let mut result: Vec<u8> = tensor_data.to_vec();
