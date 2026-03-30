@@ -22,8 +22,10 @@ use crate::{FlexTensor, Layout};
 /// KV tile size for flash attention.
 ///
 /// Chosen so the score row (TILE_KV * 4 bytes for f32) and the V tile
-/// [TILE_KV, val_dim] both fit in L1. 64 works well for Apple Silicon
-/// (128KB L1) and x86 (32-48KB L1 with val_dim <= 128).
+/// [TILE_KV, val_dim] fit comfortably in L1. With val_dim=128 the V tile
+/// is 32KB; this fits well on Apple Silicon (64-128KB L1) and modern x86
+/// (48KB+ L1d since Golden Cove / Zen 4). On older x86 with 32KB L1d the
+/// tile saturates L1 but still benefits from L2 residency.
 /// WASM targets use a smaller tile to stay within tighter cache budgets.
 #[cfg(target_family = "wasm")]
 const TILE_KV: usize = 32;
