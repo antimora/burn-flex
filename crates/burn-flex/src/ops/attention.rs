@@ -1433,8 +1433,9 @@ mod tests {
                     crate::FlexTensor::new(Bytes::from_elems(data), layout, dtype)
                 }
                 burn_backend::DType::Bool(_) => {
-                    let data: Vec<u8> =
-                        (0..len).map(|i| (i.wrapping_mul(997) % 100 < 30) as u8).collect();
+                    let data: Vec<u8> = (0..len)
+                        .map(|i| (i.wrapping_mul(997) % 100 < 30) as u8)
+                        .collect();
                     crate::FlexTensor::new(Bytes::from_elems(data), layout, dtype)
                 }
                 _ => unreachable!(),
