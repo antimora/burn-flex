@@ -1304,4 +1304,30 @@ mod tests {
         let data: Vec<u8> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![11, 2, 23]);
     }
+
+    #[test]
+    fn test_int_random_i32() {
+        use burn_backend::{DType, Distribution, ops::IntTensorOps};
+        use burn_std::{IntDType, Shape};
+
+        let shape = Shape::from(vec![100]);
+        let dist = Distribution::Uniform(0.0, 10.0);
+        let device = crate::FlexDevice;
+        let t = Flex::int_random(shape, dist, &device, IntDType::I32);
+        assert_eq!(t.dtype(), DType::I32);
+        let data: Vec<i32> = t.into_data().to_vec().unwrap();
+        assert!(data.iter().all(|&v| (0..=10).contains(&v)));
+    }
+
+    #[test]
+    fn test_int_random_u8() {
+        use burn_backend::{DType, Distribution, ops::IntTensorOps};
+        use burn_std::{IntDType, Shape};
+
+        let shape = Shape::from(vec![50]);
+        let dist = Distribution::Uniform(0.0, 100.0);
+        let device = crate::FlexDevice;
+        let t = Flex::int_random(shape, dist, &device, IntDType::U8);
+        assert_eq!(t.dtype(), DType::U8);
+    }
 }

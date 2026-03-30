@@ -1240,4 +1240,28 @@ mod tests {
         let vals: Vec<f32> = values.into_data().to_vec().unwrap();
         assert_eq!(vals, vec![1.0, 2.0]);
     }
+
+    #[test]
+    fn test_float_random_f64() {
+        use burn_backend::{DType, FloatDType, ops::FloatTensorOps};
+
+        let shape = burn_std::Shape::from(vec![100]);
+        let dist = burn_backend::Distribution::Uniform(0.0, 1.0);
+        let device = crate::FlexDevice;
+        let t = Flex::float_random(shape, dist, &device, FloatDType::F64);
+        assert_eq!(t.dtype(), DType::F64);
+        let data: Vec<f64> = t.into_data().to_vec().unwrap();
+        assert!(data.iter().all(|&v| (0.0..=1.0).contains(&v)));
+    }
+
+    #[test]
+    fn test_float_random_f16() {
+        use burn_backend::{DType, FloatDType, ops::FloatTensorOps};
+
+        let shape = burn_std::Shape::from(vec![100]);
+        let dist = burn_backend::Distribution::Uniform(0.0, 1.0);
+        let device = crate::FlexDevice;
+        let t = Flex::float_random(shape, dist, &device, FloatDType::F16);
+        assert_eq!(t.dtype(), DType::F16);
+    }
 }

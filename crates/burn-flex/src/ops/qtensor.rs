@@ -883,4 +883,46 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_dequantize_f64() {
+        let values = vec![0.0f32, 1.0, 2.0, 3.0];
+        let tensor = FlexTensor::from_data(TensorData::new(values.clone(), [4]));
+
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q8S)
+            .with_store(QuantStore::Native);
+
+        let qtensor = Flex::quantize_dynamic(tensor, &scheme);
+        let result = Flex::dequantize(qtensor, FloatDType::F64);
+        assert_eq!(result.dtype(), DType::F64);
+        let result_vals: &[f64] = result.storage();
+        for (orig, deq) in values.iter().zip(result_vals.iter()) {
+            assert!(
+                (*orig as f64 - deq).abs() < 0.05,
+                "orig={orig}, dequantized={deq}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dequantize_f16() {
+        let values = vec![0.0f32, 1.0, 2.0, 3.0];
+        let tensor = FlexTensor::from_data(TensorData::new(values.clone(), [4]));
+
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q8S)
+            .with_store(QuantStore::Native);
+
+        let qtensor = Flex::quantize_dynamic(tensor, &scheme);
+        let result = Flex::dequantize(qtensor, FloatDType::F16);
+        assert_eq!(result.dtype(), DType::F16);
+        let result_vals: &[f16] = result.storage();
+        for (orig, deq) in values.iter().zip(result_vals.iter()) {
+            assert!(
+                (*orig - f32::from(*deq)).abs() < 0.05,
+                "orig={orig}, dequantized={deq}"
+            );
+        }
+    }
 }
