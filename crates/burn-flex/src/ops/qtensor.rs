@@ -827,4 +827,35 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_quantize_dynamic_f64_tensor() {
+        use burn_backend::quantization::QuantValue;
+
+        let values = vec![0.0f64, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let tensor = FlexTensor::new(
+            Bytes::from_elems(values),
+            Layout::contiguous([6].into()),
+            DType::F64,
+        );
+        assert_eq!(tensor.dtype(), DType::F64);
+
+        let scheme = QuantScheme::default()
+            .with_value(QuantValue::Q8S)
+            .with_store(QuantStore::Native);
+
+        let qtensor = Flex::quantize_dynamic(tensor, &scheme);
+        assert_eq!(qtensor.tensor.dtype(), DType::I8);
+
+        // Dequantize and verify round-trip accuracy
+        let result = Flex::dequantize(qtensor);
+        let result_vals: &[f32] = result.storage();
+        let expected = [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0];
+        for (exp, deq) in expected.iter().zip(result_vals.iter()) {
+            assert!(
+                (exp - deq).abs() < 0.15,
+                "expected={exp}, dequantized={deq}"
+            );
+        }
+    }
 }

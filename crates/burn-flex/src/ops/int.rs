@@ -275,7 +275,7 @@ impl IntTensorOps<Flex> for Flex {
         int_scalar_op(lhs, rhs.to_i64().unwrap(), |a, b| ((a % b) + b) % b)
     }
 
-    // i64/u64 > 2^24 lose precision when converted to f32 (matches PyTorch).
+    // Precision limits: i64/u64 > 2^24 for f32/f16/bf16, > 2^53 for f64.
     fn int_into_float(
         tensor: IntTensor<Flex>,
         out_dtype: burn_std::FloatDType,
@@ -964,5 +964,39 @@ mod tests {
         let b = FlexTensor::from_data(TensorData::new(vec![64i64], [1]));
         let _left = Flex::bitwise_left_shift(a.clone(), b.clone());
         let _right = Flex::bitwise_right_shift(a, b);
+    }
+
+    #[test]
+    fn test_int_into_float_f64() {
+        use burn_backend::ops::IntTensorOps;
+        use burn_std::FloatDType;
+
+        let t = FlexTensor::from_data(TensorData::new(vec![1i64, 2, -3], [3]));
+        let result = Flex::int_into_float(t, FloatDType::F64);
+        assert_eq!(result.dtype(), burn_backend::DType::F64);
+        let data: Vec<f64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1.0f64, 2.0, -3.0]);
+    }
+
+    #[test]
+    fn test_u64_add_scalar_large() {
+        let t = FlexTensor::from_data(TensorData::new(vec![1u64, 2, 3], [3]));
+        let big: u64 = (i64::MAX as u64) + 100;
+        let result = Flex::int_add_scalar(t, burn_backend::Scalar::from(big));
+        let data: Vec<u64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![big + 1, big + 2, big + 3]);
+    }
+
+    #[test]
+    fn test_u64_greater_elem_large() {
+        let big: u64 = (i64::MAX as u64) + 100;
+        let t = FlexTensor::from_data(TensorData::new(vec![big, big + 1, big - 1], [3]));
+        let result = Flex::int_greater_elem(
+            t,
+            burn_backend::Scalar::from(big),
+            burn_std::BoolStore::Native,
+        );
+        let data: Vec<bool> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![false, true, false]);
     }
 }

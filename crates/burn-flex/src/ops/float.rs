@@ -1124,4 +1124,28 @@ mod tests {
         let data: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 3.0, 4.0, 5.0]);
     }
+
+    #[test]
+    fn test_float_into_int_i32() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([1.5f32, -2.7, 0.0, 255.9]));
+        let result = Flex::float_into_int(t, IntDType::I32);
+        assert_eq!(result.dtype(), burn_backend::DType::I32);
+        let data: Vec<i32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1, -2, 0, 255]);
+    }
+
+    #[test]
+    fn test_float_into_int_u8() {
+        use burn_backend::ops::FloatTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(TensorData::from([0.0f32, 1.9, 127.5, 255.0]));
+        let result = Flex::float_into_int(t, IntDType::U8);
+        assert_eq!(result.dtype(), burn_backend::DType::U8);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![0, 1, 127, 255]);
+    }
 }

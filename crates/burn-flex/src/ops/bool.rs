@@ -674,4 +674,28 @@ mod tests {
 
         assert_eq!(data, vec![0i64, 1, 1, 0]);
     }
+
+    #[test]
+    fn test_bool_into_int_u8() {
+        use burn_backend::ops::BoolTensorOps;
+        use burn_std::IntDType;
+
+        let t = crate::FlexTensor::from_data(burn_tensor::TensorData::from([true, false, true]));
+        let result = Flex::bool_into_int(t, IntDType::U8);
+        assert_eq!(result.dtype(), burn_backend::DType::U8);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1u8, 0, 1]);
+    }
+
+    #[test]
+    fn test_bool_into_float_f64() {
+        use burn_backend::ops::BoolTensorOps;
+        use burn_std::FloatDType;
+
+        let t = crate::FlexTensor::from_data(burn_tensor::TensorData::from([true, false, true]));
+        let result = Flex::bool_into_float(t, FloatDType::F64);
+        assert_eq!(result.dtype(), burn_backend::DType::F64);
+        let data: Vec<f64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1.0f64, 0.0, 1.0]);
+    }
 }
