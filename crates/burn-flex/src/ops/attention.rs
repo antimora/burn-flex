@@ -1416,6 +1416,27 @@ mod tests {
         use burn_backend::ops::AttentionModuleOptions;
         use burn_std::{Bytes, Shape};
 
+        fn make_f32(shape: &[usize]) -> crate::FlexTensor {
+            let len: usize = shape.iter().product();
+            let data: Vec<f32> =
+                (0..len).map(|i| ((i % 997) as f32 / 997.0) - 0.5).collect();
+            crate::FlexTensor::new(
+                Bytes::from_elems(data),
+                Layout::contiguous(Shape::from(shape.to_vec())),
+                burn_backend::DType::F32,
+            )
+        }
+
+        fn make_bool_mask(shape: &[usize]) -> crate::FlexTensor {
+            let len: usize = shape.iter().product();
+            let data: Vec<u8> = (0..len).map(|i| (i % 3 == 0) as u8).collect();
+            crate::FlexTensor::new(
+                Bytes::from_elems(data),
+                Layout::contiguous(Shape::from(shape.to_vec())),
+                burn_backend::DType::Bool(burn_std::BoolStore::Native),
+            )
+        }
+
         fn run_both(
             batch: usize,
             heads: usize,
@@ -1428,57 +1449,12 @@ mod tests {
             options: AttentionModuleOptions,
             label: &str,
         ) {
-            // Deterministic data: use index-based pattern
-            let make_f32 = |len: usize| -> Vec<f32> {
-                (0..len).map(|i| ((i % 997) as f32 / 997.0) - 0.5).collect()
-            };
-
-            let q_data = make_f32(batch * heads * seq_q * head_dim);
-            let k_data = make_f32(batch * heads * seq_kv * head_dim);
-            let v_data = make_f32(batch * heads * seq_kv * val_dim);
-
-            let q = crate::FlexTensor::new(
-                Bytes::from_elems(q_data.clone()),
-                Layout::contiguous(Shape::from(vec![batch, heads, seq_q, head_dim])),
-                burn_backend::DType::F32,
-            );
-            let k = crate::FlexTensor::new(
-                Bytes::from_elems(k_data.clone()),
-                Layout::contiguous(Shape::from(vec![batch, heads, seq_kv, head_dim])),
-                burn_backend::DType::F32,
-            );
-            let v = crate::FlexTensor::new(
-                Bytes::from_elems(v_data.clone()),
-                Layout::contiguous(Shape::from(vec![batch, heads, seq_kv, val_dim])),
-                burn_backend::DType::F32,
-            );
-
-            let mask_shape = Shape::from(vec![batch, heads, seq_q, seq_kv]);
-            let mask = if with_mask {
-                // ~30% of positions masked (every 3rd position)
-                let mask_len = batch * heads * seq_q * seq_kv;
-                let mask_data: Vec<u8> = (0..mask_len)
-                    .map(|i| if i % 3 == 0 { 1 } else { 0 })
-                    .collect();
-                Some(crate::FlexTensor::new(
-                    Bytes::from_elems(mask_data),
-                    Layout::contiguous(mask_shape),
-                    burn_backend::DType::Bool(burn_std::BoolStore::Native),
-                ))
-            } else {
-                None
-            };
-
-            let bias = if with_bias {
-                let bias_data = make_f32(batch * heads * seq_q * seq_kv);
-                Some(crate::FlexTensor::new(
-                    Bytes::from_elems(bias_data),
-                    Layout::contiguous(Shape::from(vec![batch, heads, seq_q, seq_kv])),
-                    burn_backend::DType::F32,
-                ))
-            } else {
-                None
-            };
+            let q = make_f32(&[batch, heads, seq_q, head_dim]);
+            let k = make_f32(&[batch, heads, seq_kv, head_dim]);
+            let v = make_f32(&[batch, heads, seq_kv, val_dim]);
+            let score_shape = [batch, heads, seq_q, seq_kv];
+            let mask = with_mask.then(|| make_bool_mask(&score_shape));
+            let bias = with_bias.then(|| make_f32(&score_shape));
 
             let flash = super::attention_flash(
                 q.clone(),
