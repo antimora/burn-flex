@@ -54,6 +54,11 @@ pub fn attention(
     attn_bias: Option<FlexTensor>,
     options: AttentionModuleOptions,
 ) -> FlexTensor {
+    debug_assert!(
+        key.layout().shape().num_dims() == 4,
+        "attention: key must be 4D, got {}D",
+        key.layout().shape().num_dims()
+    );
     let seq_kv = key.layout().shape()[2];
     if seq_kv <= NAIVE_SEQ_KV_THRESHOLD {
         return attention_naive(query, key, value, mask, attn_bias, options);
@@ -577,12 +582,12 @@ fn flash_attention_head<T: FlashGemm>(
 // Uses two large gemm calls per (batch, head) instead of many small tiled ones.
 // ============================================================================
 
-/// Naive attention: same computation as flash but without KV tiling.
+/// Naive attention: mathematically equivalent to flash but without KV tiling.
 ///
 /// Materializes the full [seq_q, seq_kv] score matrix, applies scale/softcap/mask/causal/bias,
 /// row-wise softmax, then a single output matmul. Two large gemm calls per (batch, head).
 ///
-/// Useful as a baseline for benchmarking against flash attention.
+/// Faster than flash for short sequences. Also useful as a benchmarking baseline.
 pub fn attention_naive(
     query: FlexTensor,
     key: FlexTensor,
@@ -1418,6 +1423,8 @@ mod tests {
             seq_kv: usize,
             head_dim: usize,
             val_dim: usize,
+            with_mask: bool,
+            with_bias: bool,
             options: AttentionModuleOptions,
             label: &str,
         ) {
@@ -1446,9 +1453,36 @@ mod tests {
                 burn_backend::DType::F32,
             );
 
-            let flash =
-                super::attention_flash(q.clone(), k.clone(), v.clone(), None, None, options);
-            let naive = super::attention_naive(q, k, v, None, None, options);
+            let mask_shape = Shape::from(vec![batch, heads, seq_q, seq_kv]);
+            let mask = if with_mask {
+                // ~30% of positions masked (every 3rd position)
+                let mask_len = batch * heads * seq_q * seq_kv;
+                let mask_data: Vec<u8> = (0..mask_len).map(|i| if i % 3 == 0 { 1 } else { 0 }).collect();
+                Some(crate::FlexTensor::new(
+                    Bytes::from_elems(mask_data),
+                    Layout::contiguous(mask_shape),
+                    burn_backend::DType::Bool(burn_std::BoolStore::Native),
+                ))
+            } else {
+                None
+            };
+
+            let bias = if with_bias {
+                let bias_data = make_f32(batch * heads * seq_q * seq_kv);
+                Some(crate::FlexTensor::new(
+                    Bytes::from_elems(bias_data),
+                    Layout::contiguous(Shape::from(vec![batch, heads, seq_q, seq_kv])),
+                    burn_backend::DType::F32,
+                ))
+            } else {
+                None
+            };
+
+            let flash = super::attention_flash(
+                q.clone(), k.clone(), v.clone(),
+                mask.clone(), bias.clone(), options,
+            );
+            let naive = super::attention_naive(q, k, v, mask, bias, options);
 
             let flash_data: &[f32] = flash.storage();
             let naive_data: &[f32] = naive.storage();
@@ -1480,19 +1514,25 @@ mod tests {
         };
 
         // Basic: single tile
-        run_both(1, 1, 4, 4, 8, 8, default, "basic_4x4");
+        run_both(1, 1, 4, 4, 8, 8, false, false, default, "basic_4x4");
         // Multi-head, multi-batch
-        run_both(2, 4, 8, 8, 16, 16, default, "multi_head_batch");
+        run_both(2, 4, 8, 8, 16, 16, false, false, default, "multi_head_batch");
         // Cross-attention
-        run_both(1, 2, 4, 32, 16, 16, default, "cross_attn");
-        // Multi-tile (seq_kv > TILE_KV=64)
-        run_both(1, 1, 4, 128, 16, 16, default, "multi_tile");
+        run_both(1, 2, 4, 32, 16, 16, false, false, default, "cross_attn");
+        // Multi-tile (seq_kv > TILE_KV)
+        run_both(1, 1, 4, 128, 16, 16, false, false, default, "multi_tile");
         // Causal
-        run_both(1, 2, 16, 16, 32, 32, causal, "causal");
+        run_both(1, 2, 16, 16, 32, 32, false, false, causal, "causal");
         // All options
-        run_both(2, 2, 16, 16, 32, 32, all_opts, "all_options");
+        run_both(2, 2, 16, 16, 32, 32, false, false, all_opts, "all_options");
         // Large multi-tile causal
-        run_both(1, 1, 32, 256, 64, 64, causal, "large_causal");
+        run_both(1, 1, 32, 256, 64, 64, false, false, causal, "large_causal");
+        // With bool mask
+        run_both(1, 2, 8, 8, 16, 16, true, false, default, "with_mask");
+        // With additive bias
+        run_both(1, 2, 8, 8, 16, 16, false, true, default, "with_bias");
+        // Mask + bias + causal (exercises all scoring paths)
+        run_both(2, 2, 16, 128, 32, 32, true, true, causal, "mask_bias_causal");
     }
 
     #[test]
