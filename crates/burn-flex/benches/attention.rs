@@ -75,7 +75,14 @@ macro_rules! bench_attention {
                 fn b1_h8_s64_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 8, 64, 64, 64);
                     bencher.bench(|| {
-                        attention(q.clone(), k.clone(), v.clone(), None, None, Default::default())
+                        attention(
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            None,
+                            Default::default(),
+                        )
                     });
                 }
 
@@ -83,7 +90,14 @@ macro_rules! bench_attention {
                 fn b1_h12_s128_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 128, 128, 64);
                     bencher.bench(|| {
-                        attention(q.clone(), k.clone(), v.clone(), None, None, Default::default())
+                        attention(
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            None,
+                            Default::default(),
+                        )
                     });
                 }
 
@@ -91,7 +105,14 @@ macro_rules! bench_attention {
                 fn b1_h12_s256_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 256, 256, 64);
                     bencher.bench(|| {
-                        attention(q.clone(), k.clone(), v.clone(), None, None, Default::default())
+                        attention(
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            None,
+                            Default::default(),
+                        )
                     });
                 }
 
@@ -99,7 +120,14 @@ macro_rules! bench_attention {
                 fn b1_h12_s512_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 512, 512, 64);
                     bencher.bench(|| {
-                        attention(q.clone(), k.clone(), v.clone(), None, None, Default::default())
+                        attention(
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            None,
+                            Default::default(),
+                        )
                     });
                 }
 
@@ -107,7 +135,14 @@ macro_rules! bench_attention {
                 fn b1_h32_s256_d128(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 32, 256, 256, 128);
                     bencher.bench(|| {
-                        attention(q.clone(), k.clone(), v.clone(), None, None, Default::default())
+                        attention(
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            None,
+                            Default::default(),
+                        )
                     });
                 }
 
@@ -115,7 +150,14 @@ macro_rules! bench_attention {
                 fn b4_h12_s128_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(4, 12, 128, 128, 64);
                     bencher.bench(|| {
-                        attention(q.clone(), k.clone(), v.clone(), None, None, Default::default())
+                        attention(
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            None,
+                            Default::default(),
+                        )
                     });
                 }
             }
@@ -166,8 +208,12 @@ macro_rules! bench_attention {
                     let bias = make_bias::<B>(1, 12, 128, 128);
                     bencher.bench(|| {
                         attention(
-                            q.clone(), k.clone(), v.clone(),
-                            None, Some(bias.clone()), Default::default(),
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            Some(bias.clone()),
+                            Default::default(),
                         )
                     });
                 }
@@ -178,8 +224,12 @@ macro_rules! bench_attention {
                     let bias = make_bias::<B>(1, 12, 256, 256);
                     bencher.bench(|| {
                         attention(
-                            q.clone(), k.clone(), v.clone(),
-                            None, Some(bias.clone()), Default::default(),
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            Some(bias.clone()),
+                            Default::default(),
                         )
                     });
                 }
@@ -193,7 +243,14 @@ macro_rules! bench_attention {
                 fn b1_h12_sq128_sk512_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 128, 512, 64);
                     bencher.bench(|| {
-                        attention(q.clone(), k.clone(), v.clone(), None, None, Default::default())
+                        attention(
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            None,
+                            Default::default(),
+                        )
                     });
                 }
 
@@ -201,7 +258,14 @@ macro_rules! bench_attention {
                 fn b1_h12_sq32_sk1024_d64(bencher: Bencher) {
                     let (q, k, v) = make_qkv::<B>(1, 12, 32, 1024, 64);
                     bencher.bench(|| {
-                        attention(q.clone(), k.clone(), v.clone(), None, None, Default::default())
+                        attention(
+                            q.clone(),
+                            k.clone(),
+                            v.clone(),
+                            None,
+                            None,
+                            Default::default(),
+                        )
                     });
                 }
             }
@@ -251,37 +315,49 @@ mod flex_naive {
         #[divan::bench]
         fn b1_h8_s64_d64(bencher: Bencher) {
             let (q, k, v) = make_qkv::<B>(1, 8, 64, 64, 64);
-            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default()));
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
         }
 
         #[divan::bench]
         fn b1_h12_s128_d64(bencher: Bencher) {
             let (q, k, v) = make_qkv::<B>(1, 12, 128, 128, 64);
-            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default()));
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
         }
 
         #[divan::bench]
         fn b1_h12_s256_d64(bencher: Bencher) {
             let (q, k, v) = make_qkv::<B>(1, 12, 256, 256, 64);
-            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default()));
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
         }
 
         #[divan::bench]
         fn b1_h12_s512_d64(bencher: Bencher) {
             let (q, k, v) = make_qkv::<B>(1, 12, 512, 512, 64);
-            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default()));
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
         }
 
         #[divan::bench]
         fn b1_h32_s256_d128(bencher: Bencher) {
             let (q, k, v) = make_qkv::<B>(1, 32, 256, 256, 128);
-            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default()));
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
         }
 
         #[divan::bench]
         fn b4_h12_s128_d64(bencher: Bencher) {
             let (q, k, v) = make_qkv::<B>(4, 12, 128, 128, 64);
-            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default()));
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
         }
     }
 
@@ -324,7 +400,13 @@ mod flex_naive {
             let (q, k, v) = make_qkv::<B>(1, 12, 128, 128, 64);
             let bias = make_bias::<B>(1, 12, 128, 128);
             bencher.bench(|| {
-                naive_attention(q.clone(), k.clone(), v.clone(), Some(bias.clone()), Default::default())
+                naive_attention(
+                    q.clone(),
+                    k.clone(),
+                    v.clone(),
+                    Some(bias.clone()),
+                    Default::default(),
+                )
             });
         }
 
@@ -333,7 +415,13 @@ mod flex_naive {
             let (q, k, v) = make_qkv::<B>(1, 12, 256, 256, 64);
             let bias = make_bias::<B>(1, 12, 256, 256);
             bencher.bench(|| {
-                naive_attention(q.clone(), k.clone(), v.clone(), Some(bias.clone()), Default::default())
+                naive_attention(
+                    q.clone(),
+                    k.clone(),
+                    v.clone(),
+                    Some(bias.clone()),
+                    Default::default(),
+                )
             });
         }
     }
@@ -345,13 +433,17 @@ mod flex_naive {
         #[divan::bench]
         fn b1_h12_sq128_sk512_d64(bencher: Bencher) {
             let (q, k, v) = make_qkv::<B>(1, 12, 128, 512, 64);
-            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default()));
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
         }
 
         #[divan::bench]
         fn b1_h12_sq32_sk1024_d64(bencher: Bencher) {
             let (q, k, v) = make_qkv::<B>(1, 12, 32, 1024, 64);
-            bencher.bench(|| naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default()));
+            bencher.bench(|| {
+                naive_attention(q.clone(), k.clone(), v.clone(), None, Default::default())
+            });
         }
     }
 }

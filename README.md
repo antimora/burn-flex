@@ -21,10 +21,10 @@ is thread-safe by design.
   when uniquely owned.
 - **Convolutions**: Unified 3D implementation with im2col + gemm. Conv1d/2d delegate to conv3d.
   Supports groups, dilation, padding.
-- **Attention**: Auto-selecting between two gemm-backed strategies based on sequence length.
-  Short sequences (seq_kv <= 512) use naive attention with two large gemm calls for lower overhead.
-  Long sequences use tiled flash attention with online softmax for O(TILE_KV) memory per row.
-  Both support causal masking, additive bias (ALiBi), softcap, custom scale, and cross-attention.
+- **Attention**: Auto-selecting between two gemm-backed strategies based on sequence length. Short
+  sequences (seq_kv <= 512) use naive attention with two large gemm calls for lower overhead. Long
+  sequences use tiled flash attention with online softmax for O(TILE_KV) memory per row. Both
+  support causal masking, additive bias (ALiBi), softcap, custom scale, and cross-attention.
 - **Pooling**: Max pool, avg pool, adaptive avg pool. All via unified 3D with backward pass support.
 - **Conv Transpose**: Scatter-based transposed convolutions for upsampling.
 - **Portable SIMD**: Uses [macerator](https://crates.io/crates/macerator) for automatic dispatch:
@@ -58,24 +58,24 @@ compatibility with Burn's backend test suite.
 Genuine algorithmic and library improvements (gemm over matrixmultiply, SIMD reductions, Arc COW for
 buffer reuse):
 
-| Category          | Speedup      | Highlights                              |
-| ----------------- | ------------ | --------------------------------------- |
-| Binary ops (f32)  | **2.4-3.6x** | 3x less memory allocation               |
-| Binary ops (i64)  | **1.5-6.4x** | Smaller tensors see bigger gains        |
-| Matmul (square)   | **1.1-3.4x** | Up to 2.3x at 1024x1024                 |
-| Matmul (batched)  | **1.8-3.2x** | 3.2x on multi-head attention shapes     |
-| Conv2d (3x3)      | **1.4-4.0x** | Larger kernels and batches benefit most |
-| Conv1d            | **4.3-9.6x** |                                         |
+| Category          | Speedup      | Highlights                                |
+| ----------------- | ------------ | ----------------------------------------- |
+| Binary ops (f32)  | **2.4-3.6x** | 3x less memory allocation                 |
+| Binary ops (i64)  | **1.5-6.4x** | Smaller tensors see bigger gains          |
+| Matmul (square)   | **1.1-3.4x** | Up to 2.3x at 1024x1024                   |
+| Matmul (batched)  | **1.8-3.2x** | 3.2x on multi-head attention shapes       |
+| Conv2d (3x3)      | **1.4-4.0x** | Larger kernels and batches benefit most   |
+| Conv1d            | **4.3-9.6x** |                                           |
 | Attention         | **1.2-2.4x** | Flash attention, 2-8.5x lower peak memory |
-| Pooling           | **1.2-3.1x** |                                         |
-| Interpolation     | **1.2-3.6x** | All modes: nearest, bilinear, bicubic   |
-| Reductions        | **1.6-5.1x** | Near-zero allocation for scalar results |
-| Cumulative ops    | **3.1-93x**  | 1D cumsum: 93x faster                   |
-| Gather/scatter    | **1.9-9.7x** |                                         |
-| Unary (tanh, sin) | **1.3-2.7x** |                                         |
-| Comparisons       | **2.1-3.9x** |                                         |
-| Int casting       | **5.0-7.6x** |                                         |
-| Quantize          | **1.6x**     | Fused 2-pass implementation             |
+| Pooling           | **1.2-3.1x** |                                           |
+| Interpolation     | **1.2-3.6x** | All modes: nearest, bilinear, bicubic     |
+| Reductions        | **1.6-5.1x** | Near-zero allocation for scalar results   |
+| Cumulative ops    | **3.1-93x**  | 1D cumsum: 93x faster                     |
+| Gather/scatter    | **1.9-9.7x** |                                           |
+| Unary (tanh, sin) | **1.3-2.7x** |                                           |
+| Comparisons       | **2.1-3.9x** |                                           |
+| Int casting       | **5.0-7.6x** |                                           |
+| Quantize          | **1.6x**     | Fused 2-pass implementation               |
 
 #### Structural Improvements
 

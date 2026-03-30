@@ -591,9 +591,17 @@ pub fn attention_naive(
 ) -> FlexTensor {
     let dtype = query.dtype();
     debug_assert_eq!(key.dtype(), dtype, "attention_naive: key dtype mismatch");
-    debug_assert_eq!(value.dtype(), dtype, "attention_naive: value dtype mismatch");
+    debug_assert_eq!(
+        value.dtype(),
+        dtype,
+        "attention_naive: value dtype mismatch"
+    );
     if let Some(ref b) = attn_bias {
-        debug_assert_eq!(b.dtype(), dtype, "attention_naive: attn_bias dtype mismatch");
+        debug_assert_eq!(
+            b.dtype(),
+            dtype,
+            "attention_naive: attn_bias dtype mismatch"
+        );
     }
 
     match dtype {
@@ -1386,9 +1394,7 @@ mod tests {
         ) {
             // Deterministic data: use index-based pattern
             let make_f32 = |len: usize| -> Vec<f32> {
-                (0..len)
-                    .map(|i| ((i % 997) as f32 / 997.0) - 0.5)
-                    .collect()
+                (0..len).map(|i| ((i % 997) as f32 / 997.0) - 0.5).collect()
             };
 
             let q_data = make_f32(batch * heads * seq_q * head_dim);
@@ -1416,7 +1422,11 @@ mod tests {
 
             let flash_data: &[f32] = flash.storage();
             let naive_data: &[f32] = naive.storage();
-            assert_eq!(flash_data.len(), naive_data.len(), "{label}: length mismatch");
+            assert_eq!(
+                flash_data.len(),
+                naive_data.len(),
+                "{label}: length mismatch"
+            );
 
             for (i, (&f, &n)) in flash_data.iter().zip(naive_data.iter()).enumerate() {
                 let diff = (f - n).abs();
