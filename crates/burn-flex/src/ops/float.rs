@@ -26,10 +26,18 @@ impl FloatTensorOps<Flex> for Flex {
         shape: Shape,
         distribution: Distribution,
         _device: &Device<Flex>,
+        dtype: FloatDType,
     ) -> FloatTensor<Flex> {
         let mut seed = crate::backend::SEED.lock().unwrap();
         let mut rng = seed.take().unwrap_or_else(crate::backend::get_seeded_rng);
-        let data = TensorData::random::<f32, _, _>(shape, distribution, &mut rng);
+        let data = match dtype {
+            FloatDType::F64 => TensorData::random::<f64, _, _>(shape, distribution, &mut rng),
+            FloatDType::F32 | FloatDType::Flex32 => {
+                TensorData::random::<f32, _, _>(shape, distribution, &mut rng)
+            }
+            FloatDType::F16 => TensorData::random::<f16, _, _>(shape, distribution, &mut rng),
+            FloatDType::BF16 => TensorData::random::<bf16, _, _>(shape, distribution, &mut rng),
+        };
         *seed = Some(rng);
         FlexTensor::from_data(data)
     }
@@ -1231,5 +1239,29 @@ mod tests {
         assert_eq!(idx, vec![0, 1]);
         let vals: Vec<f32> = values.into_data().to_vec().unwrap();
         assert_eq!(vals, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn test_float_random_f64() {
+        use burn_backend::{DType, FloatDType, ops::FloatTensorOps};
+
+        let shape = burn_std::Shape::from(vec![100]);
+        let dist = burn_backend::Distribution::Uniform(0.0, 1.0);
+        let device = crate::FlexDevice;
+        let t = Flex::float_random(shape, dist, &device, FloatDType::F64);
+        assert_eq!(t.dtype(), DType::F64);
+        let data: Vec<f64> = t.into_data().to_vec().unwrap();
+        assert!(data.iter().all(|&v| (0.0..=1.0).contains(&v)));
+    }
+
+    #[test]
+    fn test_float_random_f16() {
+        use burn_backend::{DType, FloatDType, ops::FloatTensorOps};
+
+        let shape = burn_std::Shape::from(vec![100]);
+        let dist = burn_backend::Distribution::Uniform(0.0, 1.0);
+        let device = crate::FlexDevice;
+        let t = Flex::float_random(shape, dist, &device, FloatDType::F16);
+        assert_eq!(t.dtype(), DType::F16);
     }
 }

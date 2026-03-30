@@ -1,5 +1,6 @@
 //! Gather and scatter operations for indexed tensor access.
 
+use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::{DType, Element};
@@ -10,6 +11,33 @@ use bytemuck::Pod;
 use rayon::prelude::*;
 
 use crate::{FlexTensor, Layout};
+
+/// Read indices from a tensor as i64. Zero-copy for i64 tensors.
+fn read_indices(tensor: &FlexTensor) -> Cow<'_, [i64]> {
+    match tensor.dtype() {
+        DType::I64 => Cow::Borrowed(tensor.storage::<i64>()),
+        DType::I32 => Cow::Owned(tensor.storage::<i32>().iter().map(|&v| v as i64).collect()),
+        DType::I16 => Cow::Owned(tensor.storage::<i16>().iter().map(|&v| v as i64).collect()),
+        DType::I8 => Cow::Owned(tensor.storage::<i8>().iter().map(|&v| v as i64).collect()),
+        DType::U64 => Cow::Owned(
+            tensor
+                .storage::<u64>()
+                .iter()
+                .map(|&v| {
+                    debug_assert!(
+                        v <= i64::MAX as u64,
+                        "read_indices: u64 index {v} exceeds i64::MAX"
+                    );
+                    v as i64
+                })
+                .collect(),
+        ),
+        DType::U32 => Cow::Owned(tensor.storage::<u32>().iter().map(|&v| v as i64).collect()),
+        DType::U16 => Cow::Owned(tensor.storage::<u16>().iter().map(|&v| v as i64).collect()),
+        DType::U8 => Cow::Owned(tensor.storage::<u8>().iter().map(|&v| v as i64).collect()),
+        other => panic!("read_indices: unsupported index dtype {:?}", other),
+    }
+}
 
 #[cold]
 #[inline(never)]
@@ -63,7 +91,7 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     }
 
     let tensor_data: &[E] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
 
     // Calculate strides for tensor (row-major)
     let tensor_strides: Vec<usize> = compute_strides(tensor_shape);
@@ -75,7 +103,7 @@ pub fn gather<E: Element + Pod + Default + Copy + Send + Sync>(
     if ndims == 2 {
         let result = gather_2d::<E>(
             tensor_data,
-            indices_data,
+            &indices_data,
             tensor_shape[0],
             tensor_shape[1],
             indices_shape[0],
@@ -277,7 +305,7 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
     }
 
     let tensor_data: &[E] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
     let value_data: &[E] = value.storage();
 
     let mut result: Vec<E> = tensor_data.to_vec();
@@ -291,7 +319,7 @@ pub fn scatter_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Se
     if ndims == 2 {
         scatter_add_2d(
             &mut result,
-            indices_data,
+            &indices_data,
             value_data,
             tensor_shape[0],
             tensor_shape[1],
@@ -386,7 +414,7 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
     );
 
     let tensor_data: &[E] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
     let num_indices = indices_data.len();
 
     // Build output shape: replace dim with num_indices
@@ -398,7 +426,7 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
     if ndims == 2 {
         let result = select_2d::<E>(
             tensor_data,
-            indices_data,
+            &indices_data,
             tensor_shape[0],
             tensor_shape[1],
             num_indices,
@@ -613,7 +641,7 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
     );
 
     let tensor_data: &[E] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
     let value_data: &[E] = value.storage();
     let num_indices = indices_data.len();
 
@@ -640,7 +668,7 @@ pub fn select_add<E: Element + Pod + Default + Copy + core::ops::AddAssign + Sen
     if ndims == 2 {
         select_add_2d(
             &mut result,
-            indices_data,
+            &indices_data,
             value_data,
             tensor_shape[0],
             tensor_shape[1],
@@ -845,7 +873,7 @@ pub fn scatter_or(
     }
 
     let tensor_data: &[u8] = tensor.storage();
-    let indices_data: &[i64] = indices.storage();
+    let indices_data = read_indices(&indices);
     let value_data: &[u8] = value.storage();
 
     let mut result: Vec<u8> = tensor_data.to_vec();
@@ -1033,5 +1061,28 @@ mod tests {
         let result = gather_i64(tensor, 0, indices);
         let data: Vec<i64> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![40, 10, 30]);
+    }
+
+    #[test]
+    fn test_gather_with_i32_indices() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], [4]));
+        let indices = FlexTensor::from_data(TensorData::new(vec![3i32, 0, 2], [3]));
+
+        let result = gather::<f32>(tensor, 0, indices);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![40.0, 10.0, 30.0]);
+    }
+
+    #[test]
+    fn test_select_with_i32_indices() {
+        let tensor = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0],
+            [3, 2],
+        ));
+        let indices = FlexTensor::from_data(TensorData::new(vec![2i32, 0], [2]));
+
+        let result = select::<f32>(tensor, 0, indices);
+        let data: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![5.0, 6.0, 1.0, 2.0]);
     }
 }

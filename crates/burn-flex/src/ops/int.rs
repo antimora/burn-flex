@@ -455,10 +455,20 @@ impl IntTensorOps<Flex> for Flex {
         shape: Shape,
         distribution: Distribution,
         _device: &Device<Flex>,
+        dtype: IntDType,
     ) -> IntTensor<Flex> {
         let mut seed = crate::backend::SEED.lock().unwrap();
         let mut rng = seed.take().unwrap_or_else(crate::backend::get_seeded_rng);
-        let data = TensorData::random::<i64, _, _>(shape, distribution, &mut rng);
+        let data = match dtype {
+            IntDType::I64 => TensorData::random::<i64, _, _>(shape, distribution, &mut rng),
+            IntDType::I32 => TensorData::random::<i32, _, _>(shape, distribution, &mut rng),
+            IntDType::I16 => TensorData::random::<i16, _, _>(shape, distribution, &mut rng),
+            IntDType::I8 => TensorData::random::<i8, _, _>(shape, distribution, &mut rng),
+            IntDType::U64 => TensorData::random::<u64, _, _>(shape, distribution, &mut rng),
+            IntDType::U32 => TensorData::random::<u32, _, _>(shape, distribution, &mut rng),
+            IntDType::U16 => TensorData::random::<u16, _, _>(shape, distribution, &mut rng),
+            IntDType::U8 => TensorData::random::<u8, _, _>(shape, distribution, &mut rng),
+        };
         *seed = Some(rng);
         FlexTensor::from_data(data)
     }
@@ -781,14 +791,27 @@ impl IntTensorOps<Flex> for Flex {
     fn int_mean(tensor: IntTensor<Flex>) -> IntTensor<Flex> {
         let n = tensor.layout().num_elements();
         assert!(n > 0, "int_mean: cannot take mean of empty tensor");
+        let dtype = tensor.dtype();
         let sum_result = crate::ops::reduce::sum(tensor);
-        let data: &[i64] = sum_result.storage();
-        let mean_val = data[0] / n as i64;
-        FlexTensor::new(
-            Bytes::from_elems(alloc::vec![mean_val]),
-            Layout::contiguous(Shape::from(alloc::vec![1])),
-            DType::I64,
-        )
+        // Compute in i64 to avoid truncation of n for small int types
+        macro_rules! compute_mean {
+            ($ty:ty) => {{
+                let data: &[$ty] = sum_result.storage();
+                let mean_val = (data[0] as i64 / n as i64) as $ty;
+                FlexTensor::new(
+                    Bytes::from_elems(alloc::vec![mean_val]),
+                    Layout::contiguous(Shape::from(alloc::vec![1])),
+                    dtype,
+                )
+            }};
+        }
+        match dtype {
+            DType::I64 => compute_mean!(i64),
+            DType::I32 => compute_mean!(i32),
+            DType::I16 => compute_mean!(i16),
+            DType::I8 => compute_mean!(i8),
+            other => panic!("int_mean: unsupported dtype {:?}", other),
+        }
     }
 
     fn int_max(tensor: IntTensor<Flex>) -> IntTensor<Flex> {
@@ -1280,5 +1303,42 @@ mod tests {
         let result = Flex::int_select_add(t, 0, indices, values);
         let data: Vec<u8> = result.into_data().to_vec().unwrap();
         assert_eq!(data, vec![11, 2, 23]);
+    }
+
+    #[test]
+    fn test_int_random_i32() {
+        use burn_backend::{DType, Distribution, ops::IntTensorOps};
+        use burn_std::{IntDType, Shape};
+
+        let shape = Shape::from(vec![100]);
+        let dist = Distribution::Uniform(0.0, 10.0);
+        let device = crate::FlexDevice;
+        let t = Flex::int_random(shape, dist, &device, IntDType::I32);
+        assert_eq!(t.dtype(), DType::I32);
+        let data: Vec<i32> = t.into_data().to_vec().unwrap();
+        assert!(data.iter().all(|&v| (0..=10).contains(&v)));
+    }
+
+    #[test]
+    fn test_int_random_u8() {
+        use burn_backend::{DType, Distribution, ops::IntTensorOps};
+        use burn_std::{IntDType, Shape};
+
+        let shape = Shape::from(vec![50]);
+        let dist = Distribution::Uniform(0.0, 100.0);
+        let device = crate::FlexDevice;
+        let t = Flex::int_random(shape, dist, &device, IntDType::U8);
+        assert_eq!(t.dtype(), DType::U8);
+    }
+
+    #[test]
+    fn test_int_mean_i32() {
+        use burn_backend::{DType, ops::IntTensorOps};
+
+        let t = FlexTensor::from_data(TensorData::new(vec![10i32, 20, 30], [3]));
+        let result = Flex::int_mean(t);
+        assert_eq!(result.dtype(), DType::I32);
+        let data: Vec<i32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![20]); // (10 + 20 + 30) / 3 = 20
     }
 }
