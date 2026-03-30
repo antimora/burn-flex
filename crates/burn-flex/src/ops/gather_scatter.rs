@@ -18,7 +18,14 @@ fn read_indices(tensor: &FlexTensor) -> Vec<i64> {
         DType::I32 => tensor.storage::<i32>().iter().map(|&v| v as i64).collect(),
         DType::I16 => tensor.storage::<i16>().iter().map(|&v| v as i64).collect(),
         DType::I8 => tensor.storage::<i8>().iter().map(|&v| v as i64).collect(),
-        DType::U64 => tensor.storage::<u64>().iter().map(|&v| v as i64).collect(),
+        DType::U64 => tensor
+            .storage::<u64>()
+            .iter()
+            .map(|&v| {
+                debug_assert!(v <= i64::MAX as u64, "read_indices: u64 index {v} exceeds i64::MAX");
+                v as i64
+            })
+            .collect(),
         DType::U32 => tensor.storage::<u32>().iter().map(|&v| v as i64).collect(),
         DType::U16 => tensor.storage::<u16>().iter().map(|&v| v as i64).collect(),
         DType::U8 => tensor.storage::<u8>().iter().map(|&v| v as i64).collect(),

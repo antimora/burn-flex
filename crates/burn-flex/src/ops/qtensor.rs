@@ -4,7 +4,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use burn_backend::{
-    DType, ExecutionError, TensorData, TensorMetadata,
+    DType, ExecutionError, FloatDType, TensorData, TensorMetadata,
     ops::{IntTensorOps, QTensorOps},
     quantization::{
         QuantLevel, QuantScheme, QuantStore, QuantizationParametersPrimitive, QuantizedBytes,
@@ -199,7 +199,7 @@ impl QTensorOps<Flex> for Flex {
 
     fn dequantize(
         tensor: QuantizedTensor<Flex>,
-        dtype: burn_backend::FloatDType,
+        dtype: FloatDType,
     ) -> FloatTensor<Flex> {
         let shape = tensor.tensor.shape();
         let qt = tensor.tensor.to_contiguous();
@@ -225,18 +225,18 @@ impl QTensorOps<Flex> for Flex {
 
         let layout = Layout::contiguous(shape);
         match dtype {
-            burn_backend::FloatDType::F32 | burn_backend::FloatDType::Flex32 => {
+            FloatDType::F32 | FloatDType::Flex32 => {
                 FlexTensor::new(Bytes::from_elems(dequantized), layout, DType::F32)
             }
-            burn_backend::FloatDType::F64 => {
+            FloatDType::F64 => {
                 let data: Vec<f64> = dequantized.iter().map(|&v| v as f64).collect();
                 FlexTensor::new(Bytes::from_elems(data), layout, DType::F64)
             }
-            burn_backend::FloatDType::F16 => {
+            FloatDType::F16 => {
                 let data: Vec<f16> = dequantized.iter().map(|&v| f16::from_f32(v)).collect();
                 FlexTensor::new(Bytes::from_elems(data), layout, DType::F16)
             }
-            burn_backend::FloatDType::BF16 => {
+            FloatDType::BF16 => {
                 let data: Vec<bf16> = dequantized.iter().map(|&v| bf16::from_f32(v)).collect();
                 FlexTensor::new(Bytes::from_elems(data), layout, DType::BF16)
             }
@@ -302,7 +302,7 @@ impl QTensorOps<Flex> for Flex {
             },
             QuantLevel::Block(_) => {
                 let scheme = tensor.scheme;
-                let float_tensor = Flex::dequantize(tensor, burn_backend::FloatDType::F32);
+                let float_tensor = Flex::dequantize(tensor, FloatDType::F32);
                 let result = crate::ops::gather_scatter::select::<f32>(float_tensor, dim, indices);
                 Flex::quantize_dynamic(result, &scheme)
             }
@@ -352,7 +352,7 @@ impl QTensorOps<Flex> for Flex {
             },
             QuantLevel::Block(_) => {
                 let scheme = tensor.scheme;
-                let float_tensor = Flex::dequantize(tensor, burn_backend::FloatDType::F32);
+                let float_tensor = Flex::dequantize(tensor, FloatDType::F32);
                 let result = crate::ops::gather_scatter::gather::<f32>(float_tensor, dim, indices);
                 Flex::quantize_dynamic(result, &scheme)
             }
@@ -375,7 +375,7 @@ fn block_safe_layout_op(
         },
         QuantLevel::Block(_) => {
             let scheme = qtensor.scheme;
-            let float_tensor = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+            let float_tensor = Flex::dequantize(qtensor, FloatDType::F32);
             let result = op(float_tensor);
             Flex::quantize_dynamic(result, &scheme)
         }
@@ -429,7 +429,7 @@ mod tests {
         assert_eq!(q_vals[5], 127);
 
         // Dequantize
-        let result = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(qtensor, FloatDType::F32);
         assert_eq!(result.shape().to_vec(), vec![2, 3]);
         assert_eq!(result.dtype(), DType::F32);
 
@@ -457,7 +457,7 @@ mod tests {
         };
 
         let qtensor = Flex::quantize(tensor, &scheme, qparams);
-        let result = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(qtensor, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
 
         for (orig, deq) in values.iter().zip(result_vals.iter()) {
@@ -482,7 +482,7 @@ mod tests {
         assert_eq!(qtensor.scales, vec![scale]);
 
         // Dequantize and check values
-        let float_tensor = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+        let float_tensor = Flex::dequantize(qtensor, FloatDType::F32);
         let result: &[f32] = float_tensor.storage();
         assert!((result[0]).abs() < 0.01); // 0 * scale ~ 0
         assert!((result[5] - 5.0).abs() < 0.05); // 127 * scale ~ 5.0
@@ -599,7 +599,7 @@ mod tests {
             expected_scale
         );
 
-        let result = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(qtensor, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
         for (orig, deq) in values.iter().zip(result_vals.iter()) {
             assert!((orig - deq).abs() < 0.1, "orig={orig}, dequantized={deq}");
@@ -632,7 +632,7 @@ mod tests {
         let qtensor = Flex::quantize(tensor, &scheme, qparams);
         assert_eq!(qtensor.scales.len(), 2);
 
-        let result = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(qtensor, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
 
         for (orig, deq) in values.iter().zip(result_vals.iter()) {
@@ -663,7 +663,7 @@ mod tests {
         assert!((qtensor.scales[0] - expected_scale_1).abs() < 1e-6);
         assert!((qtensor.scales[1] - expected_scale_2).abs() < 1e-6);
 
-        let result = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(qtensor, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
         for (orig, deq) in values.iter().zip(result_vals.iter()) {
             assert!((orig - deq).abs() < 0.1, "orig={orig}, dequantized={deq}");
@@ -692,7 +692,7 @@ mod tests {
             expected_scale
         );
 
-        let result = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(qtensor, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
         for (orig, deq) in values.iter().zip(result_vals.iter()) {
             assert!((orig - deq).abs() < 0.1, "orig={orig}, dequantized={deq}");
@@ -719,7 +719,7 @@ mod tests {
         let transposed = Flex::q_swap_dims(qtensor, 0, 1);
         assert_eq!(transposed.tensor.shape().to_vec(), vec![4, 2]);
 
-        let result = Flex::dequantize(transposed, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(transposed, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
 
         // Original [[1,2,3,4],[5,6,7,8]] transposed to [[1,5],[2,6],[3,7],[4,8]]
@@ -753,7 +753,7 @@ mod tests {
         let selected = Flex::q_select(qtensor, 0, indices);
         assert_eq!(selected.tensor.shape().to_vec(), vec![1, 4]);
 
-        let result = Flex::dequantize(selected, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(selected, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
         let expected = [10.0f32, 20.0, 30.0, 40.0];
         for (exp, deq) in expected.iter().zip(result_vals.iter()) {
@@ -845,7 +845,7 @@ mod tests {
         let flipped = Flex::q_flip(qtensor, &[0]);
         assert_eq!(flipped.tensor.shape().to_vec(), vec![2, 4]);
 
-        let result = Flex::dequantize(flipped, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(flipped, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
         let expected = [5.0f32, 6.0, 7.0, 8.0, 1.0, 2.0, 3.0, 4.0];
         for (exp, deq) in expected.iter().zip(result_vals.iter()) {
@@ -876,7 +876,7 @@ mod tests {
         assert_eq!(qtensor.tensor.dtype(), DType::I8);
 
         // Dequantize and verify round-trip accuracy
-        let result = Flex::dequantize(qtensor, burn_backend::FloatDType::F32);
+        let result = Flex::dequantize(qtensor, FloatDType::F32);
         let result_vals: &[f32] = result.storage();
         let expected = [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0];
         for (exp, deq) in expected.iter().zip(result_vals.iter()) {

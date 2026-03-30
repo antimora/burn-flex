@@ -793,10 +793,11 @@ impl IntTensorOps<Flex> for Flex {
         assert!(n > 0, "int_mean: cannot take mean of empty tensor");
         let dtype = tensor.dtype();
         let sum_result = crate::ops::reduce::sum(tensor);
+        // Compute in i64 to avoid truncation of n for small int types
         macro_rules! compute_mean {
             ($ty:ty) => {{
                 let data: &[$ty] = sum_result.storage();
-                let mean_val = data[0] / n as $ty;
+                let mean_val = (data[0] as i64 / n as i64) as $ty;
                 FlexTensor::new(
                     Bytes::from_elems(alloc::vec![mean_val]),
                     Layout::contiguous(Shape::from(alloc::vec![1])),
@@ -809,10 +810,6 @@ impl IntTensorOps<Flex> for Flex {
             DType::I32 => compute_mean!(i32),
             DType::I16 => compute_mean!(i16),
             DType::I8 => compute_mean!(i8),
-            DType::U64 => compute_mean!(u64),
-            DType::U32 => compute_mean!(u32),
-            DType::U16 => compute_mean!(u16),
-            DType::U8 => compute_mean!(u8),
             other => panic!("int_mean: unsupported dtype {:?}", other),
         }
     }
