@@ -1142,7 +1142,10 @@ pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 /// Max along a dimension with indices, returning (values, indices) in a single pass.
 pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let dim_len = tensor.layout().shape()[dim];
-    assert!(dim_len > 0, "max_dim_with_indices: dimension {dim} has size 0");
+    assert!(
+        dim_len > 0,
+        "max_dim_with_indices: dimension {dim} has size 0"
+    );
     assert_dim_fits_isize(dim_len, dim);
     match tensor.dtype() {
         DType::F32 => max_dim_with_indices_float_impl::<f32>(&tensor, dim),
@@ -1170,7 +1173,10 @@ pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
 /// Min along a dimension with indices, returning (values, indices) in a single pass.
 pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let dim_len = tensor.layout().shape()[dim];
-    assert!(dim_len > 0, "min_dim_with_indices: dimension {dim} has size 0");
+    assert!(
+        dim_len > 0,
+        "min_dim_with_indices: dimension {dim} has size 0"
+    );
     assert_dim_fits_isize(dim_len, dim);
     match tensor.dtype() {
         DType::F32 => min_dim_with_indices_float_impl::<f32>(&tensor, dim),
