@@ -70,10 +70,10 @@ ndarray's vectorized internals.
 
 ### Transposed (i64)
 
-| Operation | Size      | Flex    | NdArray | Speedup  |
-| --------- | --------- | ------- | ------- | -------- |
-| int_add   | 256x256   | 58 us   | 49 us   | 0.85x    |
-| int_add   | 1024x1024 | 1.41 ms | 1.07 ms | 0.76x    |
+| Operation | Size      | Flex    | NdArray | Speedup |
+| --------- | --------- | ------- | ------- | ------- |
+| int_add   | 256x256   | 58 us   | 49 us   | 0.85x   |
+| int_add   | 1024x1024 | 1.41 ms | 1.07 ms | 0.76x   |
 
 ---
 
@@ -243,7 +243,8 @@ contiguous chunks directly.
 | 64K  | 8.9 us | 45.4 us | **5.1x** | 100 B    | 524 KB      |
 | 1M   | 142 us | 697 us  | **4.9x** | 100 B    | 8.4 MB      |
 
-Flex: zero-alloc SIMD reduce via macerator `VOrd`+`ReduceMax`. NdArray: allocates a copy via `into_owned`.
+Flex: zero-alloc SIMD reduce via macerator `VOrd`+`ReduceMax`. NdArray: allocates a copy via
+`into_owned`.
 
 ### Full Tensor Min
 
@@ -313,14 +314,14 @@ Flex: zero-alloc single-pass on i64 data. NdArray: reshape + max_dim + alloc.
 
 ### Cumsum
 
-| Shape     | Dim | Flex     | NdArray | Speedup  |
-| --------- | --- | -------- | ------- | -------- |
-| 1K        | 0   | 829 ns   | 65.8 us | **~79x** |
-| 64K       | 0   | 44.7 us  | 4.21 ms | **~94x** |
-| 1M        | 0   | 704 us   | 68.5 ms | **~97x** |
-| 256x256   | 0   | 11.2 us  | 37.7 us | **3.4x** |
-| 256x256   | 1   | 42.1 us  | 224 us  | **5.3x** |
-| 1024x1024 | 1   | 693 us   | 5.6 ms  | **8.1x** |
+| Shape     | Dim | Flex    | NdArray | Speedup  |
+| --------- | --- | ------- | ------- | -------- |
+| 1K        | 0   | 829 ns  | 65.8 us | **~79x** |
+| 64K       | 0   | 44.7 us | 4.21 ms | **~94x** |
+| 1M        | 0   | 704 us  | 68.5 ms | **~97x** |
+| 256x256   | 0   | 11.2 us | 37.7 us | **3.4x** |
+| 256x256   | 1   | 42.1 us | 224 us  | **5.3x** |
+| 1024x1024 | 1   | 693 us  | 5.6 ms  | **8.1x** |
 
 ### Cumprod
 
@@ -331,26 +332,26 @@ Flex: zero-alloc single-pass on i64 data. NdArray: reshape + max_dim + alloc.
 
 ### Cummin
 
-| Shape     | Dim | Flex     | NdArray | Speedup  |
-| --------- | --- | -------- | ------- | -------- |
-| 1K        | 0   | 1.85 us  | 65.8 us | **~36x** |
-| 256x256   | 1   | 103 us   | 199 us  | **1.9x** |
-| 1024x1024 | 1   | 1.66 ms  | 5.54 ms | **3.3x** |
+| Shape     | Dim | Flex    | NdArray | Speedup  |
+| --------- | --- | ------- | ------- | -------- |
+| 1K        | 0   | 1.85 us | 65.8 us | **~36x** |
+| 256x256   | 1   | 103 us  | 199 us  | **1.9x** |
+| 1024x1024 | 1   | 1.66 ms | 5.54 ms | **3.3x** |
 
 ### Cummax
 
-| Shape     | Dim | Flex     | NdArray | Speedup  |
-| --------- | --- | -------- | ------- | -------- |
-| 1K        | 0   | 1.81 us  | 66.6 us | **~37x** |
-| 256x256   | 1   | 101 us   | 125 us  | **1.2x** |
-| 1024x1024 | 1   | 1.68 ms  | 3.72 ms | **2.2x** |
+| Shape     | Dim | Flex    | NdArray | Speedup  |
+| --------- | --- | ------- | ------- | -------- |
+| 1K        | 0   | 1.81 us | 66.6 us | **~37x** |
+| 256x256   | 1   | 101 us  | 125 us  | **1.2x** |
+| 1024x1024 | 1   | 1.68 ms | 3.72 ms | **2.2x** |
 
 ### 3D Cumsum (Batched)
 
-| Shape    | Dim | Flex     | NdArray | Speedup  |
-| -------- | --- | -------- | ------- | -------- |
-| 32x64x64 | 1   | 23.3 us  | 89.9 us | **3.9x** |
-| 32x64x64 | 2   | 67.1 us  | 239 us  | **3.6x** |
+| Shape    | Dim | Flex    | NdArray | Speedup  |
+| -------- | --- | ------- | ------- | -------- |
+| 32x64x64 | 1   | 23.3 us | 89.9 us | **3.9x** |
+| 32x64x64 | 2   | 67.1 us | 239 us  | **3.6x** |
 
 ---
 
@@ -430,10 +431,10 @@ Flex: select directly on u8 data. NdArray default: bool->int->select->compare.
 
 ### Transposed (Non-contiguous)
 
-| Operation | Size      | Flex    | NdArray | Speedup |
-| --------- | --------- | ------- | ------- | ------- |
+| Operation | Size      | Flex    | NdArray | Speedup  |
+| --------- | --------- | ------- | ------- | -------- |
 | exp       | 256x256   | 79 us   | 83 us   | **1.1x** |
-| exp       | 1024x1024 | 1.30 ms | 1.32 ms | 1.0x    |
+| exp       | 1024x1024 | 1.30 ms | 1.32 ms | 1.0x     |
 
 ---
 
@@ -458,10 +459,10 @@ Flex: select directly on u8 data. NdArray default: bool->int->select->compare.
 
 ### Transposed Comparisons
 
-| Operation | Size      | Flex   | NdArray | Speedup  |
-| --------- | --------- | ------ | ------- | -------- |
-| greater   | 256x256   | 52 us  | 43 us   | 0.83x    |
-| greater   | 1024x1024 | 993 us | 939 us  | 0.94x    |
+| Operation | Size      | Flex   | NdArray | Speedup |
+| --------- | --------- | ------ | ------- | ------- |
+| greater   | 256x256   | 52 us  | 43 us   | 0.83x   |
+| greater   | 1024x1024 | 993 us | 939 us  | 0.94x   |
 
 ### Broadcast Comparisons
 
@@ -736,48 +737,56 @@ intermediate tensor allocations for coordinate transforms and interpolation.
 
 ## Attention (Scaled Dot-Product)
 
-Fused attention kernel: combines scale + softcap + masking + bias + softmax into a single pass
-over the scores matrix, reducing intermediate allocations from ~12 (NdArray fallback) to 3.
+Flex auto-selects between two gemm-backed strategies:
+
+- **Naive** (seq_kv <= 512): Materializes full [seq_q, seq_kv] score matrix. Two large gemm calls
+  per (batch, head) amortize dispatch overhead better than many small tiled calls.
+- **Flash** (seq_kv > 512): Tiles over KV dimension with online softmax. O(seq_q _ TILE_KV) memory
+  per head instead of O(seq_q _ seq_kv).
+
+Both fuse scale + softcap + masking + bias + softmax into a single pass, reducing intermediate
+allocations from ~12 (NdArray fallback) to 3.
 
 ### Self-Attention
 
-| Config | Flex | NdArray | Speedup | Flex Alloc | NdArray Alloc |
-| ------ | ---- | ------- | ------- | ---------- | ------------- |
-| h8, s64, d64    | 470 us  | 460 us  | ~1.0x    | 7.9 MB  | 12.7 MB |
-| h12, s128, d64  | 1.08 ms | 1.51 ms | **1.4x** | 7.9 MB  | 12.7 MB |
-| h12, s256, d64  | 2.68 ms | 5.90 ms | **2.2x** | 7.9 MB  | 12.7 MB |
-| h12, s512, d64  | 8.84 ms | 21.8 ms | **2.5x** | 7.9 MB  | 15.8 MB |
-| h32, s256, d128 | 9.03 ms | 17.4 ms | **1.9x** | 7.9 MB  | 15.8 MB |
-| b4, h12, s128   | 3.35 ms | 5.26 ms | **1.6x** | 7.9 MB  | 12.7 MB |
+| Config          | Flex (auto) | Flex naive | Flex flash | NdArray | Speedup vs NdArray |
+| --------------- | ----------- | ---------- | ---------- | ------- | ------------------ |
+| h8, s64, d64    | 189 us      | 189 us     | 191 us     | 446 us  | **2.4x**           |
+| h12, s128, d64  | 1.04 ms     | 1.04 ms    | 1.12 ms    | 1.57 ms | **1.5x**           |
+| h12, s256, d64  | 3.95 ms     | 3.95 ms    | 4.29 ms    | 6.27 ms | **1.6x**           |
+| h12, s512, d64  | 15.6 ms     | 15.6 ms    | 16.8 ms    | 23.3 ms | **1.5x**           |
+| h32, s256, d128 | 16.2 ms     | 16.2 ms    | 17.6 ms    | 18.1 ms | **1.1x**           |
+| b4, h12, s128   | 4.25 ms     | 4.25 ms    | 4.57 ms    | 5.66 ms | **1.3x**           |
+
+For seq_kv <= 512, auto-select picks naive (5-10% faster than flash at these lengths).
 
 ### Causal Attention
 
-| Config | Flex | NdArray | Speedup |
-| ------ | ---- | ------- | ------- |
-| h12, s128, d64 | 1.21 ms | 1.63 ms | **1.3x** |
-| h12, s256, d64 | 3.28 ms | 6.32 ms | **1.9x** |
-| h12, s512, d64 | 10.6 ms | 23.2 ms | **2.2x** |
+| Config         | Flex (auto) | NdArray | Speedup  |
+| -------------- | ----------- | ------- | -------- |
+| h12, s128, d64 | 1.13 ms     | 1.73 ms | **1.5x** |
+| h12, s256, d64 | 4.00 ms     | 6.70 ms | **1.7x** |
+| h12, s512, d64 | 15.7 ms     | 24.8 ms | **1.6x** |
 
 NdArray builds an explicit causal mask tensor (arange + compare + expand), adding ~3 extra
 allocations. Flex applies the mask inline during the fused softmax pass.
 
 ### With Additive Bias (ALiBi-style)
 
-| Config | Flex | NdArray | Speedup |
-| ------ | ---- | ------- | ------- |
-| h12, s128, d64 | 1.09 ms | 1.54 ms | **1.4x** |
-| h12, s256, d64 | 2.70 ms | 5.96 ms | **2.2x** |
+| Config         | Flex (auto) | NdArray | Speedup  |
+| -------------- | ----------- | ------- | -------- |
+| h12, s128, d64 | 1.10 ms     | 1.60 ms | **1.5x** |
+| h12, s256, d64 | 4.20 ms     | 6.31 ms | **1.5x** |
 
 ### Cross-Attention (seq_q != seq_k)
 
-| Config | Flex | NdArray | Speedup |
-| ------ | ---- | ------- | ------- |
-| sq128, sk512, d64 | 3.34 ms | 6.03 ms | **1.8x** |
-| sq32, sk1024, d64 | 3.62 ms | 3.59 ms | ~1.0x   |
+| Config            | Flex (auto) | NdArray | Speedup  |
+| ----------------- | ----------- | ------- | -------- |
+| sq128, sk512, d64 | 4.01 ms     | 6.37 ms | **1.6x** |
+| sq32, sk1024, d64 | 2.22 ms     | 3.88 ms | **1.7x** |
 
 Speedup scales with sequence length: the fused kernel avoids allocating and iterating over
-increasingly large intermediate score matrices. For small score matrices (sq32) the matmul
-dominates and both backends are similar.
+increasingly large intermediate score matrices.
 
 ---
 
