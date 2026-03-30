@@ -22,7 +22,10 @@ fn read_indices(tensor: &FlexTensor) -> Vec<i64> {
             .storage::<u64>()
             .iter()
             .map(|&v| {
-                debug_assert!(v <= i64::MAX as u64, "read_indices: u64 index {v} exceeds i64::MAX");
+                debug_assert!(
+                    v <= i64::MAX as u64,
+                    "read_indices: u64 index {v} exceeds i64::MAX"
+                );
                 v as i64
             })
             .collect(),

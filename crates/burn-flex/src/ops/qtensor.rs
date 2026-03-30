@@ -197,10 +197,7 @@ impl QTensorOps<Flex> for Flex {
         }
     }
 
-    fn dequantize(
-        tensor: QuantizedTensor<Flex>,
-        dtype: FloatDType,
-    ) -> FloatTensor<Flex> {
+    fn dequantize(tensor: QuantizedTensor<Flex>, dtype: FloatDType) -> FloatTensor<Flex> {
         let shape = tensor.tensor.shape();
         let qt = tensor.tensor.to_contiguous();
         let q_data: &[i8] = qt.storage();
