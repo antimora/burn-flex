@@ -233,6 +233,27 @@ impl FlexTensor {
         Self::empty(shape, dtype)
     }
 
+    /// Create a tensor filled with `n` copies of a typed value.
+    pub fn filled_typed<E: bytemuck::Pod + Send + Sync>(
+        shape: Shape,
+        dtype: DType,
+        value: E,
+    ) -> Self {
+        debug_assert_eq!(
+            dtype_size(dtype),
+            core::mem::size_of::<E>(),
+            "filled_typed: dtype size mismatch"
+        );
+        let n = shape.num_elements();
+        let data = alloc::vec![value; n];
+        let bytes = Bytes::from_elems(data);
+        Self {
+            data: Arc::new(bytes),
+            layout: Layout::contiguous(shape),
+            dtype,
+        }
+    }
+
     /// Copy to contiguous layout if needed.
     pub fn to_contiguous(&self) -> Self {
         if self.is_contiguous() && self.layout.start_offset() == 0 {
@@ -376,7 +397,7 @@ impl TensorMetadata for FlexTensor {
 }
 
 /// Get the size in bytes for a dtype element.
-fn dtype_size(dtype: DType) -> usize {
+pub(crate) fn dtype_size(dtype: DType) -> usize {
     match dtype {
         DType::F64 | DType::I64 | DType::U64 => 8,
         DType::F32 | DType::I32 | DType::U32 => 4,

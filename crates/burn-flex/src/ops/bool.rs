@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::{
     DType, ExecutionError, TensorData,
-    ops::BoolTensorOps,
+    ops::{BoolTensorOps, IntTensorOps},
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
 use burn_std::{Bytes, FloatDType, IntDType, Shape, Slice, bf16, f16};
@@ -384,6 +384,52 @@ impl BoolTensorOps<Flex> for Flex {
             }
         }
         result
+    }
+
+    fn bool_transpose(tensor: BoolTensor<Flex>) -> BoolTensor<Flex> {
+        let ndims = tensor.layout().num_dims();
+        if ndims < 2 {
+            return tensor;
+        }
+        tensor.transpose(ndims - 2, ndims - 1)
+    }
+
+    fn bool_repeat_dim(tensor: BoolTensor<Flex>, dim: usize, times: usize) -> BoolTensor<Flex> {
+        crate::ops::repeat_dim::repeat_dim(tensor, dim, times)
+    }
+
+    async fn bool_argwhere(tensor: BoolTensor<Flex>, out_dtype: IntDType) -> IntTensor<Flex> {
+        let tensor = tensor.to_contiguous();
+        let shape = tensor.layout().shape().clone();
+        let ndims = shape.num_dims();
+        let data: &[u8] = tensor.storage();
+        let n = shape.num_elements();
+
+        let count = data[..n].iter().filter(|&&v| v != 0).count();
+        let mut coords: Vec<isize> = Vec::with_capacity(count * ndims);
+        let strides = crate::layout::contiguous_strides_usize(&shape);
+
+        for (flat_idx, &val) in data[..n].iter().enumerate() {
+            if val != 0 {
+                let mut remaining = flat_idx;
+                for &s in &strides {
+                    coords.push((remaining / s) as isize);
+                    remaining %= s;
+                }
+            }
+        }
+
+        let out_shape = Shape::from(vec![count, ndims]);
+        let result = FlexTensor::new(
+            Bytes::from_elems(coords),
+            Layout::contiguous(out_shape),
+            crate::ops::INDEX_DTYPE,
+        );
+        if result.dtype() != DType::from(out_dtype) {
+            Flex::int_cast(result, out_dtype)
+        } else {
+            result
+        }
     }
 }
 

@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 use burn_backend::{
-    DType, Distribution, ExecutionError, FloatDType, Scalar, TensorData,
+    DType, Distribution, ExecutionError, FloatDType, Scalar, TensorData, TensorMetadata,
     ops::IntTensorOps,
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
@@ -870,6 +870,157 @@ impl IntTensorOps<Flex> for Flex {
 
     fn int_powi(lhs: IntTensor<Flex>, rhs: IntTensor<Flex>) -> IntTensor<Flex> {
         int_binary_op(lhs, rhs, |a, b| a.wrapping_pow(b as u32))
+    }
+
+    fn int_zeros(shape: Shape, _device: &Device<Flex>, dtype: IntDType) -> IntTensor<Flex> {
+        FlexTensor::zeros(shape, dtype.into())
+    }
+
+    fn int_ones(shape: Shape, _device: &Device<Flex>, dtype: IntDType) -> IntTensor<Flex> {
+        let dt: DType = dtype.into();
+        match dt {
+            DType::I64 => FlexTensor::filled_typed(shape, dt, 1i64),
+            DType::I32 => FlexTensor::filled_typed(shape, dt, 1i32),
+            DType::I16 => FlexTensor::filled_typed(shape, dt, 1i16),
+            DType::I8 => FlexTensor::filled_typed(shape, dt, 1i8),
+            DType::U64 => FlexTensor::filled_typed(shape, dt, 1u64),
+            DType::U32 => FlexTensor::filled_typed(shape, dt, 1u32),
+            DType::U16 => FlexTensor::filled_typed(shape, dt, 1u16),
+            DType::U8 => FlexTensor::filled_typed(shape, dt, 1u8),
+            _ => unreachable!(),
+        }
+    }
+
+    fn int_full(
+        shape: Shape,
+        fill_value: burn_backend::Scalar,
+        _device: &Device<Flex>,
+        dtype: IntDType,
+    ) -> IntTensor<Flex> {
+        let dt: DType = dtype.into();
+        let v = fill_value.to_i64().unwrap();
+        match dt {
+            DType::I64 => FlexTensor::filled_typed(shape, dt, v),
+            DType::I32 => FlexTensor::filled_typed(shape, dt, v as i32),
+            DType::I16 => FlexTensor::filled_typed(shape, dt, v as i16),
+            DType::I8 => FlexTensor::filled_typed(shape, dt, v as i8),
+            DType::U64 => FlexTensor::filled_typed(shape, dt, v as u64),
+            DType::U32 => FlexTensor::filled_typed(shape, dt, v as u32),
+            DType::U16 => FlexTensor::filled_typed(shape, dt, v as u16),
+            DType::U8 => FlexTensor::filled_typed(shape, dt, v as u8),
+            _ => unreachable!(),
+        }
+    }
+
+    fn int_transpose(tensor: IntTensor<Flex>) -> IntTensor<Flex> {
+        let ndims = tensor.layout().num_dims();
+        if ndims < 2 {
+            return tensor;
+        }
+        tensor.transpose(ndims - 2, ndims - 1)
+    }
+
+    fn int_repeat_dim(tensor: IntTensor<Flex>, dim: usize, times: usize) -> IntTensor<Flex> {
+        crate::ops::repeat_dim::repeat_dim(tensor, dim, times)
+    }
+
+    fn int_not_equal(
+        lhs: IntTensor<Flex>,
+        rhs: IntTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
+        crate::ops::comparison::int_not_equal(lhs, rhs)
+    }
+
+    fn int_not_equal_elem(
+        lhs: IntTensor<Flex>,
+        rhs: burn_backend::Scalar,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
+        let (i, u) = scalar_to_int_pair(lhs.dtype(), &rhs);
+        crate::ops::comparison::int_not_equal_elem(lhs, i, u)
+    }
+
+    fn int_sort(tensor: IntTensor<Flex>, dim: usize, descending: bool) -> IntTensor<Flex> {
+        crate::ops::sort::sort(tensor, dim, descending)
+    }
+
+    fn int_sort_with_indices(
+        tensor: IntTensor<Flex>,
+        dim: usize,
+        descending: bool,
+    ) -> (IntTensor<Flex>, IntTensor<Flex>) {
+        crate::ops::sort::sort_with_indices(tensor, dim, descending)
+    }
+
+    fn int_argsort(tensor: IntTensor<Flex>, dim: usize, descending: bool) -> IntTensor<Flex> {
+        crate::ops::sort::argsort(tensor, dim, descending)
+    }
+
+    fn int_powi_scalar(lhs: IntTensor<Flex>, rhs: burn_backend::Scalar) -> IntTensor<Flex> {
+        use num_traits::ToPrimitive;
+        match rhs.to_i64().unwrap() {
+            0 => Self::int_ones(lhs.shape(), &Default::default(), lhs.dtype().into()),
+            1 => lhs,
+            2 => Self::int_mul(lhs.clone(), lhs),
+            _ => Self::int_powi_scalar_impl(lhs, rhs),
+        }
+    }
+
+    fn int_powi_scalar_impl(lhs: IntTensor<Flex>, rhs: burn_backend::Scalar) -> IntTensor<Flex> {
+        use num_traits::ToPrimitive;
+        let exp = rhs.to_i64().unwrap() as u32;
+        if lhs.dtype() == DType::U64 {
+            return scalar_op_typed(lhs, exp as u64, move |x: u64, _| x.wrapping_pow(exp));
+        }
+        int_scalar_op(lhs, exp as i64, move |x, _| x.wrapping_pow(exp))
+    }
+
+    fn int_max_abs(tensor: IntTensor<Flex>) -> IntTensor<Flex> {
+        let abs = Self::int_abs(tensor);
+        crate::ops::reduce::max(abs)
+    }
+
+    fn int_max_abs_dim(tensor: IntTensor<Flex>, dim: usize) -> IntTensor<Flex> {
+        let abs = Self::int_abs(tensor);
+        crate::ops::reduce::max_dim(abs, dim)
+    }
+
+    fn int_arange(
+        range: core::ops::Range<i64>,
+        _device: &Device<Flex>,
+        dtype: IntDType,
+    ) -> IntTensor<Flex> {
+        Self::int_arange_step(range, 1, &Default::default(), dtype)
+    }
+
+    fn int_arange_step(
+        range: core::ops::Range<i64>,
+        step: usize,
+        _device: &Device<Flex>,
+        dtype: IntDType,
+    ) -> IntTensor<Flex> {
+        let dt: DType = dtype.into();
+
+        macro_rules! arange_typed {
+            ($ty:ty) => {{
+                let data: Vec<$ty> = range.step_by(step).map(|v| v as $ty).collect();
+                let shape = Shape::from(alloc::vec![data.len()]);
+                FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), dt)
+            }};
+        }
+
+        match dt {
+            DType::I64 => arange_typed!(i64),
+            DType::I32 => arange_typed!(i32),
+            DType::I16 => arange_typed!(i16),
+            DType::I8 => arange_typed!(i8),
+            DType::U64 => arange_typed!(u64),
+            DType::U32 => arange_typed!(u32),
+            DType::U16 => arange_typed!(u16),
+            DType::U8 => arange_typed!(u8),
+            _ => unreachable!(),
+        }
     }
 }
 

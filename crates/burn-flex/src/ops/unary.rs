@@ -7,6 +7,44 @@ use burn_std::{Bytes, bf16, f16};
 use crate::layout::StridedBlocks;
 use crate::{FlexTensor, Layout};
 
+/// Apply a float predicate element-wise, producing a boolean tensor.
+pub fn float_predicate<F32P, F64P>(tensor: FlexTensor, f32_pred: F32P, f64_pred: F64P) -> FlexTensor
+where
+    F32P: Fn(f32) -> bool + Copy,
+    F64P: Fn(f64) -> bool + Copy,
+{
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape().clone();
+    let n = shape.num_elements();
+
+    let result: Vec<u8> = match tensor.dtype() {
+        DType::F32 => {
+            let s: &[f32] = tensor.storage();
+            s[..n].iter().map(|&x| f32_pred(x) as u8).collect()
+        }
+        DType::F64 => {
+            let s: &[f64] = tensor.storage();
+            s[..n].iter().map(|&x| f64_pred(x) as u8).collect()
+        }
+        DType::F16 => {
+            let s: &[f16] = tensor.storage();
+            s[..n].iter().map(|&x| f32_pred(x.to_f32()) as u8).collect()
+        }
+        DType::BF16 => {
+            let s: &[bf16] = tensor.storage();
+            s[..n].iter().map(|&x| f32_pred(x.to_f32()) as u8).collect()
+        }
+        dt => panic!("float_predicate: unsupported dtype {:?}", dt),
+    };
+
+    let bytes = Bytes::from_elems(result);
+    FlexTensor::new(
+        bytes,
+        Layout::contiguous(shape),
+        DType::Bool(burn_std::BoolStore::Native),
+    )
+}
+
 /// Apply a unary operation element-wise to a tensor.
 pub fn unary_op<F32Op, F64Op>(tensor: FlexTensor, f32_op: F32Op, f64_op: F64Op) -> FlexTensor
 where

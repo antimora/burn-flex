@@ -26,6 +26,8 @@ Do not start new feature work without confirming the PR/merge status first.
 - Use `tensor.storage::<f32>()` not `bytemuck::cast_slice(tensor.data())`
 - Check `layout().contiguous_offsets()` for fast-path decisions
 - For in-place ops, check `Some((0, end))` pattern (contiguous at offset 0)
+- Index-producing ops must respect `out_dtype`/`indices_dtype` parameters. Use `isize` +
+  `INDEX_DTYPE` internally, then `int_cast` to requested dtype. Never hardcode `i64`.
 
 ## Testing
 

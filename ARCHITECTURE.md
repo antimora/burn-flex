@@ -25,6 +25,10 @@ production. This includes:
 - **Input validation**: Hard assertions for invalid pooling parameters (zero kernel/stride) and
   zero-sized reduce dimensions, preventing undefined behavior on malformed inputs
 - **Negative index detection**: Debug assertions on gather/scatter index conversions
+- **Index dtype correctness**: Index-producing ops (argmax, argmin, argsort, argwhere,
+  sort_with_indices) must respect `out_dtype`/`indices_dtype` parameters. Internally use
+  `isize` + `INDEX_DTYPE` for platform portability, then cast to the requested dtype via
+  `int_cast` if needed. Never hardcode `i64` for index outputs as it breaks on 32-bit targets.
 
 ## Target Platform
 

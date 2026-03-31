@@ -741,8 +741,8 @@ Flex auto-selects between two gemm-backed strategies:
 
 - **Naive** (score matrix <= 256K elements): Materializes full [seq_q, seq_kv] score matrix. Two
   large gemm calls per (batch, head) amortize dispatch overhead better than many small tiled calls.
-- **Flash** (score matrix > 256K elements): Tiles over KV dimension with online softmax. `O(seq_q * TILE_KV)` memory
-  per head instead of `O(seq_q * seq_kv)`.
+- **Flash** (score matrix > 256K elements): Tiles over KV dimension with online softmax.
+  `O(seq_q * TILE_KV)` memory per head instead of `O(seq_q * seq_kv)`.
 
 Both fuse scale + softcap + masking + bias + softmax into a single pass, reducing intermediate
 allocations from ~12 (NdArray fallback) to 3.
@@ -880,6 +880,86 @@ f32, then requantizes. 16x less memory at 1M scale.
 
 ---
 
+## Default Ops (sort, repeat, creation, embedding, predicates)
+
+These ops override burn's default trait implementations with direct storage operations.
+
+### Sort (f32, 1D)
+
+| Size | Flex    | NdArray | Speedup  |
+| ---- | ------- | ------- | -------- |
+| 4K   | 53 us   | 126 us  | **2.4x** |
+| 64K  | 632 us  | 1.66 ms | **2.6x** |
+| 1M   | 8.97 ms | 25.4 ms | **2.8x** |
+
+### Sort (f32, 2D along last dim)
+
+| Size      | Flex    | NdArray | Speedup  |
+| --------- | ------- | ------- | -------- |
+| 64x64     | 5.9 us  | 71.6 us | **12x**  |
+| 256x256   | 205 us  | 1.32 ms | **6.4x** |
+| 1024x1024 | 12.6 ms | 36.7 ms | **2.9x** |
+
+Flex sorts directly on typed storage with a contiguous-stride fast path for last-dim sort. NdArray
+round-trips through TensorData.
+
+### Argsort (f32, 1D)
+
+| Size | Flex    | NdArray | Speedup  |
+| ---- | ------- | ------- | -------- |
+| 4K   | 73 us   | 130 us  | **1.8x** |
+| 1M   | 13.6 ms | 27.9 ms | **2.1x** |
+
+Dedicated argsort path that only tracks indices without materializing sorted values.
+
+### Repeat Dim (f32, 256x256)
+
+| Config            | Flex   | NdArray | Speedup |
+| ----------------- | ------ | ------- | ------- |
+| dim0 4x           | 14 us  | 168 us  | **12x** |
+| dim1 4x           | 12 us  | 178 us  | **15x** |
+| dim0 8x (512x512) | 106 us | 1.33 ms | **13x** |
+
+Single allocation + byte-level memcpy vs N slice_assign calls.
+
+### Tensor Creation (f32, 1M elements)
+
+| Operation | Flex  | NdArray | Speedup |
+| --------- | ----- | ------- | ------- |
+| zeros     | 18 us | 609 us  | **34x** |
+| ones      | 45 us | 609 us  | **14x** |
+| full      | 42 us | 611 us  | **15x** |
+
+`zeros` uses kernel-level zero-page optimization. `ones`/`full` use `vec![value; n]` which the
+compiler lowers to an optimized memset pattern. NdArray goes through TensorData.
+
+### Arange (i64)
+
+| Size | Flex   | NdArray | Speedup |
+| ---- | ------ | ------- | ------- |
+| 4K   | 1.3 us | 1.3 us  | ~1x     |
+| 1M   | 297 us | 290 us  | ~1x     |
+
+Both backends fill a Vec directly; no overhead difference.
+
+### Embedding (f32)
+
+| Config                  | Flex   | NdArray | Speedup  |
+| ----------------------- | ------ | ------- | -------- |
+| 30k vocab, d=512, 8x128 | 126 us | 167 us  | **1.3x** |
+| 50k vocab, d=768, 4x256 | 150 us | 202 us  | **1.3x** |
+
+### Predicates (f32, 1M elements)
+
+| Operation | Flex  | NdArray | Speedup  |
+| --------- | ----- | ------- | -------- |
+| is_nan    | 47 us | 79 us   | **1.7x** |
+| is_inf    | 55 us | 142 us  | **2.6x** |
+
+Direct predicate scan on storage vs composing equal/abs ops.
+
+---
+
 ## Running Benchmarks
 
 ```bash
@@ -901,4 +981,5 @@ cargo bench --bench cross_unfold_ops
 cargo bench --bench deform_conv_ops
 cargo bench --bench quantization_ops
 cargo bench --bench cat_max_min_ops
+cargo bench --bench default_ops
 ```
