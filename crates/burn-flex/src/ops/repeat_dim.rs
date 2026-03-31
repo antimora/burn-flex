@@ -44,4 +44,3 @@ pub fn repeat_dim(tensor: FlexTensor, dim: usize, times: usize) -> FlexTensor {
         dtype,
     )
 }
-
