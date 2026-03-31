@@ -5,15 +5,15 @@
 use crate::ops::{conv, deform_conv, interpolate, pool};
 use crate::{Flex, FlexTensor, Layout};
 use burn_backend::{
-    DType, Element,
+    DType, Element, TensorMetadata,
     ops::{
         AttentionModuleOptions, ConvOptions, ConvTransposeOptions, DeformConv2dBackward,
-        DeformConvOptions, InterpolateMode, InterpolateOptions, MaxPool2dBackward,
-        MaxPool2dWithIndices, ModuleOps,
+        DeformConvOptions, FloatTensorOps, IntTensorOps, InterpolateMode, InterpolateOptions,
+        MaxPool2dBackward, MaxPool2dWithIndices, ModuleOps,
     },
     tensor::{BoolTensor, FloatTensor, IntTensor},
 };
-use burn_std::Bytes;
+use burn_std::{Bytes, Shape};
 use bytemuck::Pod;
 
 /// Cast a tensor from half-precision type E to f32.
@@ -693,5 +693,39 @@ impl ModuleOps<Flex> for Flex {
         options: AttentionModuleOptions,
     ) -> FloatTensor<Flex> {
         crate::ops::attention::attention(query, key, value, mask, attn_bias, options)
+    }
+
+    fn embedding(weights: FloatTensor<Flex>, indices: IntTensor<Flex>) -> FloatTensor<Flex> {
+        let [batch_size, seq_length] = indices.shape().dims();
+        let [_, d_model] = weights.shape().dims();
+
+        let indices = Flex::int_reshape(indices, Shape::from(alloc::vec![batch_size * seq_length]));
+        let output = Flex::float_select(weights, 0, indices);
+        Flex::float_reshape(
+            output,
+            Shape::from(alloc::vec![batch_size, seq_length, d_model]),
+        )
+    }
+
+    fn embedding_backward(
+        weights: FloatTensor<Flex>,
+        output_grad: FloatTensor<Flex>,
+        indices: IntTensor<Flex>,
+    ) -> FloatTensor<Flex> {
+        let [batch_size, seq_length] = indices.shape().dims();
+        let [n_embeddings, d_model] = weights.shape().dims();
+        let dtype = output_grad.dtype();
+
+        let indices = Flex::int_reshape(indices, Shape::from(alloc::vec![batch_size * seq_length]));
+        let output_grad = Flex::float_reshape(
+            output_grad,
+            Shape::from(alloc::vec![batch_size * seq_length, d_model]),
+        );
+        let grad = Flex::float_zeros(
+            Shape::from(alloc::vec![n_embeddings, d_model]),
+            &Default::default(),
+            dtype.into(),
+        );
+        Flex::float_select_add(grad, 0, indices, output_grad)
     }
 }

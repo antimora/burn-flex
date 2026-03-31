@@ -14,16 +14,23 @@ pub struct Layout {
     start_offset: usize,
 }
 
+/// Compute row-major contiguous strides for a shape (as `usize`).
+pub fn contiguous_strides_usize(shape: &Shape) -> Vec<usize> {
+    let ndims = shape.num_dims();
+    let mut strides = vec![1usize; ndims];
+    for i in (0..ndims.saturating_sub(1)).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+    strides
+}
+
 impl Layout {
     /// Create a new contiguous layout (row-major/C-order).
     pub fn contiguous(shape: Shape) -> Self {
-        let ndims = shape.num_dims();
-        let mut strides = vec![1isize; ndims];
-
-        // Compute strides from right to left
-        for i in (0..ndims.saturating_sub(1)).rev() {
-            strides[i] = strides[i + 1] * shape[i + 1] as isize;
-        }
+        let strides: Vec<isize> = contiguous_strides_usize(&shape)
+            .into_iter()
+            .map(|s| s as isize)
+            .collect();
 
         Self {
             shape,

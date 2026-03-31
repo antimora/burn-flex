@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::{
-    DType, Distribution, ExecutionError, FloatDType, Scalar, TensorData,
+    DType, Distribution, ExecutionError, FloatDType, Scalar, TensorData, TensorMetadata,
     ops::{FloatTensorOps, GridSampleOptions, IntTensorOps},
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
@@ -912,6 +912,134 @@ impl FloatTensorOps<Flex> for Flex {
         options: GridSampleOptions,
     ) -> FloatTensor<Flex> {
         crate::ops::grid_sample::grid_sample_2d(tensor, grid, options)
+    }
+
+    fn float_zeros(shape: Shape, _device: &Device<Flex>, dtype: FloatDType) -> FloatTensor<Flex> {
+        FlexTensor::zeros(shape, dtype.into())
+    }
+
+    fn float_ones(shape: Shape, _device: &Device<Flex>, dtype: FloatDType) -> FloatTensor<Flex> {
+        let dt: burn_backend::DType = dtype.into();
+        match dt {
+            DType::F32 => FlexTensor::filled_typed(shape, dt, 1.0f32),
+            DType::F64 => FlexTensor::filled_typed(shape, dt, 1.0f64),
+            DType::F16 => FlexTensor::filled_typed(shape, dt, f16::ONE),
+            DType::BF16 => FlexTensor::filled_typed(shape, dt, bf16::ONE),
+            _ => unreachable!(),
+        }
+    }
+
+    fn float_full(
+        shape: Shape,
+        fill_value: Scalar,
+        _device: &Device<Flex>,
+        dtype: FloatDType,
+    ) -> FloatTensor<Flex> {
+        let dt: burn_backend::DType = dtype.into();
+        match dt {
+            DType::F32 => FlexTensor::filled_typed(shape, dt, fill_value.to_f32().unwrap()),
+            DType::F64 => FlexTensor::filled_typed(shape, dt, fill_value.to_f64().unwrap()),
+            DType::F16 => {
+                FlexTensor::filled_typed(shape, dt, f16::from_f32(fill_value.to_f32().unwrap()))
+            }
+            DType::BF16 => {
+                FlexTensor::filled_typed(shape, dt, bf16::from_f32(fill_value.to_f32().unwrap()))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn float_transpose(tensor: FloatTensor<Flex>) -> FloatTensor<Flex> {
+        let ndims = tensor.layout().num_dims();
+        if ndims < 2 {
+            return tensor;
+        }
+        tensor.transpose(ndims - 2, ndims - 1)
+    }
+
+    fn float_repeat_dim(tensor: FloatTensor<Flex>, dim: usize, times: usize) -> FloatTensor<Flex> {
+        crate::ops::repeat_dim::repeat_dim(tensor, dim, times)
+    }
+
+    fn float_sort(tensor: FloatTensor<Flex>, dim: usize, descending: bool) -> FloatTensor<Flex> {
+        crate::ops::sort::sort(tensor, dim, descending)
+    }
+
+    fn float_sort_with_indices(
+        tensor: FloatTensor<Flex>,
+        dim: usize,
+        descending: bool,
+        indices_dtype: burn_std::IntDType,
+    ) -> (FloatTensor<Flex>, IntTensor<Flex>) {
+        let (values, indices) = crate::ops::sort::sort_with_indices(tensor, dim, descending);
+        let indices = if indices.dtype() != DType::from(indices_dtype) {
+            Flex::int_cast(indices, indices_dtype)
+        } else {
+            indices
+        };
+        (values, indices)
+    }
+
+    fn float_argsort(
+        tensor: FloatTensor<Flex>,
+        dim: usize,
+        descending: bool,
+        out_dtype: burn_std::IntDType,
+    ) -> IntTensor<Flex> {
+        let indices = crate::ops::sort::argsort(tensor, dim, descending);
+        if indices.dtype() != DType::from(out_dtype) {
+            Flex::int_cast(indices, out_dtype)
+        } else {
+            indices
+        }
+    }
+
+    fn float_powi(lhs: FloatTensor<Flex>, rhs: IntTensor<Flex>) -> FloatTensor<Flex> {
+        let dtype = lhs.dtype();
+        Self::float_powf(lhs, Flex::int_into_float(rhs, dtype.into()))
+    }
+
+    fn float_powi_scalar(lhs: FloatTensor<Flex>, rhs: Scalar) -> FloatTensor<Flex> {
+        match rhs.to_i64().unwrap() {
+            0 => Self::float_ones(lhs.shape(), &Default::default(), lhs.dtype().into()),
+            1 => lhs,
+            2 => Self::float_mul(lhs.clone(), lhs),
+            -1 => Self::float_recip(lhs),
+            -2 => Self::float_recip(Self::float_mul(lhs.clone(), lhs)),
+            _ => Self::float_powf_scalar_impl(lhs, rhs),
+        }
+    }
+
+    fn float_powf_scalar(tensor: FloatTensor<Flex>, value: Scalar) -> FloatTensor<Flex> {
+        if let Some(exp) = value.try_as_integer() {
+            Self::float_powi_scalar(tensor, exp)
+        } else {
+            Self::float_powf_scalar_impl(tensor, value)
+        }
+    }
+
+    fn float_max_abs(tensor: FloatTensor<Flex>) -> FloatTensor<Flex> {
+        let abs = unary::abs(tensor);
+        crate::ops::reduce::max(abs)
+    }
+
+    fn float_max_abs_dim(tensor: FloatTensor<Flex>, dim: usize) -> FloatTensor<Flex> {
+        let abs = unary::abs(tensor);
+        crate::ops::reduce::max_dim(abs, dim)
+    }
+
+    fn float_is_nan(
+        tensor: FloatTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
+        unary::float_predicate(tensor, |x: f32| x.is_nan(), |x: f64| x.is_nan())
+    }
+
+    fn float_is_inf(
+        tensor: FloatTensor<Flex>,
+        _out_dtype: burn_std::BoolDType,
+    ) -> BoolTensor<Flex> {
+        unary::float_predicate(tensor, |x: f32| x.is_infinite(), |x: f64| x.is_infinite())
     }
 }
 

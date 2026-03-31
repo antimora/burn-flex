@@ -385,6 +385,47 @@ impl BoolTensorOps<Flex> for Flex {
         }
         result
     }
+
+    fn bool_transpose(tensor: BoolTensor<Flex>) -> BoolTensor<Flex> {
+        let ndims = tensor.layout().num_dims();
+        if ndims < 2 {
+            return tensor;
+        }
+        tensor.transpose(ndims - 2, ndims - 1)
+    }
+
+    fn bool_repeat_dim(tensor: BoolTensor<Flex>, dim: usize, times: usize) -> BoolTensor<Flex> {
+        crate::ops::repeat_dim::repeat_dim(tensor, dim, times)
+    }
+
+    async fn bool_argwhere(tensor: BoolTensor<Flex>, _out_dtype: IntDType) -> IntTensor<Flex> {
+        let tensor = tensor.to_contiguous();
+        let shape = tensor.layout().shape().clone();
+        let ndims = shape.num_dims();
+        let data: &[u8] = tensor.storage();
+        let n = shape.num_elements();
+
+        let count = data[..n].iter().filter(|&&v| v != 0).count();
+        let mut result: Vec<i64> = Vec::with_capacity(count * ndims);
+        let strides = crate::layout::contiguous_strides_usize(&shape);
+
+        for (flat_idx, &val) in data[..n].iter().enumerate() {
+            if val != 0 {
+                let mut remaining = flat_idx;
+                for &s in &strides {
+                    result.push((remaining / s) as i64);
+                    remaining %= s;
+                }
+            }
+        }
+
+        let out_shape = Shape::from(vec![count, ndims]);
+        FlexTensor::new(
+            Bytes::from_elems(result),
+            Layout::contiguous(out_shape),
+            crate::ops::INDEX_DTYPE,
+        )
+    }
 }
 
 /// Boolean binary operation type.
