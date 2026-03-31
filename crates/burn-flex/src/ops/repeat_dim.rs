@@ -11,6 +11,14 @@ pub fn repeat_dim(tensor: FlexTensor, dim: usize, times: usize) -> FlexTensor {
         return tensor;
     }
 
+    let ndims = tensor.layout().num_dims();
+    assert!(
+        dim < ndims,
+        "repeat_dim: dim {} out of bounds for tensor with {} dimensions",
+        dim,
+        ndims
+    );
+
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
     let dtype = tensor.dtype();

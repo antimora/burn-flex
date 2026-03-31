@@ -12,6 +12,25 @@ use crate::{FlexTensor, Layout};
 
 use super::INDEX_DTYPE;
 
+/// Validate sort dimension and check for empty tensors.
+/// Returns `true` if the tensor is empty (caller should return early).
+fn validate_sort_args(shape: &Shape, dim: usize) -> bool {
+    assert!(
+        dim < shape.num_dims(),
+        "sort: dim {} out of bounds for tensor with {} dimensions",
+        dim,
+        shape.num_dims()
+    );
+    let dim_size = shape[dim];
+    assert!(
+        dim_size <= isize::MAX as usize,
+        "sort: dimension {} has size {} which exceeds isize::MAX",
+        dim,
+        dim_size
+    );
+    shape.num_elements() == 0
+}
+
 /// Sort elements along a dimension, returning the sorted tensor.
 pub fn sort(tensor: FlexTensor, dim: usize, descending: bool) -> FlexTensor {
     match tensor.dtype() {
@@ -88,6 +107,9 @@ fn sort_typed<E: Element + Pod + Copy>(
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
     let dtype = tensor.dtype();
+    if validate_sort_args(&shape, dim) {
+        return tensor;
+    }
 
     let mut data: Vec<E> = tensor.storage::<E>().to_vec();
 
@@ -114,6 +136,10 @@ fn sort_with_indices_typed<E: Element + Pod + Copy>(
     let shape = tensor.layout().shape().clone();
     let dtype = tensor.dtype();
     let n = shape.num_elements();
+    if validate_sort_args(&shape, dim) {
+        let idx = make_index_tensor(Vec::new(), shape.clone());
+        return (tensor, idx);
+    }
 
     let src: &[E] = tensor.storage();
     let mut values: Vec<E> = src.to_vec();
@@ -140,6 +166,9 @@ fn argsort_typed<E: Element + Pod + Copy>(
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
     let n = shape.num_elements();
+    if validate_sort_args(&shape, dim) {
+        return make_index_tensor(Vec::new(), shape);
+    }
 
     let src: &[E] = tensor.storage();
     let mut indices: Vec<isize> = vec![0; n];
@@ -334,6 +363,9 @@ fn sort_half<H: Element + Pod + Copy>(
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
     let dtype = tensor.dtype();
+    if validate_sort_args(&shape, dim) {
+        return tensor;
+    }
     let src: &[H] = tensor.storage();
     let mut f32_data: Vec<f32> = src.iter().map(|&v| to_f32(v)).collect();
 
@@ -362,6 +394,10 @@ fn sort_with_indices_half<H: Element + Pod + Copy>(
     let shape = tensor.layout().shape().clone();
     let dtype = tensor.dtype();
     let n = shape.num_elements();
+    if validate_sort_args(&shape, dim) {
+        let idx = make_index_tensor(Vec::new(), shape.clone());
+        return (tensor, idx);
+    }
     let src: &[H] = tensor.storage();
     let mut f32_data: Vec<f32> = src.iter().map(|&v| to_f32(v)).collect();
     let mut indices: Vec<isize> = vec![0; n];
@@ -398,6 +434,9 @@ fn argsort_half<H: Element + Pod + Copy>(
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
     let n = shape.num_elements();
+    if validate_sort_args(&shape, dim) {
+        return make_index_tensor(Vec::new(), shape);
+    }
     let src: &[H] = tensor.storage();
     let f32_data: Vec<f32> = src.iter().map(|&v| to_f32(v)).collect();
     let mut indices: Vec<isize> = vec![0; n];

@@ -239,6 +239,11 @@ impl FlexTensor {
         dtype: DType,
         value: E,
     ) -> Self {
+        debug_assert_eq!(
+            dtype_size(dtype),
+            core::mem::size_of::<E>(),
+            "filled_typed: dtype size mismatch"
+        );
         let n = shape.num_elements();
         let data = alloc::vec![value; n];
         let bytes = Bytes::from_elems(data);
