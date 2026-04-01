@@ -18,12 +18,9 @@ fn read_indices(tensor: &FlexTensor) -> Cow<'_, [isize]> {
     match tensor.dtype() {
         #[cfg(target_pointer_width = "64")]
         DType::I64 => {
-            // SAFETY: i64 and isize have identical size, alignment, and repr on 64-bit.
             const { assert!(size_of::<i64>() == size_of::<isize>()) };
             let data = tensor.storage::<i64>();
-            Cow::Borrowed(unsafe {
-                core::slice::from_raw_parts(data.as_ptr() as *const isize, data.len())
-            })
+            Cow::Borrowed(bytemuck::cast_slice(data))
         }
         #[cfg(target_pointer_width = "32")]
         DType::I64 => Cow::Owned(
@@ -47,12 +44,9 @@ fn read_indices(tensor: &FlexTensor) -> Cow<'_, [isize]> {
         ),
         #[cfg(target_pointer_width = "32")]
         DType::I32 => {
-            // SAFETY: i32 and isize have identical size, alignment, and repr on 32-bit.
             const { assert!(size_of::<i32>() == size_of::<isize>()) };
             let data = tensor.storage::<i32>();
-            Cow::Borrowed(unsafe {
-                core::slice::from_raw_parts(data.as_ptr() as *const isize, data.len())
-            })
+            Cow::Borrowed(bytemuck::cast_slice(data))
         }
         DType::I16 => Cow::Owned(
             tensor
@@ -238,10 +232,10 @@ fn gather_2d<E: Element + Pod + Default + Copy + Send + Sync>(
     let output_size = indices_rows * indices_cols;
     let dim_size = if dim == 0 { tensor_rows } else { tensor_cols };
 
-    // Threshold: only parallelize if output has >= 256K elements
-    const PARALLEL_THRESHOLD: usize = 256 * 1024;
-
     let mut result = vec![E::default(); output_size];
+
+    #[cfg(feature = "rayon")]
+    const PARALLEL_THRESHOLD: usize = 256 * 1024;
 
     #[cfg(feature = "rayon")]
     if output_size >= PARALLEL_THRESHOLD {
@@ -536,6 +530,7 @@ pub fn select<E: Element + Pod + Default + Copy + Send + Sync>(
             .collect();
 
         #[cfg(not(feature = "rayon"))]
+        #[allow(clippy::needless_range_loop)]
         let result: Vec<E> = {
             let mut result = vec![E::default(); output_size];
             for out_idx in 0..output_size {
@@ -605,6 +600,7 @@ fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
     };
     let output_size = output_rows * output_cols;
 
+    #[cfg(feature = "rayon")]
     const PARALLEL_THRESHOLD: usize = 256 * 1024;
 
     if dim == 0 {

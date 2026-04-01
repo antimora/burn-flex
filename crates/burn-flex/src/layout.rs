@@ -15,7 +15,7 @@ pub struct Layout {
 }
 
 /// Compute row-major contiguous strides for a shape (as `usize`).
-pub fn contiguous_strides_usize(shape: &Shape) -> Vec<usize> {
+pub(crate) fn contiguous_strides_usize(shape: &Shape) -> Vec<usize> {
     let ndims = shape.num_dims();
     let mut strides = vec![1usize; ndims];
     for i in (0..ndims.saturating_sub(1)).rev() {

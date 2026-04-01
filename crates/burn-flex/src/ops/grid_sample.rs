@@ -19,11 +19,8 @@ pub fn grid_sample_2d(
     options: GridSampleOptions,
 ) -> FlexTensor {
     match options.mode {
-        InterpolateMode::Bilinear => {}
-        _ => todo!(
-            "grid_sample_2d with {:?} mode is not implemented",
-            options.mode
-        ),
+        InterpolateMode::Bilinear | InterpolateMode::Nearest => {}
+        other => panic!("grid_sample_2d: {:?} mode is not supported", other),
     }
 
     let tensor = tensor.to_contiguous();
@@ -97,52 +94,54 @@ macro_rules! grid_sample_2d_typed {
 
                         let (px, py) = apply_padding(px, py, w_in, h_in, pad_mode, align);
 
-                        let x0 = px.floor() as i64;
-                        let y0 = py.floor() as i64;
-                        let x1 = x0 + 1;
-                        let y1 = y0 + 1;
-
-                        let x_frac = px - px.floor();
-                        let y_frac = py - py.floor();
-
-                        let w00 = (1.0 - x_frac) * (1.0 - y_frac);
-                        let w01 = (1.0 - x_frac) * y_frac;
-                        let w10 = x_frac * (1.0 - y_frac);
-                        let w11 = x_frac * y_frac;
+                        let read = |t_base: usize, xi: i64, yi: i64| -> f64 {
+                            match pad_mode {
+                                GridSamplePaddingMode::Zeros => {
+                                    if xi >= 0 && xi < w_in as i64 && yi >= 0 && yi < h_in as i64 {
+                                        tensor_data[t_base + yi as usize * t_stride_h + xi as usize]
+                                            as f64
+                                    } else {
+                                        0.0
+                                    }
+                                }
+                                GridSamplePaddingMode::Border
+                                | GridSamplePaddingMode::Reflection => {
+                                    let xi = xi.clamp(0, (w_in - 1) as i64) as usize;
+                                    let yi = yi.clamp(0, (h_in - 1) as i64) as usize;
+                                    tensor_data[t_base + yi * t_stride_h + xi] as f64
+                                }
+                            }
+                        };
 
                         for c in 0..channels {
                             let t_base = b * t_stride_n + c * t_stride_c;
+                            let o_idx = b * o_stride_n + c * o_stride_c + y * o_stride_h + x;
 
-                            let read = |xi: i64, yi: i64| -> f64 {
-                                match pad_mode {
-                                    GridSamplePaddingMode::Zeros => {
-                                        if xi >= 0
-                                            && xi < w_in as i64
-                                            && yi >= 0
-                                            && yi < h_in as i64
-                                        {
-                                            tensor_data
-                                                [t_base + yi as usize * t_stride_h + xi as usize]
-                                                as f64
-                                        } else {
-                                            0.0
-                                        }
-                                    }
-                                    GridSamplePaddingMode::Border
-                                    | GridSamplePaddingMode::Reflection => {
-                                        let xi = xi.clamp(0, (w_in - 1) as i64) as usize;
-                                        let yi = yi.clamp(0, (h_in - 1) as i64) as usize;
-                                        tensor_data[t_base + yi * t_stride_h + xi] as f64
-                                    }
-                                }
+                            let val = if matches!(options.mode, InterpolateMode::Nearest) {
+                                let xi = px.round() as i64;
+                                let yi = py.round() as i64;
+                                read(t_base, xi, yi)
+                            } else {
+                                // Bilinear
+                                let x0 = px.floor() as i64;
+                                let y0 = py.floor() as i64;
+                                let x1 = x0 + 1;
+                                let y1 = y0 + 1;
+
+                                let x_frac = px - px.floor();
+                                let y_frac = py - py.floor();
+
+                                let w00 = (1.0 - x_frac) * (1.0 - y_frac);
+                                let w01 = (1.0 - x_frac) * y_frac;
+                                let w10 = x_frac * (1.0 - y_frac);
+                                let w11 = x_frac * y_frac;
+
+                                read(t_base, x0, y0) * w00
+                                    + read(t_base, x0, y1) * w01
+                                    + read(t_base, x1, y0) * w10
+                                    + read(t_base, x1, y1) * w11
                             };
 
-                            let val = read(x0, y0) * w00
-                                + read(x0, y1) * w01
-                                + read(x1, y0) * w10
-                                + read(x1, y1) * w11;
-
-                            let o_idx = b * o_stride_n + c * o_stride_c + y * o_stride_h + x;
                             output[o_idx] = val as $elem;
                         }
                     }

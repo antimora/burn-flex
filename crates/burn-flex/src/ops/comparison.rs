@@ -11,19 +11,10 @@ use bytemuck::Pod;
 use crate::strided_index::StridedIter;
 use crate::{FlexTensor, Layout};
 
-#[cfg(feature = "simd")]
 use crate::simd;
 
-/// Comparison operation type for SIMD dispatch.
-#[derive(Clone, Copy)]
-pub enum CompareOp {
-    Greater,
-    GreaterEqual,
-    Lower,
-    LowerEqual,
-    Equal,
-    NotEqual,
-}
+/// Re-export the comparison op enum from simd to avoid duplication.
+pub use simd::CmpOp as CompareOp;
 
 /// Compare two tensors element-wise, returning a boolean tensor.
 pub fn compare<F32Cmp, F64Cmp>(
@@ -70,7 +61,7 @@ where
     if let (Some((l_start, l_end)), Some((r_start, r_end))) = (
         lhs.layout().contiguous_offsets(),
         rhs.layout().contiguous_offsets(),
-    ) && let Some(simd_op) = simd_hint.map(compare_op_to_simd)
+    ) && let Some(simd_op) = simd_hint
     {
         let shape = lhs.layout().shape().clone();
         let lhs_storage: &[f32] = lhs.storage();
@@ -88,7 +79,7 @@ where
     // Optimized broadcast path for outer-product style broadcasting
     // Pattern: [N, 1] vs [1, M] -> [N, M] where one has stride 0 in inner dim
     if lhs.layout().num_dims() == 2
-        && let Some(simd_op) = simd_hint.map(compare_op_to_simd)
+        && let Some(simd_op) = simd_hint
         && let Some((result, shape)) = try_broadcast_cmp_f32(&lhs, rhs, simd_op)
     {
         return make_bool_tensor(result, shape);
@@ -231,19 +222,6 @@ where
     compare_typed(lhs, rhs, cmp)
 }
 
-/// Convert a CompareOp to the SIMD CmpOp.
-#[cfg(feature = "simd")]
-fn compare_op_to_simd(op: CompareOp) -> simd::CmpOp {
-    match op {
-        CompareOp::Greater => simd::CmpOp::Gt,
-        CompareOp::GreaterEqual => simd::CmpOp::Ge,
-        CompareOp::Lower => simd::CmpOp::Lt,
-        CompareOp::LowerEqual => simd::CmpOp::Le,
-        CompareOp::Equal => simd::CmpOp::Eq,
-        CompareOp::NotEqual => simd::CmpOp::Ne,
-    }
-}
-
 /// Compare tensor with scalar, returning a boolean tensor.
 pub fn compare_elem<F32Cmp, F64Cmp>(
     lhs: FlexTensor,
@@ -290,7 +268,7 @@ where
 {
     // SIMD fast path: tensor is contiguous
     if let Some((start, end)) = lhs.layout().contiguous_offsets()
-        && let Some(simd_op) = simd_hint.map(compare_op_to_simd)
+        && let Some(simd_op) = simd_hint
     {
         let shape = lhs.layout().shape().clone();
         let lhs_storage: &[f32] = lhs.storage();
@@ -396,111 +374,51 @@ fn make_bool_tensor(data: Vec<u8>, shape: Shape) -> FlexTensor {
 // Specific comparison functions
 
 pub fn greater(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare(
-        lhs,
-        rhs,
-        |a, b| a > b,
-        |a, b| a > b,
-        Some(CompareOp::Greater),
-    )
+    compare(lhs, rhs, |a, b| a > b, |a, b| a > b, Some(CompareOp::Gt))
 }
 
 pub fn greater_elem(lhs: FlexTensor, rhs: f64) -> FlexTensor {
-    compare_elem(
-        lhs,
-        rhs,
-        |a, b| a > b,
-        |a, b| a > b,
-        Some(CompareOp::Greater),
-    )
+    compare_elem(lhs, rhs, |a, b| a > b, |a, b| a > b, Some(CompareOp::Gt))
 }
 
 pub fn greater_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare(
-        lhs,
-        rhs,
-        |a, b| a >= b,
-        |a, b| a >= b,
-        Some(CompareOp::GreaterEqual),
-    )
+    compare(lhs, rhs, |a, b| a >= b, |a, b| a >= b, Some(CompareOp::Ge))
 }
 
 pub fn greater_equal_elem(lhs: FlexTensor, rhs: f64) -> FlexTensor {
-    compare_elem(
-        lhs,
-        rhs,
-        |a, b| a >= b,
-        |a, b| a >= b,
-        Some(CompareOp::GreaterEqual),
-    )
+    compare_elem(lhs, rhs, |a, b| a >= b, |a, b| a >= b, Some(CompareOp::Ge))
 }
 
 pub fn lower(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare(lhs, rhs, |a, b| a < b, |a, b| a < b, Some(CompareOp::Lower))
+    compare(lhs, rhs, |a, b| a < b, |a, b| a < b, Some(CompareOp::Lt))
 }
 
 pub fn lower_elem(lhs: FlexTensor, rhs: f64) -> FlexTensor {
-    compare_elem(lhs, rhs, |a, b| a < b, |a, b| a < b, Some(CompareOp::Lower))
+    compare_elem(lhs, rhs, |a, b| a < b, |a, b| a < b, Some(CompareOp::Lt))
 }
 
 pub fn lower_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare(
-        lhs,
-        rhs,
-        |a, b| a <= b,
-        |a, b| a <= b,
-        Some(CompareOp::LowerEqual),
-    )
+    compare(lhs, rhs, |a, b| a <= b, |a, b| a <= b, Some(CompareOp::Le))
 }
 
 pub fn lower_equal_elem(lhs: FlexTensor, rhs: f64) -> FlexTensor {
-    compare_elem(
-        lhs,
-        rhs,
-        |a, b| a <= b,
-        |a, b| a <= b,
-        Some(CompareOp::LowerEqual),
-    )
+    compare_elem(lhs, rhs, |a, b| a <= b, |a, b| a <= b, Some(CompareOp::Le))
 }
 
 pub fn equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare(
-        lhs,
-        rhs,
-        |a, b| a == b,
-        |a, b| a == b,
-        Some(CompareOp::Equal),
-    )
+    compare(lhs, rhs, |a, b| a == b, |a, b| a == b, Some(CompareOp::Eq))
 }
 
 pub fn equal_elem(lhs: FlexTensor, rhs: f64) -> FlexTensor {
-    compare_elem(
-        lhs,
-        rhs,
-        |a, b| a == b,
-        |a, b| a == b,
-        Some(CompareOp::Equal),
-    )
+    compare_elem(lhs, rhs, |a, b| a == b, |a, b| a == b, Some(CompareOp::Eq))
 }
 
 pub fn not_equal(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    compare(
-        lhs,
-        rhs,
-        |a, b| a != b,
-        |a, b| a != b,
-        Some(CompareOp::NotEqual),
-    )
+    compare(lhs, rhs, |a, b| a != b, |a, b| a != b, Some(CompareOp::Ne))
 }
 
 pub fn not_equal_elem(lhs: FlexTensor, rhs: f64) -> FlexTensor {
-    compare_elem(
-        lhs,
-        rhs,
-        |a, b| a != b,
-        |a, b| a != b,
-        Some(CompareOp::NotEqual),
-    )
+    compare_elem(lhs, rhs, |a, b| a != b, |a, b| a != b, Some(CompareOp::Ne))
 }
 
 // Integer comparison functions
@@ -704,6 +622,12 @@ pub fn any_int(tensor: FlexTensor) -> FlexTensor {
     let has_any = match tensor.dtype() {
         DType::I64 => iter_elements::<i64>(&tensor).any(|x| x != 0),
         DType::I32 => iter_elements::<i32>(&tensor).any(|x| x != 0),
+        DType::I16 => iter_elements::<i16>(&tensor).any(|x| x != 0),
+        DType::I8 => iter_elements::<i8>(&tensor).any(|x| x != 0),
+        DType::U64 => iter_elements::<u64>(&tensor).any(|x| x != 0),
+        DType::U32 => iter_elements::<u32>(&tensor).any(|x| x != 0),
+        DType::U16 => iter_elements::<u16>(&tensor).any(|x| x != 0),
+        DType::U8 => iter_elements::<u8>(&tensor).any(|x| x != 0),
         _ => panic!("any_int: unsupported dtype {:?}", tensor.dtype()),
     };
     bool_scalar(has_any)
@@ -719,6 +643,12 @@ pub fn all_int(tensor: FlexTensor) -> FlexTensor {
     let all = match tensor.dtype() {
         DType::I64 => iter_elements::<i64>(&tensor).all(|x| x != 0),
         DType::I32 => iter_elements::<i32>(&tensor).all(|x| x != 0),
+        DType::I16 => iter_elements::<i16>(&tensor).all(|x| x != 0),
+        DType::I8 => iter_elements::<i8>(&tensor).all(|x| x != 0),
+        DType::U64 => iter_elements::<u64>(&tensor).all(|x| x != 0),
+        DType::U32 => iter_elements::<u32>(&tensor).all(|x| x != 0),
+        DType::U16 => iter_elements::<u16>(&tensor).all(|x| x != 0),
+        DType::U8 => iter_elements::<u8>(&tensor).all(|x| x != 0),
         _ => panic!("all_int: unsupported dtype {:?}", tensor.dtype()),
     };
     bool_scalar(all)

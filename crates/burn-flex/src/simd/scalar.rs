@@ -20,8 +20,8 @@ pub fn bool_not_u8(a: &[u8], out: &mut [u8]) {
 /// Scalar boolean NOT in-place: a[i] = !a[i]
 #[inline]
 pub fn bool_not_inplace_u8(a: &mut [u8]) {
-    for i in 0..a.len() {
-        a[i] = (a[i] == 0) as u8;
+    for x in a.iter_mut() {
+        *x = (*x == 0) as u8;
     }
 }
 
