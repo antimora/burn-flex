@@ -55,10 +55,15 @@ impl Backend for Flex {
     type Device = FlexDevice;
 
     type FloatTensorPrimitive = FlexTensor;
+    /// Default float element type. Only used by `Tensor::from_data` (without explicit dtype)
+    /// and `.float()` conversions. Prefer explicit dtypes via `(&device, DType::F32)`.
     type FloatElem = f32;
 
     type IntTensorPrimitive = FlexTensor;
-    type IntElem = i64;
+    /// Default int element type. Only used by `Tensor::from_data` (without explicit dtype)
+    /// and `.int()` conversions. Prefer explicit dtypes via `(&device, DType::I32)`.
+    /// Set to i32 to match burn's ecosystem default (test suite, record settings, burn-remote).
+    type IntElem = i32;
 
     type BoolTensorPrimitive = FlexTensor;
     type BoolElem = bool;

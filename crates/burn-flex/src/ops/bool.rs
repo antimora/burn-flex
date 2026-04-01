@@ -546,9 +546,9 @@ mod tests {
         let t: Tensor<Flex, 1, Bool> =
             Tensor::from_data([true, false, true, false], &Default::default());
         let int_t: Tensor<Flex, 1, Int> = t.int();
-        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+        let data: Vec<i32> = int_t.into_data().to_vec().unwrap();
 
-        assert_eq!(data, vec![1i64, 0, 1, 0]);
+        assert_eq!(data, vec![1i32, 0, 1, 0]);
     }
 
     #[test]
@@ -566,9 +566,9 @@ mod tests {
         let t: Tensor<Flex, 2, Bool> =
             Tensor::from_data([[true, false], [false, true]], &Default::default());
         let int_t: Tensor<Flex, 2, Int> = t.int();
-        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+        let data: Vec<i32> = int_t.into_data().to_vec().unwrap();
 
-        assert_eq!(data, vec![1i64, 0, 0, 1]);
+        assert_eq!(data, vec![1i32, 0, 0, 1]);
     }
 
     #[test]
@@ -591,9 +591,9 @@ mod tests {
             Tensor::from_data([true, false, true, false], &Default::default());
         let t = t.flip([0]);
         let int_t: Tensor<Flex, 1, Int> = t.int();
-        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+        let data: Vec<i32> = int_t.into_data().to_vec().unwrap();
 
-        assert_eq!(data, vec![0i64, 1, 0, 1]);
+        assert_eq!(data, vec![0i32, 1, 0, 1]);
     }
 
     #[test]
@@ -716,9 +716,9 @@ mod tests {
             Tensor::from_data([[true, false], [false, true]], &Default::default());
         let t = t.flip([0]);
         let int_t: Tensor<Flex, 2, Int> = t.int();
-        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+        let data: Vec<i32> = int_t.into_data().to_vec().unwrap();
 
-        assert_eq!(data, vec![0i64, 1, 1, 0]);
+        assert_eq!(data, vec![0i32, 1, 1, 0]);
     }
 
     #[test]

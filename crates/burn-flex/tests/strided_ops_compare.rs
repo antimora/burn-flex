@@ -26,8 +26,8 @@ fn cmp(name: &str, actual: &TensorData, expected: &[f32]) {
     );
 }
 
-fn cmp_i64(name: &str, actual: &TensorData, expected: &[i64]) {
-    let a: Vec<i64> = actual.to_vec().unwrap();
+fn cmp_i32(name: &str, actual: &TensorData, expected: &[i32]) {
+    let a: Vec<i32> = actual.to_vec().unwrap();
     assert_eq!(a.len(), expected.len(), "{name}: length mismatch");
     assert_eq!(a, expected, "{name}: integer results differ");
     eprintln!("    ok {name}");
@@ -163,10 +163,10 @@ fn test_ops_on_step2_sliced() {
             0.4555150, 0.9922345, 0.4132372, 1.1735672, 1.2597409, 0.7974551,
         ],
     );
-    cmp_i64(
+    cmp_i32(
         "step2_last/argmax_dim2",
         &te.clone().argmax(2).into_data(),
-        &[1_i64, 0_i64, 0_i64, 0_i64, 0_i64, 1_i64],
+        &[1_i32, 0_i32, 0_i32, 0_i32, 0_i32, 1_i32],
     );
     // softmax
     cmp(
@@ -310,10 +310,10 @@ fn test_ops_on_step3_middle_dim() {
         &te.clone().mean_dim(2).into_data(),
         &[1.4241530, 1.2413030, 0.7704797, 1.3652385],
     );
-    cmp_i64(
+    cmp_i32(
         "step3_mid/argmax_dim2",
         &te.clone().argmax(2).into_data(),
-        &[2_i64, 2_i64, 1_i64, 0_i64],
+        &[2_i32, 2_i32, 1_i32, 0_i32],
     );
     // softmax
     cmp(
@@ -453,10 +453,10 @@ fn test_ops_on_narrowed_transposed() {
             1.2387595, 0.7364876, 1.2011691, 1.3845676, 1.5096478, 0.6261326,
         ],
     );
-    cmp_i64(
+    cmp_i32(
         "narrow_trans/argmax_dim2",
         &te.clone().argmax(2).into_data(),
-        &[0_i64, 0_i64, 1_i64, 1_i64, 1_i64, 0_i64],
+        &[0_i32, 0_i32, 1_i32, 1_i32, 1_i32, 0_i32],
     );
     // softmax
     cmp(
@@ -594,10 +594,10 @@ fn test_ops_on_step_sliced_transposed() {
         &te.clone().mean_dim(2).into_data(),
         &[1.4416089, 0.9111998, 0.9245019, 1.1988698],
     );
-    cmp_i64(
+    cmp_i32(
         "step2_trans/argmax_dim2",
         &te.clone().argmax(2).into_data(),
-        &[1_i64, 0_i64, 0_i64, 1_i64],
+        &[1_i32, 0_i32, 0_i32, 1_i32],
     );
     // softmax
     cmp(
@@ -714,7 +714,7 @@ fn test_gather_on_step_sliced() {
     eprintln!("\n=== gather on step-sliced [2,2,4] -> [2,2,2] ===");
     let te = t3(GATHER_INPUT, [2, 2, 4]).slice(s![.., .., ..;2]);
 
-    let idx_data = TensorData::from([[[1_i64], [0]], [[0], [1]]]);
+    let idx_data = TensorData::from([[[1_i32], [0]], [[0], [1]]]);
     let idx: Tensor<E, 3, burn_tensor::Int> = Tensor::from_data(idx_data, &Default::default());
 
     cmp(
