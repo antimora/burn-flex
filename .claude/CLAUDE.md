@@ -54,3 +54,23 @@ Write generous tests. Cover:
 - Edge cases: empty tensors, single element, large tensors
 - Both tensor-tensor and tensor-scalar variants
 - Verify correctness through round-trip with `into_data()`
+
+### Integration tests (burn-backend-tests)
+
+The `burn-backend-tests` crate at `/Users/dilshod/Projects/burn-flex-worktree/crates/burn-backend-tests`
+runs Burn's standard conformance test suite against the flex backend. It depends on burn-flex via
+absolute path.
+
+To run:
+
+```sh
+cd /Users/dilshod/Projects/burn-flex-worktree/crates/burn-backend-tests
+cargo test-flex              # runs all tests (release, features: flex,std)
+cargo test-flex -- cat       # filter to specific test names
+```
+
+The `test-flex` alias is defined in `.cargo/config.toml` as
+`test --release --no-default-features --features flex,std`.
+
+For this to compile, burn-flex's workspace `Cargo.toml` must use local path dependencies pointing
+to burn-flex-worktree (uncomment the `path = ...` lines, comment out the `git = ...` lines).
