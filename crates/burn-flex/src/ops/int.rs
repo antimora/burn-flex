@@ -1026,7 +1026,7 @@ impl IntTensorOps<Flex> for Flex {
 
 #[cfg(test)]
 mod tests {
-    use burn_tensor::{Int, Tensor, TensorData};
+    use burn_tensor::{DType, Int, Tensor, TensorData};
 
     use crate::Flex;
     use crate::FlexTensor;
@@ -1034,8 +1034,10 @@ mod tests {
 
     #[test]
     fn test_int_add() {
-        let a: Tensor<Flex, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
-        let b: Tensor<Flex, 2, Int> = Tensor::from_data([[5i64, 6], [7, 8]], &Default::default());
+        let a: Tensor<Flex, 2, Int> =
+            Tensor::from_data([[1i64, 2], [3, 4]], (&Default::default(), DType::I64));
+        let b: Tensor<Flex, 2, Int> =
+            Tensor::from_data([[5i64, 6], [7, 8]], (&Default::default(), DType::I64));
 
         let result = a + b;
         let data = result.into_data();
@@ -1045,8 +1047,10 @@ mod tests {
 
     #[test]
     fn test_int_sub() {
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([10i64, 20, 30], &Default::default());
-        let b: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([10i64, 20, 30], (&Default::default(), DType::I64));
+        let b: Tensor<Flex, 1, Int> =
+            Tensor::from_data([1i64, 2, 3], (&Default::default(), DType::I64));
 
         let result = a - b;
         let data = result.into_data();
@@ -1056,8 +1060,10 @@ mod tests {
 
     #[test]
     fn test_int_mul() {
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([2i64, 3, 4], &Default::default());
-        let b: Tensor<Flex, 1, Int> = Tensor::from_data([5i64, 6, 7], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([2i64, 3, 4], (&Default::default(), DType::I64));
+        let b: Tensor<Flex, 1, Int> =
+            Tensor::from_data([5i64, 6, 7], (&Default::default(), DType::I64));
 
         let result = a * b;
         let data = result.into_data();
@@ -1067,8 +1073,10 @@ mod tests {
 
     #[test]
     fn test_int_div() {
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([10i64, 21, 35], &Default::default());
-        let b: Tensor<Flex, 1, Int> = Tensor::from_data([2i64, 7, 5], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([10i64, 21, 35], (&Default::default(), DType::I64));
+        let b: Tensor<Flex, 1, Int> =
+            Tensor::from_data([2i64, 7, 5], (&Default::default(), DType::I64));
 
         let result = a / b;
         let data = result.into_data();
@@ -1078,7 +1086,8 @@ mod tests {
 
     #[test]
     fn test_int_add_scalar() {
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([1i64, 2, 3], (&Default::default(), DType::I64));
         let result = a + 10;
         let data = result.into_data();
 
@@ -1087,7 +1096,8 @@ mod tests {
 
     #[test]
     fn test_int_sub_scalar() {
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([10i64, 20, 30], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([10i64, 20, 30], (&Default::default(), DType::I64));
         let result = a - 5;
         let data = result.into_data();
 
@@ -1096,7 +1106,8 @@ mod tests {
 
     #[test]
     fn test_int_mul_scalar() {
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([1i64, 2, 3], (&Default::default(), DType::I64));
         let result = a * 3;
         let data = result.into_data();
 
@@ -1105,7 +1116,8 @@ mod tests {
 
     #[test]
     fn test_int_div_scalar() {
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([10i64, 20, 30], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([10i64, 20, 30], (&Default::default(), DType::I64));
         let result = a / 5;
         let data = result.into_data();
 
@@ -1114,9 +1126,10 @@ mod tests {
 
     #[test]
     fn test_int_add_transposed() {
-        let a: Tensor<Flex, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let a: Tensor<Flex, 2, Int> =
+            Tensor::from_data([[1i64, 2], [3, 4]], (&Default::default(), DType::I64));
         let b: Tensor<Flex, 2, Int> =
-            Tensor::from_data([[10i64, 20], [30, 40]], &Default::default());
+            Tensor::from_data([[10i64, 20], [30, 40]], (&Default::default(), DType::I64));
 
         let a_t = a.transpose();
         let b_t = b.transpose();
@@ -1131,8 +1144,10 @@ mod tests {
 
     #[test]
     fn test_int_negative_values() {
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([-5i64, 10, -15], &Default::default());
-        let b: Tensor<Flex, 1, Int> = Tensor::from_data([5i64, -10, 15], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([-5i64, 10, -15], (&Default::default(), DType::I64));
+        let b: Tensor<Flex, 1, Int> =
+            Tensor::from_data([5i64, -10, 15], (&Default::default(), DType::I64));
 
         let result = a + b;
         let data = result.into_data();
@@ -1142,7 +1157,8 @@ mod tests {
 
     #[test]
     fn test_int_into_float() {
-        let t: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, -3, 0], &Default::default());
+        let t: Tensor<Flex, 1, Int> =
+            Tensor::from_data([1i64, 2, -3, 0], (&Default::default(), DType::I64));
         let float_t: Tensor<Flex, 1> = t.float();
         let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
 
@@ -1151,7 +1167,8 @@ mod tests {
 
     #[test]
     fn test_int_into_float_2d() {
-        let t: Tensor<Flex, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let t: Tensor<Flex, 2, Int> =
+            Tensor::from_data([[1i64, 2], [3, 4]], (&Default::default(), DType::I64));
         let float_t: Tensor<Flex, 2> = t.float();
         let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
 
@@ -1165,8 +1182,10 @@ mod tests {
         // [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
         // [10, 20, 30, 40] flipped -> [40, 30, 20, 10]
         // [4, 3, 2, 1] + [40, 30, 20, 10] = [44, 33, 22, 11]
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3, 4], &Default::default());
-        let b: Tensor<Flex, 1, Int> = Tensor::from_data([10i64, 20, 30, 40], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([1i64, 2, 3, 4], (&Default::default(), DType::I64));
+        let b: Tensor<Flex, 1, Int> =
+            Tensor::from_data([10i64, 20, 30, 40], (&Default::default(), DType::I64));
 
         let a = a.flip([0]);
         let b = b.flip([0]);
@@ -1182,8 +1201,10 @@ mod tests {
         // [10, 20, 30, 40] flipped -> [40, 30, 20, 10]
         // [1, 2, 3, 4] (contiguous)
         // [40, 30, 20, 10] - [1, 2, 3, 4] = [39, 28, 17, 6]
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([10i64, 20, 30, 40], &Default::default());
-        let b: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3, 4], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([10i64, 20, 30, 40], (&Default::default(), DType::I64));
+        let b: Tensor<Flex, 1, Int> =
+            Tensor::from_data([1i64, 2, 3, 4], (&Default::default(), DType::I64));
 
         let a = a.flip([0]);
 
@@ -1198,9 +1219,10 @@ mod tests {
         // [[1, 2], [3, 4]] with axis 0 flipped -> [[3, 4], [1, 2]]
         // [[10, 20], [30, 40]]
         // [[3, 4], [1, 2]] * [[10, 20], [30, 40]] = [[30, 80], [30, 80]]
-        let a: Tensor<Flex, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
+        let a: Tensor<Flex, 2, Int> =
+            Tensor::from_data([[1i64, 2], [3, 4]], (&Default::default(), DType::I64));
         let b: Tensor<Flex, 2, Int> =
-            Tensor::from_data([[10i64, 20], [30, 40]], &Default::default());
+            Tensor::from_data([[10i64, 20], [30, 40]], (&Default::default(), DType::I64));
 
         let a = a.flip([0]);
 
@@ -1214,7 +1236,8 @@ mod tests {
     fn test_int_add_scalar_flipped() {
         // [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
         // [4, 3, 2, 1] + 10 = [14, 13, 12, 11]
-        let a: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3, 4], &Default::default());
+        let a: Tensor<Flex, 1, Int> =
+            Tensor::from_data([1i64, 2, 3, 4], (&Default::default(), DType::I64));
         let a = a.flip([0]);
 
         let result = a + 10;
@@ -1227,7 +1250,8 @@ mod tests {
     fn test_int_into_float_flipped() {
         // [1, 2, 3, 4] flipped -> [4, 3, 2, 1]
         // Convert to float: [4.0, 3.0, 2.0, 1.0]
-        let t: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3, 4], &Default::default());
+        let t: Tensor<Flex, 1, Int> =
+            Tensor::from_data([1i64, 2, 3, 4], (&Default::default(), DType::I64));
         let t = t.flip([0]);
         let float_t: Tensor<Flex, 1> = t.float();
         let data: Vec<f32> = float_t.into_data().to_vec().unwrap();
@@ -1240,8 +1264,10 @@ mod tests {
         // [[1, 2], [3, 4]] flipped on both axes -> [[4, 3], [2, 1]]
         // [[5, 5], [5, 5]]
         // [[4, 3], [2, 1]] * [[5, 5], [5, 5]] = [[20, 15], [10, 5]]
-        let a: Tensor<Flex, 2, Int> = Tensor::from_data([[1i64, 2], [3, 4]], &Default::default());
-        let b: Tensor<Flex, 2, Int> = Tensor::from_data([[5i64, 5], [5, 5]], &Default::default());
+        let a: Tensor<Flex, 2, Int> =
+            Tensor::from_data([[1i64, 2], [3, 4]], (&Default::default(), DType::I64));
+        let b: Tensor<Flex, 2, Int> =
+            Tensor::from_data([[5i64, 5], [5, 5]], (&Default::default(), DType::I64));
 
         let a = a.flip([0, 1]);
 

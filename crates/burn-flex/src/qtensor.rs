@@ -12,11 +12,44 @@ use crate::tensor::FlexTensor;
 #[derive(Clone, Debug)]
 pub struct FlexQTensor {
     /// The underlying quantized data (stored as i8).
-    pub tensor: FlexTensor,
+    pub(crate) tensor: FlexTensor,
     /// Quantization scheme.
-    pub scheme: QuantScheme,
+    pub(crate) scheme: QuantScheme,
     /// Per-tensor or per-block scale factors.
-    pub scales: Vec<f32>,
+    pub(crate) scales: Vec<f32>,
+}
+
+impl FlexQTensor {
+    /// Create a new quantized tensor.
+    ///
+    /// The tensor must store i8 data and scales must be non-empty.
+    pub fn new(tensor: FlexTensor, scheme: QuantScheme, scales: Vec<f32>) -> Self {
+        assert_eq!(
+            tensor.dtype(),
+            DType::I8,
+            "quantized tensor must store i8 data, got {:?}",
+            tensor.dtype()
+        );
+        assert!(
+            !scales.is_empty(),
+            "quantized tensor must have at least one scale factor"
+        );
+        Self {
+            tensor,
+            scheme,
+            scales,
+        }
+    }
+
+    /// Get the underlying tensor.
+    pub fn tensor(&self) -> &FlexTensor {
+        &self.tensor
+    }
+
+    /// Get the quantization scales.
+    pub fn scales(&self) -> &[f32] {
+        &self.scales
+    }
 }
 
 impl QTensorPrimitive for FlexQTensor {

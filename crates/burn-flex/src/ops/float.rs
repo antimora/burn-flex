@@ -1220,10 +1220,10 @@ mod tests {
 
         let t: Tensor<Flex, 1> = Tensor::from_data([1.5f32, 2.7, -3.9, 0.0], &Default::default());
         let int_t: Tensor<Flex, 1, Int> = t.int();
-        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+        let data: Vec<i32> = int_t.into_data().to_vec().unwrap();
 
         // Truncation towards zero
-        assert_eq!(data, vec![1i64, 2, -3, 0]);
+        assert_eq!(data, vec![1i32, 2, -3, 0]);
     }
 
     #[test]
@@ -1233,9 +1233,9 @@ mod tests {
         let t: Tensor<Flex, 2> =
             Tensor::from_data([[1.1f32, 2.9], [3.5, 4.0]], &Default::default());
         let int_t: Tensor<Flex, 2, Int> = t.int();
-        let data: Vec<i64> = int_t.into_data().to_vec().unwrap();
+        let data: Vec<i32> = int_t.into_data().to_vec().unwrap();
 
-        assert_eq!(data, vec![1i64, 2, 3, 4]);
+        assert_eq!(data, vec![1i32, 2, 3, 4]);
     }
 
     #[test]

@@ -333,6 +333,7 @@ pub fn deform_conv2d_f32(
 
             // Add bias
             if let Some(bd) = bias_data {
+                #[allow(clippy::needless_range_loop)]
                 for oc in 0..channels_out {
                     for s in 0..spatial_out {
                         let idx = b * channels_out * spatial_out + oc * spatial_out + s;

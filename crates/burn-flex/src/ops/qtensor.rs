@@ -62,11 +62,7 @@ impl QTensorOps<Flex> for Flex {
         // Use native storage since we've unpacked to i8
         let scheme = scheme.with_store(QuantStore::Native);
 
-        FlexQTensor {
-            tensor,
-            scheme,
-            scales: qparams.scales,
-        }
+        FlexQTensor::new(tensor, scheme, qparams.scales)
     }
 
     fn quantize_dynamic(tensor: FloatTensor<Flex>, scheme: &QuantScheme) -> QuantizedTensor<Flex> {
@@ -136,11 +132,7 @@ impl QTensorOps<Flex> for Flex {
         let layout = Layout::contiguous(shape);
         let qt = FlexTensor::new(bytes, layout, DType::I8);
 
-        FlexQTensor {
-            tensor: qt,
-            scheme: scheme.with_store(QuantStore::Native),
-            scales,
-        }
+        FlexQTensor::new(qt, scheme.with_store(QuantStore::Native), scales)
     }
 
     fn quantize(
@@ -190,11 +182,7 @@ impl QTensorOps<Flex> for Flex {
         let layout = Layout::contiguous(shape);
         let qt = FlexTensor::new(bytes, layout, DType::I8);
 
-        FlexQTensor {
-            tensor: qt,
-            scheme: scheme.with_store(QuantStore::Native),
-            scales,
-        }
+        FlexQTensor::new(qt, scheme.with_store(QuantStore::Native), scales)
     }
 
     fn dequantize(tensor: QuantizedTensor<Flex>, dtype: FloatDType) -> FloatTensor<Flex> {
@@ -292,11 +280,11 @@ impl QTensorOps<Flex> for Flex {
         indices: IntTensor<Flex>,
     ) -> QuantizedTensor<Flex> {
         match tensor.scheme.level {
-            QuantLevel::Tensor => FlexQTensor {
-                tensor: crate::ops::gather_scatter::select::<i8>(tensor.tensor, dim, indices),
-                scheme: tensor.scheme,
-                scales: tensor.scales,
-            },
+            QuantLevel::Tensor => FlexQTensor::new(
+                crate::ops::gather_scatter::select::<i8>(tensor.tensor, dim, indices),
+                tensor.scheme,
+                tensor.scales,
+            ),
             QuantLevel::Block(_) => {
                 let scheme = tensor.scheme;
                 let float_tensor = Flex::dequantize(tensor, FloatDType::F32);
@@ -342,11 +330,11 @@ impl QTensorOps<Flex> for Flex {
         indices: IntTensor<Flex>,
     ) -> QuantizedTensor<Flex> {
         match tensor.scheme.level {
-            QuantLevel::Tensor => FlexQTensor {
-                tensor: crate::ops::gather_scatter::gather::<i8>(tensor.tensor, dim, indices),
-                scheme: tensor.scheme,
-                scales: tensor.scales,
-            },
+            QuantLevel::Tensor => FlexQTensor::new(
+                crate::ops::gather_scatter::gather::<i8>(tensor.tensor, dim, indices),
+                tensor.scheme,
+                tensor.scales,
+            ),
             QuantLevel::Block(_) => {
                 let scheme = tensor.scheme;
                 let float_tensor = Flex::dequantize(tensor, FloatDType::F32);
@@ -365,11 +353,7 @@ fn block_safe_layout_op(
     op: impl FnOnce(FlexTensor) -> FlexTensor,
 ) -> FlexQTensor {
     match qtensor.scheme.level {
-        QuantLevel::Tensor => FlexQTensor {
-            tensor: op(qtensor.tensor),
-            scheme: qtensor.scheme,
-            scales: qtensor.scales,
-        },
+        QuantLevel::Tensor => FlexQTensor::new(op(qtensor.tensor), qtensor.scheme, qtensor.scales),
         QuantLevel::Block(_) => {
             let scheme = qtensor.scheme;
             let float_tensor = Flex::dequantize(qtensor, FloatDType::F32);

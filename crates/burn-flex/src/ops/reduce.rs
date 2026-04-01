@@ -67,6 +67,10 @@ pub fn sum(tensor: FlexTensor) -> FlexTensor {
         DType::I16 => sum_impl_widening::<i16>(&tensor),
         DType::I32 => sum_impl_widening::<i32>(&tensor),
         DType::I64 => sum_impl::<i64>(&tensor),
+        DType::U8 => sum_impl_widening::<u8>(&tensor),
+        DType::U16 => sum_impl_widening::<u16>(&tensor),
+        DType::U32 => sum_impl_widening::<u32>(&tensor),
+        DType::U64 => sum_impl::<u64>(&tensor),
         _ => panic!("sum: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -262,6 +266,10 @@ pub fn sum_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         DType::I16 => reduce_dim_widening::<i16, _>(&tensor, dim, 0, |acc, x| acc.wrapping_add(x)),
         DType::I32 => reduce_dim_widening::<i32, _>(&tensor, dim, 0, |acc, x| acc.wrapping_add(x)),
         DType::I64 => reduce_dim_impl::<i64, _>(&tensor, dim, 0, |acc, x| acc + x),
+        DType::U8 => reduce_dim_widening::<u8, _>(&tensor, dim, 0, |acc, x| acc.wrapping_add(x)),
+        DType::U16 => reduce_dim_widening::<u16, _>(&tensor, dim, 0, |acc, x| acc.wrapping_add(x)),
+        DType::U32 => reduce_dim_widening::<u32, _>(&tensor, dim, 0, |acc, x| acc.wrapping_add(x)),
+        DType::U64 => reduce_dim_impl::<u64, _>(&tensor, dim, 0, |acc, x| acc + x),
         _ => panic!("sum_dim: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -302,6 +310,26 @@ pub fn mean_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         }
         DType::I32 => scalar_div::<i32>(sum_result, dim_size as i32),
         DType::I64 => scalar_div::<i64>(sum_result, dim_size as i64),
+        DType::U8 => {
+            let divisor = dim_size as u32;
+            let mut tensor = sum_result;
+            let data: &mut [u8] = tensor.storage_mut();
+            for x in data.iter_mut() {
+                *x = ((*x as u32) / divisor) as u8;
+            }
+            tensor
+        }
+        DType::U16 => {
+            let divisor = dim_size as u32;
+            let mut tensor = sum_result;
+            let data: &mut [u16] = tensor.storage_mut();
+            for x in data.iter_mut() {
+                *x = ((*x as u32) / divisor) as u16;
+            }
+            tensor
+        }
+        DType::U32 => scalar_div::<u32>(sum_result, dim_size as u32),
+        DType::U64 => scalar_div::<u64>(sum_result, dim_size as u64),
         _ => panic!("mean_dim: unsupported dtype {:?}", dtype),
     }
 }
@@ -317,6 +345,10 @@ pub fn prod(tensor: FlexTensor) -> FlexTensor {
         DType::I16 => prod_impl_widening::<i16>(&tensor),
         DType::I32 => prod_impl_widening::<i32>(&tensor),
         DType::I64 => prod_impl::<i64>(&tensor),
+        DType::U8 => prod_impl_widening::<u8>(&tensor),
+        DType::U16 => prod_impl_widening::<u16>(&tensor),
+        DType::U32 => prod_impl_widening::<u32>(&tensor),
+        DType::U64 => prod_impl::<u64>(&tensor),
         _ => panic!("prod: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -370,6 +402,10 @@ pub fn prod_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         DType::I16 => reduce_dim_widening::<i16, _>(&tensor, dim, 1, |acc, x| acc.wrapping_mul(x)),
         DType::I32 => reduce_dim_widening::<i32, _>(&tensor, dim, 1, |acc, x| acc.wrapping_mul(x)),
         DType::I64 => reduce_dim_impl::<i64, _>(&tensor, dim, 1, |acc, x| acc * x),
+        DType::U8 => reduce_dim_widening::<u8, _>(&tensor, dim, 1, |acc, x| acc.wrapping_mul(x)),
+        DType::U16 => reduce_dim_widening::<u16, _>(&tensor, dim, 1, |acc, x| acc.wrapping_mul(x)),
+        DType::U32 => reduce_dim_widening::<u32, _>(&tensor, dim, 1, |acc, x| acc.wrapping_mul(x)),
+        DType::U64 => reduce_dim_impl::<u64, _>(&tensor, dim, 1, |acc, x| acc * x),
         _ => panic!("prod_dim: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -401,6 +437,10 @@ pub fn max(tensor: FlexTensor) -> FlexTensor {
         DType::I16 => max_impl::<i16>(&tensor),
         DType::I32 => max_impl::<i32>(&tensor),
         DType::I64 => max_impl::<i64>(&tensor),
+        DType::U8 => max_impl::<u8>(&tensor),
+        DType::U16 => max_impl::<u16>(&tensor),
+        DType::U32 => max_impl::<u32>(&tensor),
+        DType::U64 => max_impl::<u64>(&tensor),
         _ => panic!("max: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -424,6 +464,10 @@ pub fn min(tensor: FlexTensor) -> FlexTensor {
         DType::I16 => min_impl::<i16>(&tensor),
         DType::I32 => min_impl::<i32>(&tensor),
         DType::I64 => min_impl::<i64>(&tensor),
+        DType::U8 => min_impl::<u8>(&tensor),
+        DType::U16 => min_impl::<u16>(&tensor),
+        DType::U32 => min_impl::<u32>(&tensor),
+        DType::U64 => min_impl::<u64>(&tensor),
         _ => panic!("min: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -1118,6 +1162,12 @@ pub fn max_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         DType::BF16 => max_dim_bf16(&tensor, dim, true),
         DType::I64 => max_dim_impl::<i64>(&tensor, dim),
         DType::I32 => max_dim_impl::<i32>(&tensor, dim),
+        DType::I16 => max_dim_impl::<i16>(&tensor, dim),
+        DType::I8 => max_dim_impl::<i8>(&tensor, dim),
+        DType::U64 => max_dim_impl::<u64>(&tensor, dim),
+        DType::U32 => max_dim_impl::<u32>(&tensor, dim),
+        DType::U16 => max_dim_impl::<u16>(&tensor, dim),
+        DType::U8 => max_dim_impl::<u8>(&tensor, dim),
         _ => panic!("max_dim: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -1135,6 +1185,12 @@ pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         DType::BF16 => min_dim_bf16(&tensor, dim, true),
         DType::I64 => min_dim_impl::<i64>(&tensor, dim),
         DType::I32 => min_dim_impl::<i32>(&tensor, dim),
+        DType::I16 => min_dim_impl::<i16>(&tensor, dim),
+        DType::I8 => min_dim_impl::<i8>(&tensor, dim),
+        DType::U64 => min_dim_impl::<u64>(&tensor, dim),
+        DType::U32 => min_dim_impl::<u32>(&tensor, dim),
+        DType::U16 => min_dim_impl::<u16>(&tensor, dim),
+        DType::U8 => min_dim_impl::<u8>(&tensor, dim),
         _ => panic!("min_dim: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -1163,6 +1219,12 @@ pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
         }
         DType::I64 => max_dim_with_indices_impl::<i64>(&tensor, dim),
         DType::I32 => max_dim_with_indices_impl::<i32>(&tensor, dim),
+        DType::I16 => max_dim_with_indices_impl::<i16>(&tensor, dim),
+        DType::I8 => max_dim_with_indices_impl::<i8>(&tensor, dim),
+        DType::U64 => max_dim_with_indices_impl::<u64>(&tensor, dim),
+        DType::U32 => max_dim_with_indices_impl::<u32>(&tensor, dim),
+        DType::U16 => max_dim_with_indices_impl::<u16>(&tensor, dim),
+        DType::U8 => max_dim_with_indices_impl::<u8>(&tensor, dim),
         _ => panic!(
             "max_dim_with_indices: unsupported dtype {:?}",
             tensor.dtype()
@@ -1194,6 +1256,12 @@ pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
         }
         DType::I64 => min_dim_with_indices_impl::<i64>(&tensor, dim),
         DType::I32 => min_dim_with_indices_impl::<i32>(&tensor, dim),
+        DType::I16 => min_dim_with_indices_impl::<i16>(&tensor, dim),
+        DType::I8 => min_dim_with_indices_impl::<i8>(&tensor, dim),
+        DType::U64 => min_dim_with_indices_impl::<u64>(&tensor, dim),
+        DType::U32 => min_dim_with_indices_impl::<u32>(&tensor, dim),
+        DType::U16 => min_dim_with_indices_impl::<u16>(&tensor, dim),
+        DType::U8 => min_dim_with_indices_impl::<u8>(&tensor, dim),
         _ => panic!(
             "min_dim_with_indices: unsupported dtype {:?}",
             tensor.dtype()
@@ -2561,5 +2629,89 @@ mod tests {
     fn test_min_dim_zero_size_panics() {
         let tensor = FlexTensor::from_data(TensorData::new(Vec::<f32>::new(), [3, 0]));
         min_dim(tensor, 1);
+    }
+
+    // === Unsigned integer dtype tests ===
+
+    #[test]
+    fn test_sum_u32() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10u32, 20, 30], [3]));
+        let result = sum(tensor);
+        let data: Vec<u32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![60]);
+    }
+
+    #[test]
+    fn test_sum_u64() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![100u64, 200, 300], [3]));
+        let result = sum(tensor);
+        let data: Vec<u64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![600]);
+    }
+
+    #[test]
+    fn test_sum_dim_u8() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![1u8, 2, 3, 4], [2, 2]));
+        let result = sum_dim(tensor, 1);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![3, 7]);
+    }
+
+    #[test]
+    fn test_prod_u16() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![2u16, 3, 5], [3]));
+        let result = prod(tensor);
+        let data: Vec<u16> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![30]);
+    }
+
+    #[test]
+    fn test_max_u32() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![5u32, 100, 42], [3]));
+        let result = max(tensor);
+        let data: Vec<u32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![100]);
+    }
+
+    #[test]
+    fn test_min_u8() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![5u8, 1, 42], [3]));
+        let result = min(tensor);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1]);
+    }
+
+    #[test]
+    fn test_max_dim_u64() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10u64, 20, 30, 5], [2, 2]));
+        let result = max_dim(tensor, 1);
+        let data: Vec<u64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![20, 30]);
+    }
+
+    #[test]
+    fn test_min_dim_u16() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10u16, 2, 30, 5], [2, 2]));
+        let result = min_dim(tensor, 1);
+        let data: Vec<u16> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![2, 5]);
+    }
+
+    #[test]
+    fn test_mean_dim_u8() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10u8, 20, 30, 40], [2, 2]));
+        let result = mean_dim(tensor, 1);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![15, 35]);
+    }
+
+    #[test]
+    fn test_max_dim_with_indices_u32() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![5u32, 10, 3, 8], [2, 2]));
+        let (values, indices) = max_dim_with_indices(tensor, 1);
+        let vals: Vec<u32> = values.into_data().to_vec().unwrap();
+        let idxs: Vec<isize> = bytemuck::cast_slice(&indices.into_data().bytes).to_vec();
+        assert_eq!(vals, vec![10, 8]);
+        assert_eq!(idxs, vec![1, 1]);
     }
 }

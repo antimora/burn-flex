@@ -29,6 +29,23 @@ Do not start new feature work without confirming the PR/merge status first.
 - Index-producing ops must respect `out_dtype`/`indices_dtype` parameters. Use `isize` +
   `INDEX_DTYPE` internally, then `int_cast` to requested dtype. Never hardcode `i64`.
 
+## Tensor Creation in Tests
+
+Never rely on default `IntElem`/`FloatElem` associated types for dtype. Always use explicit dtypes:
+
+```rust
+// WRONG: relies on default IntElem
+let t: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3], &Default::default());
+
+// RIGHT: explicit dtype via tuple (device, dtype)
+let t: Tensor<Flex, 1, Int> = Tensor::from_data([1i64, 2, 3], (&Default::default(), DType::I64));
+```
+
+The `(&device, DType)` tuple form passes the dtype explicitly, bypassing the default `IntElem`/`FloatElem`.
+
+For `.int()` / `.float()` conversions that use the default elem type, match assertions to the
+current default (`IntElem = i32`, `FloatElem = f32`).
+
 ## Testing
 
 Write generous tests. Cover:

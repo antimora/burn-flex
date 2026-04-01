@@ -29,8 +29,10 @@ mod qtensor;
 mod strided_index;
 mod tensor;
 
+#[doc(hidden)]
 pub mod ops;
 
+#[doc(hidden)]
 pub mod simd;
 
 pub use backend::{Flex, FlexDevice};

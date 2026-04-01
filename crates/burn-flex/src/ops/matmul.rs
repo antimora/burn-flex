@@ -1030,9 +1030,9 @@ fn dot_i32(a: &[i32], b: &[i32]) -> i32 {
     }
 }
 
-/// Scalar dot product fallback.
+/// Scalar dot product fallback (used when aarch64+simd is not active).
+#[cfg(not(all(target_arch = "aarch64", feature = "simd")))]
 #[inline]
-#[allow(dead_code)]
 fn dot_i32_scalar(a: &[i32], b: &[i32]) -> i32 {
     let mut sum = 0i32;
     for i in 0..a.len() {
