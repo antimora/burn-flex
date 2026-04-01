@@ -118,9 +118,8 @@ macro_rules! grid_sample_2d_typed {
                             let o_idx = b * o_stride_n + c * o_stride_c + y * o_stride_h + x;
 
                             let val = if matches!(options.mode, InterpolateMode::Nearest) {
-                                // Round half away from zero to match PyTorch behavior
-                                let xi = (px + 0.5).floor() as i64;
-                                let yi = (py + 0.5).floor() as i64;
+                                let xi = px.round() as i64;
+                                let yi = py.round() as i64;
                                 read(t_base, xi, yi)
                             } else {
                                 // Bilinear
