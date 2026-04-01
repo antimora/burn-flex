@@ -13,7 +13,7 @@ use crate::{FlexTensor, Layout};
 
 use crate::simd;
 
-/// Re-export the comparison op enum from simd to avoid duplication.
+/// Comparison operation type for SIMD dispatch.
 pub use simd::CmpOp as CompareOp;
 
 /// Compare two tensors element-wise, returning a boolean tensor.

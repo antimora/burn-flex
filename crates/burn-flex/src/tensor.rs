@@ -60,6 +60,13 @@ impl FlexTensor {
     pub fn into_data(self) -> TensorData {
         if self.layout.is_contiguous() && self.layout.start_offset() == 0 {
             let expected_bytes = self.layout.num_elements() * dtype_size(self.dtype);
+            debug_assert!(
+                expected_bytes <= self.data.len(),
+                "into_data: buffer ({} bytes) too small for {} elements of {:?}",
+                self.data.len(),
+                self.layout.num_elements(),
+                self.dtype
+            );
             if self.data.len() == expected_bytes {
                 // Buffer exactly matches logical size; try zero-copy unwrap
                 match Arc::try_unwrap(self.data) {

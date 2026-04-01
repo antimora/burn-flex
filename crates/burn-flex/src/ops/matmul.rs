@@ -1030,7 +1030,7 @@ fn dot_i32(a: &[i32], b: &[i32]) -> i32 {
     }
 }
 
-/// Scalar dot product fallback for platforms without NEON.
+/// Scalar dot product fallback (used when aarch64+simd is not active).
 #[cfg(not(all(target_arch = "aarch64", feature = "simd")))]
 #[inline]
 fn dot_i32_scalar(a: &[i32], b: &[i32]) -> i32 {

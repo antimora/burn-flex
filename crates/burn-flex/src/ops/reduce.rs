@@ -2630,4 +2630,88 @@ mod tests {
         let tensor = FlexTensor::from_data(TensorData::new(Vec::<f32>::new(), [3, 0]));
         min_dim(tensor, 1);
     }
+
+    // === Unsigned integer dtype tests ===
+
+    #[test]
+    fn test_sum_u32() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10u32, 20, 30], [3]));
+        let result = sum(tensor);
+        let data: Vec<u32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![60]);
+    }
+
+    #[test]
+    fn test_sum_u64() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![100u64, 200, 300], [3]));
+        let result = sum(tensor);
+        let data: Vec<u64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![600]);
+    }
+
+    #[test]
+    fn test_sum_dim_u8() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![1u8, 2, 3, 4], [2, 2]));
+        let result = sum_dim(tensor, 1);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![3, 7]);
+    }
+
+    #[test]
+    fn test_prod_u16() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![2u16, 3, 5], [3]));
+        let result = prod(tensor);
+        let data: Vec<u16> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![30]);
+    }
+
+    #[test]
+    fn test_max_u32() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![5u32, 100, 42], [3]));
+        let result = max(tensor);
+        let data: Vec<u32> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![100]);
+    }
+
+    #[test]
+    fn test_min_u8() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![5u8, 1, 42], [3]));
+        let result = min(tensor);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![1]);
+    }
+
+    #[test]
+    fn test_max_dim_u64() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10u64, 20, 30, 5], [2, 2]));
+        let result = max_dim(tensor, 1);
+        let data: Vec<u64> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![20, 30]);
+    }
+
+    #[test]
+    fn test_min_dim_u16() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10u16, 2, 30, 5], [2, 2]));
+        let result = min_dim(tensor, 1);
+        let data: Vec<u16> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![2, 5]);
+    }
+
+    #[test]
+    fn test_mean_dim_u8() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![10u8, 20, 30, 40], [2, 2]));
+        let result = mean_dim(tensor, 1);
+        let data: Vec<u8> = result.into_data().to_vec().unwrap();
+        assert_eq!(data, vec![15, 35]);
+    }
+
+    #[test]
+    fn test_max_dim_with_indices_u32() {
+        let tensor = FlexTensor::from_data(TensorData::new(vec![5u32, 10, 3, 8], [2, 2]));
+        let (values, indices) = max_dim_with_indices(tensor, 1);
+        let vals: Vec<u32> = values.into_data().to_vec().unwrap();
+        let idxs: Vec<isize> = bytemuck::cast_slice(&indices.into_data().bytes).to_vec();
+        assert_eq!(vals, vec![10, 8]);
+        assert_eq!(idxs, vec![1, 1]);
+    }
 }

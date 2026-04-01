@@ -21,7 +21,19 @@ pub struct FlexQTensor {
 
 impl FlexQTensor {
     /// Create a new quantized tensor.
+    ///
+    /// The tensor must store i8 data and scales must be non-empty.
     pub fn new(tensor: FlexTensor, scheme: QuantScheme, scales: Vec<f32>) -> Self {
+        debug_assert_eq!(
+            tensor.dtype(),
+            DType::I8,
+            "quantized tensor must store i8 data, got {:?}",
+            tensor.dtype()
+        );
+        debug_assert!(
+            !scales.is_empty(),
+            "quantized tensor must have at least one scale factor"
+        );
         Self {
             tensor,
             scheme,
