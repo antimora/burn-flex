@@ -353,11 +353,7 @@ fn block_safe_layout_op(
     op: impl FnOnce(FlexTensor) -> FlexTensor,
 ) -> FlexQTensor {
     match qtensor.scheme.level {
-        QuantLevel::Tensor => FlexQTensor::new(
-            op(qtensor.tensor),
-            qtensor.scheme,
-            qtensor.scales,
-        ),
+        QuantLevel::Tensor => FlexQTensor::new(op(qtensor.tensor), qtensor.scheme, qtensor.scales),
         QuantLevel::Block(_) => {
             let scheme = qtensor.scheme;
             let float_tensor = Flex::dequantize(qtensor, FloatDType::F32);

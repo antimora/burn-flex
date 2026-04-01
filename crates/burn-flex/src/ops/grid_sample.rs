@@ -214,8 +214,8 @@ fn reflect_coordinate(coord: f64, size: usize, align_corners: bool) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_backend::ops::GridSampleOptions;
     use burn_backend::TensorData;
+    use burn_backend::ops::GridSampleOptions;
 
     fn make_grid_f32(data: &[f32], shape: [usize; 4]) -> FlexTensor {
         FlexTensor::from_data(TensorData::new(data.to_vec(), shape.to_vec()))
@@ -241,10 +241,7 @@ mod tests {
     #[test]
     fn test_nearest_vs_bilinear() {
         // 1x1x3x3 input with distinct values
-        let input = make_grid_f32(
-            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
-            [1, 1, 3, 3],
-        );
+        let input = make_grid_f32(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], [1, 1, 3, 3]);
         // Grid at center (0,0) with align_corners=true maps to (1,1) = 5.0
         let grid = make_grid_f32(&[0.0, 0.0], [1, 1, 1, 2]);
 
