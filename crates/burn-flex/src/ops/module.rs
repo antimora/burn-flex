@@ -708,6 +708,20 @@ impl ModuleOps<Flex> for Flex {
         }
     }
 
+    fn irfft(
+        spectrum_re: FloatTensor<Flex>,
+        spectrum_im: FloatTensor<Flex>,
+        dim: usize,
+    ) -> FloatTensor<Flex> {
+        match spectrum_re.dtype() {
+            DType::F32 => crate::ops::fft::irfft_f32(spectrum_re, spectrum_im, dim),
+            DType::F64 => crate::ops::fft::irfft_f64(spectrum_re, spectrum_im, dim),
+            DType::F16 => crate::ops::fft::irfft_f16(spectrum_re, spectrum_im, dim),
+            DType::BF16 => crate::ops::fft::irfft_bf16(spectrum_re, spectrum_im, dim),
+            dtype => panic!("irfft: unsupported dtype {:?}", dtype),
+        }
+    }
+
     fn embedding(weights: FloatTensor<Flex>, indices: IntTensor<Flex>) -> FloatTensor<Flex> {
         let [batch_size, seq_length] = indices.shape().dims();
         let [_, d_model] = weights.shape().dims();

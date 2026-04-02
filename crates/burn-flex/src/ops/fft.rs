@@ -356,7 +356,7 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
 }
 
 // ============================================================================
-// General complex FFT: radix-4/radix-2 with SIMD
+// General complex FFT: mixed radix-4/radix-2 with SIMD
 // ============================================================================
 
 /// Complex FFT of size n (power of 2) using precomputed twiddles.
@@ -381,14 +381,16 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
 
     bit_reverse_permute(re, im, n);
 
-    let offsets = tw.offsets();
     let tw_re = tw.re();
     let tw_im = tw.im();
+    let offsets = tw.offsets();
     let num_stages = offsets.len() - 1;
 
-    // For odd number of stages, do one radix-2 pass first
+    // For odd number of stages, do one radix-2 pass first so the
+    // remaining stages can be processed in radix-4 pairs.
+    // For odd number of stages, do one radix-2 pass first.
+    // Stage 0 twiddle is always W_2^0 = 1, so just add/sub.
     let start_stage = if num_stages % 2 == 1 {
-        // Stage 0: radix-2, len=2, half=1, twiddle=1 for all groups
         let mut start = 0;
         while start < n {
             let (a, b) = (re[start] + re[start + 1], re[start] - re[start + 1]);
@@ -404,7 +406,6 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
         0
     };
 
-    // Remaining stages: radix-4 (pairs of radix-2 stages)
     #[cfg(feature = "simd")]
     {
         simd_fft::radix4_simd(re, im, n, tw_re, tw_im, offsets, start_stage, num_stages);
@@ -415,63 +416,13 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
     }
 }
 
-/// Single radix-4 butterfly at position p0 with given quarter stride and twiddle offsets.
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn scalar_radix4_butterfly(
-    re: &mut [f32],
-    im: &mut [f32],
-    p0: usize,
-    quarter: usize,
-    tw_re: &[f32],
-    tw_im: &[f32],
-    tw_off_inner: usize,
-    tw_off_outer: usize,
-    k: usize,
-) {
-    let p1 = p0 + quarter;
-    let p2 = p1 + quarter;
-    let p3 = p2 + quarter;
-
-    let w1_re = tw_re[tw_off_outer + k];
-    let w1_im = tw_im[tw_off_outer + k];
-    let w2_re = tw_re[tw_off_inner + k];
-    let w2_im = tw_im[tw_off_inner + k];
-    // W3 = W1 * W2
-    let w3_re = w1_re * w2_re - w1_im * w2_im;
-    let w3_im = w1_re * w2_im + w1_im * w2_re;
-
-    let b_re = w1_re * re[p1] - w1_im * im[p1];
-    let b_im = w1_re * im[p1] + w1_im * re[p1];
-    let c_re = w2_re * re[p2] - w2_im * im[p2];
-    let c_im = w2_re * im[p2] + w2_im * re[p2];
-    let d_re = w3_re * re[p3] - w3_im * im[p3];
-    let d_im = w3_re * im[p3] + w3_im * re[p3];
-
-    let a_re = re[p0];
-    let a_im = im[p0];
-
-    // Radix-4 core: -i * (b - d) where -i*(x+iy) = (y, -x)
-    let u0_re = a_re + c_re;
-    let u0_im = a_im + c_im;
-    let u1_re = a_re - c_re;
-    let u1_im = a_im - c_im;
-    let u2_re = b_re + d_re;
-    let u2_im = b_im + d_im;
-    let diff_re = b_re - d_re;
-    let diff_im = b_im - d_im;
-
-    re[p0] = u0_re + u2_re;
-    im[p0] = u0_im + u2_im;
-    re[p1] = u1_re + diff_im;
-    im[p1] = u1_im - diff_re;
-    re[p2] = u0_re - u2_re;
-    im[p2] = u0_im - u2_im;
-    re[p3] = u1_re - diff_im;
-    im[p3] = u1_im + diff_re;
-}
-
-/// Scalar radix-4 butterfly stages. Processes two radix-2 stages at once.
+/// Correct DIT radix-4: fuse two radix-2 stages into one pass.
+///
+/// For each pair of stages (s, s+1) with quarter = 2^s:
+/// 1. Apply W_{2q}^k to x[p1] and x[p3] (inner stage twiddle, same for both)
+/// 2. Inner butterflies: a=p0+tw1, b=p0-tw1, c=p2+tw3, d=p2-tw3
+/// 3. Apply W_{4q}^k to c and d; d also gets -i rotation
+/// 4. Outer butterflies: p0=a+tc, p2=a-tc, p1=b+(-i*td), p3=b-(-i*td)
 #[cfg(not(feature = "simd"))]
 #[allow(clippy::too_many_arguments)]
 fn radix4_scalar(
@@ -488,23 +439,52 @@ fn radix4_scalar(
     while stage + 1 < num_stages {
         let quarter = 1 << stage;
         let group_size = quarter << 2;
-        let tw_off_inner = offsets[stage];
-        let tw_off_outer = offsets[stage + 1];
+        let tw_off_inner = offsets[stage]; // W_{2q}^k
+        let tw_off_outer = offsets[stage + 1]; // W_{4q}^k
 
         let mut group_start = 0;
         while group_start < n {
             for k in 0..quarter {
-                scalar_radix4_butterfly(
-                    re,
-                    im,
-                    group_start + k,
-                    quarter,
-                    tw_re,
-                    tw_im,
-                    tw_off_inner,
-                    tw_off_outer,
-                    k,
-                );
+                let p0 = group_start + k;
+                let p1 = p0 + quarter;
+                let p2 = p1 + quarter;
+                let p3 = p2 + quarter;
+
+                // Inner twiddle: W_{2q}^k applied to p1 and p3
+                let wi_re = tw_re[tw_off_inner + k];
+                let wi_im = tw_im[tw_off_inner + k];
+                let tw1_re = wi_re * re[p1] - wi_im * im[p1];
+                let tw1_im = wi_re * im[p1] + wi_im * re[p1];
+                let tw3_re = wi_re * re[p3] - wi_im * im[p3];
+                let tw3_im = wi_re * im[p3] + wi_im * re[p3];
+
+                // Inner butterflies
+                let a_re = re[p0] + tw1_re;
+                let a_im = im[p0] + tw1_im;
+                let b_re = re[p0] - tw1_re;
+                let b_im = im[p0] - tw1_im;
+                let c_re = re[p2] + tw3_re;
+                let c_im = im[p2] + tw3_im;
+                let d_re = re[p2] - tw3_re;
+                let d_im = im[p2] - tw3_im;
+
+                // Outer twiddle: W_{4q}^k applied to c and d
+                let wo_re = tw_re[tw_off_outer + k];
+                let wo_im = tw_im[tw_off_outer + k];
+                let tc_re = wo_re * c_re - wo_im * c_im;
+                let tc_im = wo_re * c_im + wo_im * c_re;
+                let td_re = wo_re * d_re - wo_im * d_im;
+                let td_im = wo_re * d_im + wo_im * d_re;
+
+                // Outer butterflies (-i*(td_re+i*td_im) = (td_im, -td_re))
+                re[p0] = a_re + tc_re;
+                im[p0] = a_im + tc_im;
+                re[p2] = a_re - tc_re;
+                im[p2] = a_im - tc_im;
+                re[p1] = b_re + td_im;
+                im[p1] = b_im - td_re;
+                re[p3] = b_re - td_im;
+                im[p3] = b_im + td_re;
             }
             group_start += group_size;
         }
@@ -516,6 +496,58 @@ fn radix4_scalar(
 mod simd_fft {
     use macerator::{Simd, vload_unaligned, vstore_unaligned};
 
+    /// Scalar radix-4 butterfly for the SIMD tail path.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn scalar_radix4(
+        re: &mut [f32],
+        im: &mut [f32],
+        p0: usize,
+        quarter: usize,
+        tw_re: &[f32],
+        tw_im: &[f32],
+        tw_off_inner: usize,
+        tw_off_outer: usize,
+        k: usize,
+    ) {
+        let p1 = p0 + quarter;
+        let p2 = p1 + quarter;
+        let p3 = p2 + quarter;
+
+        let wi_r = tw_re[tw_off_inner + k];
+        let wi_i = tw_im[tw_off_inner + k];
+        let tw1_re = wi_r * re[p1] - wi_i * im[p1];
+        let tw1_im = wi_r * im[p1] + wi_i * re[p1];
+        let tw3_re = wi_r * re[p3] - wi_i * im[p3];
+        let tw3_im = wi_r * im[p3] + wi_i * re[p3];
+
+        let a_re = re[p0] + tw1_re;
+        let a_im = im[p0] + tw1_im;
+        let b_re = re[p0] - tw1_re;
+        let b_im = im[p0] - tw1_im;
+        let c_re = re[p2] + tw3_re;
+        let c_im = im[p2] + tw3_im;
+        let d_re = re[p2] - tw3_re;
+        let d_im = im[p2] - tw3_im;
+
+        let wo_r = tw_re[tw_off_outer + k];
+        let wo_i = tw_im[tw_off_outer + k];
+        let tc_re = wo_r * c_re - wo_i * c_im;
+        let tc_im = wo_r * c_im + wo_i * c_re;
+        let td_re = wo_r * d_re - wo_i * d_im;
+        let td_im = wo_r * d_im + wo_i * d_re;
+
+        re[p0] = a_re + tc_re;
+        im[p0] = a_im + tc_im;
+        re[p2] = a_re - tc_re;
+        im[p2] = a_im - tc_im;
+        re[p1] = b_re + td_im;
+        im[p1] = b_im - td_re;
+        re[p3] = b_re - td_im;
+        im[p3] = b_im + td_re;
+    }
+
+    /// SIMD radix-4 butterfly passes (pairs of radix-2 stages).
     #[macerator::with_simd]
     #[allow(clippy::too_many_arguments)]
     pub fn radix4_simd<S: Simd>(
@@ -538,72 +570,71 @@ mod simd_fft {
             let tw_off_outer = offsets[stage + 1];
 
             if quarter >= lanes {
-                // SIMD path
                 let mut group_start = 0;
                 while group_start < n {
                     let mut k = 0;
                     while k + lanes <= quarter {
                         unsafe {
-                            // Load twiddle factors
-                            let w1r =
-                                vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_outer + k));
-                            let w1i =
-                                vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_outer + k));
-                            let w2r =
+                            // Inner twiddle: W_{2q}^k
+                            let wi_r =
                                 vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_inner + k));
-                            let w2i =
+                            let wi_i =
                                 vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_inner + k));
-                            // W3 = W1 * W2
-                            let w3r = w1r * w2r - w1i * w2i;
-                            let w3i = w1r * w2i + w1i * w2r;
 
                             let p0 = group_start + k;
                             let p1 = p0 + quarter;
                             let p2 = p1 + quarter;
                             let p3 = p2 + quarter;
 
-                            let a_re = vload_unaligned::<S, f32>(re.as_ptr().add(p0));
-                            let a_im = vload_unaligned::<S, f32>(im.as_ptr().add(p0));
-                            let re_p1 = vload_unaligned::<S, f32>(re.as_ptr().add(p1));
-                            let im_p1 = vload_unaligned::<S, f32>(im.as_ptr().add(p1));
-                            let re_p2 = vload_unaligned::<S, f32>(re.as_ptr().add(p2));
-                            let im_p2 = vload_unaligned::<S, f32>(im.as_ptr().add(p2));
-                            let re_p3 = vload_unaligned::<S, f32>(re.as_ptr().add(p3));
-                            let im_p3 = vload_unaligned::<S, f32>(im.as_ptr().add(p3));
+                            let r0 = vload_unaligned::<S, f32>(re.as_ptr().add(p0));
+                            let i0 = vload_unaligned::<S, f32>(im.as_ptr().add(p0));
+                            let r1 = vload_unaligned::<S, f32>(re.as_ptr().add(p1));
+                            let i1 = vload_unaligned::<S, f32>(im.as_ptr().add(p1));
+                            let r2 = vload_unaligned::<S, f32>(re.as_ptr().add(p2));
+                            let i2 = vload_unaligned::<S, f32>(im.as_ptr().add(p2));
+                            let r3 = vload_unaligned::<S, f32>(re.as_ptr().add(p3));
+                            let i3 = vload_unaligned::<S, f32>(im.as_ptr().add(p3));
 
-                            // Apply twiddles
-                            let b_re = w1r * re_p1 - w1i * im_p1;
-                            let b_im = w1r * im_p1 + w1i * re_p1;
-                            let c_re = w2r * re_p2 - w2i * im_p2;
-                            let c_im = w2r * im_p2 + w2i * re_p2;
-                            let d_re = w3r * re_p3 - w3i * im_p3;
-                            let d_im = w3r * im_p3 + w3i * re_p3;
+                            // Apply inner twiddle to p1 and p3
+                            let tw1_re = wi_r * r1 - wi_i * i1;
+                            let tw1_im = wi_r * i1 + wi_i * r1;
+                            let tw3_re = wi_r * r3 - wi_i * i3;
+                            let tw3_im = wi_r * i3 + wi_i * r3;
 
-                            // Radix-4 core
-                            let u0r = a_re + c_re;
-                            let u0i = a_im + c_im;
-                            let u1r = a_re - c_re;
-                            let u1i = a_im - c_im;
-                            let u2r = b_re + d_re;
-                            let u2i = b_im + d_im;
-                            let dr = b_re - d_re;
-                            let di = b_im - d_im;
-                            let u3r = di; // -i * (dr + di*i) = (di, -dr)
-                            let u3i = dr; // negated below via subtraction
+                            // Inner butterflies
+                            let a_re = r0 + tw1_re;
+                            let a_im = i0 + tw1_im;
+                            let b_re = r0 - tw1_re;
+                            let b_im = i0 - tw1_im;
+                            let c_re = r2 + tw3_re;
+                            let c_im = i2 + tw3_im;
+                            let d_re = r2 - tw3_re;
+                            let d_im = i2 - tw3_im;
 
-                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p0), u0r + u2r);
-                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p0), u0i + u2i);
-                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p1), u1r + u3r);
-                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p1), u1i - u3i);
-                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p2), u0r - u2r);
-                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p2), u0i - u2i);
-                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p3), u1r - u3r);
-                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p3), u1i + u3i);
+                            // Outer twiddle: W_{4q}^k
+                            let wo_r =
+                                vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_outer + k));
+                            let wo_i =
+                                vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_outer + k));
+                            let tc_re = wo_r * c_re - wo_i * c_im;
+                            let tc_im = wo_r * c_im + wo_i * c_re;
+                            let td_re = wo_r * d_re - wo_i * d_im;
+                            let td_im = wo_r * d_im + wo_i * d_re;
+
+                            // Outer butterflies: -i*(td_re+i*td_im) = (td_im, -td_re)
+                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p0), a_re + tc_re);
+                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p0), a_im + tc_im);
+                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p2), a_re - tc_re);
+                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p2), a_im - tc_im);
+                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p1), b_re + td_im);
+                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p1), b_im - td_re);
+                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p3), b_re - td_im);
+                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p3), b_im + td_re);
                         }
                         k += lanes;
                     }
                     while k < quarter {
-                        super::scalar_radix4_butterfly(
+                        scalar_radix4(
                             re,
                             im,
                             group_start + k,
@@ -619,11 +650,10 @@ mod simd_fft {
                     group_start += group_size;
                 }
             } else {
-                // Small quarter: all scalar
                 let mut group_start = 0;
                 while group_start < n {
                     for k in 0..quarter {
-                        super::scalar_radix4_butterfly(
+                        scalar_radix4(
                             re,
                             im,
                             group_start + k,
@@ -1086,7 +1116,7 @@ fn fft_f64_inplace(
         }
     }
 
-    // Scalar radix-2 passes (radix-4 fusion not implemented for f64)
+    // Scalar radix-2 passes
     let num_stages = offsets.len() - 1;
     let mut len = 2;
     for &tw_off in &offsets[..num_stages] {
@@ -1131,6 +1161,316 @@ pub fn rfft_bf16(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     )
 }
 
+// ============================================================================
+// Inverse real FFT (irfft)
+// ============================================================================
+
+/// Inverse complex FFT: IFFT(X) = (1/N) * conj(FFT(conj(X))).
+///
+/// Conjugates input, runs the forward FFT (with SIMD), conjugates
+/// output, and scales by 1/N.
+#[inline]
+fn inverse_complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
+    if n <= 1 {
+        return;
+    }
+
+    // Conjugate input
+    for v in im.iter_mut() {
+        *v = -*v;
+    }
+
+    // Forward FFT (uses SIMD radix-2 when available)
+    complex_fft(re, im, n, tw);
+
+    // Conjugate output and scale by 1/N
+    let scale = 1.0 / n as f32;
+    for v in re.iter_mut() {
+        *v *= scale;
+    }
+    for v in im.iter_mut() {
+        *v = -*v * scale;
+    }
+}
+
+/// Repack N/2+1 spectrum bins into N/2 complex values Z[k],
+/// reversing rfft's unpack step.
+///
+/// Z[k] = Xe[k] + i*conj(W)*D[k] where:
+///   Xe = (X[k] + conj(X[half-k])) / 2
+///   D  = (X[k] - conj(X[half-k])) / 2
+///   W  = W_N^k (same twiddle used in rfft unpack)
+fn repack_irfft(
+    x_re: &[f32],
+    x_im: &[f32],
+    half: usize,
+    tw_re: &[f32],
+    tw_im: &[f32],
+    z_re: &mut [f32],
+    z_im: &mut [f32],
+) {
+    // k=0: Z[0] = (X[0] + X[half])/2 + i*(X[0] - X[half])/2
+    z_re[0] = (x_re[0] + x_re[half]) * 0.5;
+    z_im[0] = (x_re[0] - x_re[half]) * 0.5;
+
+    for k in 1..half {
+        let j = half - k;
+        let (xk_re, xk_im) = (x_re[k], x_im[k]);
+        let (xj_re, xj_im) = (x_re[j], x_im[j]);
+
+        // Xe = (X[k] + conj(X[j])) / 2
+        let a_re = (xk_re + xj_re) * 0.5;
+        let a_im = (xk_im - xj_im) * 0.5;
+
+        // D = (X[k] - conj(X[j])) / 2
+        let d_re = (xk_re - xj_re) * 0.5;
+        let d_im = (xk_im + xj_im) * 0.5;
+
+        // i*conj(W)*D where W = (wr, wi), conj(W) = (wr, -wi)
+        // conj(W)*D = (wr*d_re + wi*d_im, wr*d_im - wi*d_re)
+        // i*(...) = (-(wr*d_im - wi*d_re), wr*d_re + wi*d_im)
+        let wr = tw_re[k];
+        let wi = tw_im[k];
+
+        z_re[k] = a_re - wr * d_im + wi * d_re;
+        z_im[k] = a_im + wr * d_re + wi * d_im;
+    }
+}
+
+/// Process a single irfft fiber via inverse packing trick.
+///
+/// Repacks N/2+1 spectrum bins into N/2 complex values, runs N/2-point
+/// inverse complex FFT, then de-interleaves to N real output values.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn irfft_fiber(
+    re_in: &[f32],
+    im_in: &[f32],
+    in_stride: usize,
+    half: usize,
+    signal_out: &mut [f32],
+    out_stride: usize,
+    tw_half: &TwiddleRef,
+    unpack_tw_re: &[f32],
+    unpack_tw_im: &[f32],
+    z_re: &mut [f32],
+    z_im: &mut [f32],
+    spec_re: &mut [f32],
+    spec_im: &mut [f32],
+) {
+    for k in 0..=half {
+        spec_re[k] = re_in[k * in_stride];
+        spec_im[k] = im_in[k * in_stride];
+    }
+
+    repack_irfft(
+        spec_re,
+        spec_im,
+        half,
+        unpack_tw_re,
+        unpack_tw_im,
+        z_re,
+        z_im,
+    );
+
+    // Inverse complex FFT of size N/2
+    inverse_complex_fft(z_re, z_im, half, tw_half);
+
+    // De-interleave: signal[2k] = z_re[k], signal[2k+1] = z_im[k]
+    if out_stride == 1 {
+        for k in 0..half {
+            signal_out[2 * k] = z_re[k];
+            signal_out[2 * k + 1] = z_im[k];
+        }
+    } else {
+        for k in 0..half {
+            signal_out[(2 * k) * out_stride] = z_re[k];
+            signal_out[(2 * k + 1) * out_stride] = z_im[k];
+        }
+    }
+}
+
+pub fn irfft_f32(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -> FlexTensor {
+    let spectrum_re = spectrum_re.to_contiguous();
+    let spectrum_im = spectrum_im.to_contiguous();
+    let shape = spectrum_re.layout().shape().clone();
+    assert!(
+        *spectrum_im.layout().shape() == shape,
+        "irfft: spectrum_re and spectrum_im shapes must match"
+    );
+    assert!(
+        dim < shape.num_dims(),
+        "irfft: dim {dim} out of bounds for {}-D tensor",
+        shape.num_dims()
+    );
+    let half_plus_1 = shape[dim];
+    assert!(
+        half_plus_1 >= 1,
+        "irfft: spectrum dimension cannot be empty"
+    );
+
+    // N=1: single DC bin, output is just the real value
+    if half_plus_1 == 1 {
+        let data: &[f32] = spectrum_re.storage();
+        return FlexTensor::new(
+            Bytes::from_elems(data.to_vec()),
+            spectrum_re.layout().clone(),
+            burn_backend::DType::F32,
+        );
+    }
+
+    let half = half_plus_1 - 1;
+    let n = 2 * half;
+    assert!(
+        n.is_power_of_two(),
+        "irfft: reconstructed signal length must be a power of 2, got {n}"
+    );
+
+    let mut out_dims: Vec<usize> = shape.as_slice().to_vec();
+    out_dims[dim] = n;
+    let out_shape = Shape::from(out_dims);
+    let total_out = out_shape.num_elements();
+    let num_fibers = shape.num_elements() / half_plus_1;
+
+    let re_data: &[f32] = spectrum_re.storage();
+    let im_data: &[f32] = spectrum_im.storage();
+    let in_strides = contiguous_strides_usize(&shape);
+    let out_strides = contiguous_strides_usize(&out_shape);
+
+    // Twiddles for N/2-point inverse complex FFT
+    let tw_half = get_twiddles(half);
+
+    // Unpack twiddles: last stage of size-N table (same as rfft)
+    let tw_full = get_twiddles(n);
+    let full_offsets = tw_full.offsets();
+    let last_stage_off = if full_offsets.len() >= 2 {
+        full_offsets[full_offsets.len() - 2]
+    } else {
+        0
+    };
+    let unpack_tw_re = &tw_full.re()[last_stage_off..];
+    let unpack_tw_im = &tw_full.im()[last_stage_off..];
+
+    let mut signal_out = vec![0.0f32; total_out];
+    let in_stride = in_strides[dim];
+    let out_stride = out_strides[dim];
+
+    #[cfg(feature = "rayon")]
+    if num_fibers >= 4 && n >= 64 {
+        use rayon::prelude::*;
+
+        let fiber_results: Vec<(usize, Vec<f32>)> = (0..num_fibers)
+            .into_par_iter()
+            .map(|fiber_idx| {
+                let re_base = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
+                let mut z_re = vec![0.0f32; half.max(1)];
+                let mut z_im = vec![0.0f32; half.max(1)];
+                let mut spec_re = vec![0.0f32; half + 1];
+                let mut spec_im = vec![0.0f32; half + 1];
+                let mut fiber_out = vec![0.0f32; n];
+
+                irfft_fiber(
+                    &re_data[re_base..],
+                    &im_data[re_base..],
+                    in_stride,
+                    half,
+                    &mut fiber_out,
+                    1,
+                    &tw_half,
+                    unpack_tw_re,
+                    unpack_tw_im,
+                    &mut z_re,
+                    &mut z_im,
+                    &mut spec_re,
+                    &mut spec_im,
+                );
+                (fiber_idx, fiber_out)
+            })
+            .collect();
+
+        for (fiber_idx, fiber_out) in fiber_results {
+            let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
+            for k in 0..n {
+                signal_out[out_base + k * out_stride] = fiber_out[k];
+            }
+        }
+
+        return FlexTensor::new(
+            Bytes::from_elems(signal_out),
+            Layout::contiguous(out_shape),
+            burn_backend::DType::F32,
+        );
+    }
+
+    let mut z_re = vec![0.0f32; half.max(1)];
+    let mut z_im = vec![0.0f32; half.max(1)];
+    let mut spec_re = vec![0.0f32; half + 1];
+    let mut spec_im = vec![0.0f32; half + 1];
+    let mut fiber_out = vec![0.0f32; n];
+
+    for fiber_idx in 0..num_fibers {
+        let re_base = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
+        let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
+
+        irfft_fiber(
+            &re_data[re_base..],
+            &im_data[re_base..],
+            in_stride,
+            half,
+            &mut fiber_out,
+            1,
+            &tw_half,
+            unpack_tw_re,
+            unpack_tw_im,
+            &mut z_re,
+            &mut z_im,
+            &mut spec_re,
+            &mut spec_im,
+        );
+
+        for k in 0..n {
+            signal_out[out_base + k * out_stride] = fiber_out[k];
+        }
+    }
+
+    FlexTensor::new(
+        Bytes::from_elems(signal_out),
+        Layout::contiguous(out_shape),
+        burn_backend::DType::F32,
+    )
+}
+
+pub fn irfft_f64(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -> FlexTensor {
+    // Truncates f64 to f32 for computation (unlike rfft_f64 which operates
+    // in f64). Output precision is limited to ~7 digits.
+    use burn_backend::DType;
+    match spectrum_re.dtype() {
+        DType::F64 => {
+            let re_f32 = super::module::cast_to_f32::<f64>(spectrum_re, |v| v as f32);
+            let im_f32 = super::module::cast_to_f32::<f64>(spectrum_im, |v| v as f32);
+            let result = irfft_f32(re_f32, im_f32, dim);
+            super::module::cast_from_f32::<f64>(result, |v| v as f64)
+        }
+        _ => irfft_f32(spectrum_re, spectrum_im, dim),
+    }
+}
+
+pub fn irfft_f16(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -> FlexTensor {
+    use burn_std::f16;
+    let re = super::module::cast_to_f32(spectrum_re, f16::to_f32);
+    let im = super::module::cast_to_f32(spectrum_im, f16::to_f32);
+    let result = irfft_f32(re, im, dim);
+    super::module::cast_from_f32(result, f16::from_f32)
+}
+
+pub fn irfft_bf16(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -> FlexTensor {
+    use burn_std::bf16;
+    let re = super::module::cast_to_f32(spectrum_re, bf16::to_f32);
+    let im = super::module::cast_to_f32(spectrum_im, bf16::to_f32);
+    let result = irfft_f32(re, im, dim);
+    super::module::cast_from_f32(result, bf16::from_f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1145,9 +1485,11 @@ mod tests {
     }
 
     fn assert_approx(tensor: FlexTensor, expected: &[f32], tol: f32) {
-        tensor
-            .into_data()
-            .assert_approx_eq::<f32>(&TensorData::from(expected), Tolerance::absolute(tol));
+        let shape = tensor.layout().shape().as_slice().to_vec();
+        tensor.into_data().assert_approx_eq::<f32>(
+            &TensorData::new(expected.to_vec(), shape),
+            Tolerance::absolute(tol),
+        );
     }
 
     fn assert_approx_f64(tensor: FlexTensor, expected: &[f64], tol: f64) {
@@ -1400,5 +1742,215 @@ mod tests {
             rel_err < 1e-4,
             "Parseval's theorem violated: time={time_energy}, freq={freq_energy}, rel_err={rel_err}"
         );
+    }
+
+    // ---- irfft tests ----
+
+    #[test]
+    fn irfft_roundtrip_n4() {
+        let signal = make_f32(vec![1.0, 2.0, 3.0, 4.0], vec![4]);
+        let (re, im) = rfft_f32(signal.clone(), 0);
+        let reconstructed = irfft_f32(re, im, 0);
+        assert_approx(reconstructed, &[1.0, 2.0, 3.0, 4.0], 1e-5);
+    }
+
+    #[test]
+    fn irfft_roundtrip_n8() {
+        let data: Vec<f32> = (0..8).map(|i| (i as f32 * 0.3).sin()).collect();
+        let signal = make_f32(data.clone(), vec![8]);
+        let (re, im) = rfft_f32(signal, 0);
+        let reconstructed = irfft_f32(re, im, 0);
+        assert_approx(reconstructed, &data, 1e-5);
+    }
+
+    #[test]
+    fn rfft_vs_realfft() {
+        // Verify our rfft matches realfft (rustfft-backed) for non-trivial input
+        // at sizes that exercise radix-4 (n>=16) and the complex packing trick.
+        use realfft::RealFftPlanner;
+
+        let mut planner = RealFftPlanner::<f32>::new();
+
+        for &n in &[4, 8, 16, 32, 64, 256, 1024, 4096] {
+            let data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.37).sin() + 0.5).collect();
+
+            // Our rfft
+            let signal = make_f32(data.clone(), vec![n]);
+            let (re_out, im_out) = rfft_f32(signal, 0);
+            let re_data = re_out.into_data();
+            let im_data = im_out.into_data();
+            let our_re = re_data.as_slice::<f32>().unwrap();
+            let our_im = im_data.as_slice::<f32>().unwrap();
+
+            // Reference: realfft
+            let r2c = planner.plan_fft_forward(n);
+            let mut input = data.clone();
+            let mut spectrum = r2c.make_output_vec();
+            r2c.process(&mut input, &mut spectrum).unwrap();
+
+            let out_len = n / 2 + 1;
+            assert_eq!(our_re.len(), out_len);
+            assert_eq!(spectrum.len(), out_len);
+
+            let max_re_err = our_re
+                .iter()
+                .zip(spectrum.iter())
+                .map(|(&a, b)| (a - b.re).abs())
+                .fold(0.0f32, f32::max);
+            let max_im_err = our_im
+                .iter()
+                .zip(spectrum.iter())
+                .map(|(&a, b)| (a - b.im).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_re_err < 1e-3 && max_im_err < 1e-3,
+                "rfft vs realfft mismatch at n={n}: max_re_err={max_re_err}, max_im_err={max_im_err}"
+            );
+        }
+    }
+
+    #[test]
+    fn irfft_vs_realfft() {
+        // Verify our irfft matches realfft's inverse for non-trivial spectra.
+        use realfft::RealFftPlanner;
+
+        let mut planner = RealFftPlanner::<f32>::new();
+
+        for &n in &[4, 8, 16, 32, 64, 256, 1024, 4096] {
+            // Generate a spectrum via realfft forward
+            let r2c = planner.plan_fft_forward(n);
+            let c2r = planner.plan_fft_inverse(n);
+            let data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.37).sin() + 0.5).collect();
+            let mut input = data.clone();
+            let mut spectrum = r2c.make_output_vec();
+            r2c.process(&mut input, &mut spectrum).unwrap();
+
+            // Our irfft
+            let out_len = n / 2 + 1;
+            let spec_re: Vec<f32> = spectrum.iter().map(|c| c.re).collect();
+            let spec_im: Vec<f32> = spectrum.iter().map(|c| c.im).collect();
+            let re_tensor = make_f32(spec_re, vec![out_len]);
+            let im_tensor = make_f32(spec_im, vec![out_len]);
+            let our_result = irfft_f32(re_tensor, im_tensor, 0);
+            let our_data = our_result.into_data();
+            let our_vals = our_data.as_slice::<f32>().unwrap();
+
+            // Reference: realfft inverse (note: realfft doesn't normalize, so scale)
+            let mut spec_copy = spectrum.clone();
+            let mut ref_output = c2r.make_output_vec();
+            c2r.process(&mut spec_copy, &mut ref_output).unwrap();
+            let scale = 1.0 / n as f32;
+            let ref_scaled: Vec<f32> = ref_output.iter().map(|&v| v * scale).collect();
+
+            let max_err = our_vals
+                .iter()
+                .zip(ref_scaled.iter())
+                .map(|(&a, &b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_err < 1e-3,
+                "irfft vs realfft mismatch at n={n}: max_err={max_err}"
+            );
+        }
+    }
+
+    #[test]
+    fn forward_complex_fft_impulse() {
+        // DFT of impulse [1,0,0,...,0] should be all 1s
+        for &n in &[4, 8, 16, 32, 64] {
+            let tw = get_twiddles(n);
+            let mut re = vec![0.0f32; n];
+            let mut im = vec![0.0f32; n];
+            re[0] = 1.0;
+            complex_fft(&mut re, &mut im, n, &tw);
+            let max_re_err = re.iter().map(|&v| (v - 1.0).abs()).fold(0.0f32, f32::max);
+            let max_im_err = im.iter().map(|&v| v.abs()).fold(0.0f32, f32::max);
+            assert!(
+                max_re_err < 1e-5 && max_im_err < 1e-5,
+                "forward FFT impulse n={n}: max_re_err={max_re_err}, max_im_err={max_im_err}"
+            );
+        }
+    }
+
+    #[test]
+    fn inverse_complex_fft_roundtrip() {
+        for &n in &[4, 8, 16, 32, 64, 256] {
+            let tw = get_twiddles(n);
+            let mut re: Vec<f32> = (0..n).map(|i| (i as f32 * 0.3).sin()).collect();
+            let mut im = vec![0.0f32; n];
+            let orig_re = re.clone();
+
+            complex_fft(&mut re, &mut im, n, &tw);
+            inverse_complex_fft(&mut re, &mut im, n, &tw);
+
+            let max_err = re
+                .iter()
+                .zip(orig_re.iter())
+                .map(|(&got, &expected)| (got - expected).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_err < 1e-4,
+                "inverse_complex_fft roundtrip n={n}: max error {max_err}"
+            );
+        }
+    }
+
+    #[test]
+    fn irfft_roundtrip_n256() {
+        let data: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).cos()).collect();
+        let signal = make_f32(data.clone(), vec![256]);
+        let (re, im) = rfft_f32(signal, 0);
+        let reconstructed = irfft_f32(re, im, 0);
+        let result = reconstructed.into_data();
+        let vals = result.as_slice::<f32>().unwrap();
+        let max_err = vals
+            .iter()
+            .zip(data.iter())
+            .map(|(&got, &expected)| (got - expected).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_err < 5e-3,
+            "irfft_roundtrip_n256: max error {max_err} exceeds tolerance"
+        );
+    }
+
+    #[test]
+    fn irfft_roundtrip_2d_dim1() {
+        let data = vec![
+            1.0, 2.0, 3.0, 4.0, // row 0
+            5.0, 6.0, 7.0, 8.0, // row 1
+        ];
+        let signal = make_f32(data.clone(), vec![2, 4]);
+        let (re, im) = rfft_f32(signal, 1);
+        let reconstructed = irfft_f32(re, im, 1);
+        assert_approx(reconstructed, &data, 1e-5);
+    }
+
+    #[test]
+    fn irfft_roundtrip_2d_dim0() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let signal = make_f32(data.clone(), vec![4, 2]);
+        let (re, im) = rfft_f32(signal, 0);
+        let reconstructed = irfft_f32(re, im, 0);
+        assert_approx(reconstructed, &data, 1e-5);
+    }
+
+    #[test]
+    fn irfft_known_spectrum() {
+        // DC=4, all others zero -> constant signal [1,1,1,1]
+        let re = make_f32(vec![4.0, 0.0, 0.0], vec![3]);
+        let im = make_f32(vec![0.0, 0.0, 0.0], vec![3]);
+        let signal = irfft_f32(re, im, 0);
+        assert_approx(signal, &[1.0, 1.0, 1.0, 1.0], 1e-5);
+    }
+
+    #[test]
+    fn irfft_f64_roundtrip() {
+        // irfft_f64 truncates to f32 internally, so tolerance is f32-level
+        let data: Vec<f64> = (0..8).map(|i| (i as f64 * 0.3).sin()).collect();
+        let signal = make_f64(data.clone(), vec![8]);
+        let (re, im) = rfft_f64(signal, 0);
+        let reconstructed = irfft_f64(re, im, 0);
+        assert_approx_f64(reconstructed, &data, 1e-5);
     }
 }

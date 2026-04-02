@@ -35,8 +35,8 @@ is thread-safe by design.
   - Embedded/other: Scalar fallback
 - **Matrix Multiplication**: Optimized via [gemm](https://crates.io/crates/gemm) with native f16
   support
-- **FFT**: Real FFT (rfft) via Cooley-Tukey with complex packing, mixed radix-4/radix-2,
-  compile-time twiddle tables, and SIMD butterflies. Works in `no_std`.
+- **FFT**: Forward (rfft) and inverse (irfft) real FFT via Cooley-Tukey with complex packing,
+  compile-time twiddle tables, SIMD butterflies, and unrolled small kernels. Works in `no_std`.
 - **Parallel Execution**: Optional rayon for large tensors
 - **Quantization**: Full quantize/dequantize support with per-tensor and per-block symmetric
   schemes. All ~40 quantized ops (arithmetic, trig, reductions, sorting, etc.) work out of the box.
@@ -79,7 +79,7 @@ buffer reuse):
 | Comparisons       | **2.1-3.9x** |                                           |
 | Int casting       | **5.0-7.6x** |                                           |
 | Quantize          | **1.6x**     | Fused 2-pass implementation               |
-| FFT (rfft)        | **yes**      | Native implementation, works in no_std    |
+| FFT (rfft/irfft)  | **yes**      | Native implementation, works in no_std    |
 
 #### Structural Improvements
 

@@ -6,7 +6,10 @@
 //! ```
 
 use burn_flex::Flex;
-use burn_tensor::{Tensor, TensorData, signal::rfft};
+use burn_tensor::{
+    Tensor, TensorData,
+    signal::{irfft, rfft},
+};
 use divan::{AllocProfiler, Bencher};
 use realfft::RealFftPlanner;
 
@@ -100,6 +103,42 @@ mod flex {
             bencher.bench(|| rfft(s.clone(), 1));
         }
     }
+
+    #[divan::bench_group(name = "irfft_1d")]
+    mod irfft_1d {
+        use super::*;
+
+        fn bench_irfft(bencher: Bencher, n: usize) {
+            let s = make_signal_1d(n);
+            let (re, im) = rfft(s, 0);
+            bencher.bench(|| irfft(re.clone(), im.clone(), 0));
+        }
+
+        #[divan::bench]
+        fn n_256(bencher: Bencher) {
+            bench_irfft(bencher, 256);
+        }
+
+        #[divan::bench]
+        fn n_1024(bencher: Bencher) {
+            bench_irfft(bencher, 1024);
+        }
+
+        #[divan::bench]
+        fn n_4096(bencher: Bencher) {
+            bench_irfft(bencher, 4096);
+        }
+
+        #[divan::bench]
+        fn n_16384(bencher: Bencher) {
+            bench_irfft(bencher, 16384);
+        }
+
+        #[divan::bench]
+        fn n_65536(bencher: Bencher) {
+            bench_irfft(bencher, 65536);
+        }
+    }
 }
 
 // ============================================================================
@@ -185,6 +224,52 @@ mod realfft_bench {
         #[divan::bench]
         fn batch_256_n_256(bencher: Bencher) {
             bench_realfft_batch(bencher, 256, 256);
+        }
+    }
+
+    #[divan::bench_group(name = "irfft_1d")]
+    mod irfft_1d {
+        use super::*;
+
+        fn bench_realfft_inverse(bencher: Bencher, n: usize) {
+            let mut planner = RealFftPlanner::<f32>::new();
+            let r2c = planner.plan_fft_forward(n);
+            let c2r = planner.plan_fft_inverse(n);
+            let signal = make_raw_signal(n);
+            let mut input = signal.clone();
+            let mut spectrum = r2c.make_output_vec();
+            r2c.process(&mut input, &mut spectrum).unwrap();
+            bencher.bench(|| {
+                let mut spec = spectrum.clone();
+                let mut output = c2r.make_output_vec();
+                c2r.process(&mut spec, &mut output).unwrap();
+                output
+            });
+        }
+
+        #[divan::bench]
+        fn n_256(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 256);
+        }
+
+        #[divan::bench]
+        fn n_1024(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 1024);
+        }
+
+        #[divan::bench]
+        fn n_4096(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 4096);
+        }
+
+        #[divan::bench]
+        fn n_16384(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 16384);
+        }
+
+        #[divan::bench]
+        fn n_65536(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 65536);
         }
     }
 }
