@@ -15,7 +15,7 @@ workspace = true
 
 [features]
 default = ["std", "simd", "rayon"]
-std = ["gemm/std", "burn-backend/std", "burn-std/std", "half/std"]
+std = ["gemm/std", "burn-backend/std", "burn-std/std", "half/std", "num-traits/std"]
 simd = ["dep:macerator", "dep:aligned-vec"]  # Enable SIMD optimizations via macerator (portable across architectures)
 rayon = ["dep:rayon", "gemm/rayon"]  # Enable parallel execution for large tensors
 tracing = ["burn-std/tracing", "burn-backend/tracing", "burn-ir/tracing"]
