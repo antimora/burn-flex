@@ -19,7 +19,7 @@ std = ["gemm/std", "burn-backend/std", "burn-std/std", "half/std", "num-traits/s
 simd = ["dep:macerator", "dep:aligned-vec"]  # Enable SIMD optimizations via macerator (portable across architectures)
 rayon = ["dep:rayon", "gemm/rayon"]  # Enable parallel execution for large tensors
 tracing = ["burn-std/tracing", "burn-backend/tracing", "burn-ir/tracing"]
-critical-section = ["dep:once_cell", "once_cell/critical-section", "dep:portable-atomic", "portable-atomic/critical-section"]
+critical-section = ["dep:once_cell", "once_cell/critical-section", "dep:portable-atomic", "portable-atomic/critical-section", "dep:portable-atomic-util"]
 
 [dependencies]
 burn-backend = { workspace = true }
@@ -34,7 +34,7 @@ macerator = { workspace = true, optional = true }
 aligned-vec = { workspace = true, optional = true }
 once_cell = { version = "1", default-features = false, optional = true }
 portable-atomic = { version = "1", optional = true }
-portable-atomic-util = { version = "0.2", default-features = false, features = ["alloc"] }
+portable-atomic-util = { version = "0.2", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 burn-tensor = { workspace = true }

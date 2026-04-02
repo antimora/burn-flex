@@ -291,19 +291,30 @@ pub fn round(tensor: FlexTensor) -> FlexTensor {
 }
 
 fn round_ties_even_f32(x: f32) -> f32 {
-    let r = num_traits::Float::round(x);
-    // If exactly halfway, round to even
-    if (x - r).abs() == 0.5 && r as i64 % 2 != 0 {
-        r - x.signum()
-    } else {
-        r
-    }
+    round_ties_even(x)
 }
 
 fn round_ties_even_f64(x: f64) -> f64 {
-    let r = num_traits::Float::round(x);
-    if (x - r).abs() == 0.5 && r as i64 % 2 != 0 {
-        r - x.signum()
+    round_ties_even(x)
+}
+
+/// Round to nearest integer, ties to even (banker's rounding).
+///
+/// `num_traits::Float::round` rounds ties away from zero. This corrects
+/// the halfway case to round to the nearest even integer instead.
+///
+/// Safety of the `to_i64` path: for f32, values with magnitude >= 2^23
+/// have no fractional bits, so `(x - r).abs()` is always 0.0 (never 0.5).
+/// For f64, the threshold is 2^52. The halfway check therefore only
+/// triggers for values well within i64 range.
+fn round_ties_even<F: num_traits::Float + num_traits::ToPrimitive>(x: F) -> F {
+    let r = x.round();
+    if (x - r).abs() == F::from(0.5).unwrap() {
+        // Ties: round to even by checking if r is odd
+        match r.to_i64() {
+            Some(ri) if ri % 2 != 0 => r - x.signum(),
+            _ => r,
+        }
     } else {
         r
     }

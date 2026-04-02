@@ -131,12 +131,7 @@ jobs:
       - name: Install target
         run: rustup target add ${{ matrix.target }}
       - name: Check no_std compilation
-        run: |
-          if [ -n "${{ matrix.features }}" ]; then
-            cargo check -p burn-flex --target ${{ matrix.target }} --no-default-features --features ${{ matrix.features }}
-          else
-            cargo check -p burn-flex --target ${{ matrix.target }} --no-default-features
-          fi
+        run: cargo check -p burn-flex --target ${{ matrix.target }} --no-default-features --features "${{ matrix.features }}"
 
   linux-tests:
     runs-on: ubuntu-22.04
