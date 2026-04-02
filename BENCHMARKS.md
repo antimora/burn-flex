@@ -3,7 +3,7 @@
 All benchmarks run on Apple M3 Max, comparing burn-flex against burn-ndarray. Default features
 enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
-**Date**: 2026-03-30
+**Date**: 2026-04-02
 
 ## How to Read
 
@@ -960,6 +960,36 @@ Direct predicate scan on storage vs composing equal/abs ops.
 
 ---
 
+## FFT (Real FFT)
+
+Compared against `realfft` v3 (backed by `rustfft` v6), the gold-standard pure-Rust FFT library.
+NdArray does not implement rfft. `realfft` requires `std`; Flex works in `no_std`.
+
+### 1D rfft
+
+| Size    | Flex (median) | realfft (median) | Ratio    |
+| ------- | ------------- | ---------------- | -------- |
+| n=256   | 1.21 us       | 287 ns           | 4.2x     |
+| n=1024  | 3.46 us       | 1.27 us          | 2.7x     |
+| n=4096  | 13.1 us       | 5.00 us          | 2.6x     |
+| n=16384 | 56.6 us       | 26.2 us          | 2.2x     |
+| n=65536 | 286 us        | 113 us           | 2.5x     |
+
+### Batched 2D rfft (along last dim)
+
+| Size          | Flex (median) | realfft (median) | Ratio    |
+| ------------- | ------------- | ---------------- | -------- |
+| 16 x 1024     | 70.7 us       | 20.2 us          | 3.5x     |
+| 64 x 1024     | 123 us        | 77.9 us          | 1.6x     |
+| 256 x 256     | 182 us        | 69.3 us          | 2.6x     |
+
+Flex implementation: Cooley-Tukey with real-to-complex packing, mixed radix-4/radix-2 butterfly
+stages, compile-time twiddle tables via const fn, SIMD vectorization via macerator, and rayon
+parallelism across fibers. The remaining gap to rustfft is due to their hand-tuned per-arch SIMD
+rewrites, split-radix algorithms, and strength-reduced modular arithmetic.
+
+---
+
 ## Running Benchmarks
 
 ```bash
@@ -982,4 +1012,5 @@ cargo bench --bench deform_conv_ops
 cargo bench --bench quantization_ops
 cargo bench --bench cat_max_min_ops
 cargo bench --bench default_ops
+cargo bench --bench fft_ops
 ```
