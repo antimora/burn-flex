@@ -5,8 +5,7 @@
 //!   do a half-size complex FFT, then unpack using Hermitian symmetry (~2x)
 //! - Compile-time twiddle tables via const fn Taylor-series sin/cos
 //! - Unrolled small complex FFT kernels for N=2, 4, 8
-//! - Mixed radix-4/radix-2 butterfly stages (halves passes over data)
-//! - SIMD-vectorized butterflies via macerator
+//! - SIMD-vectorized radix-2 butterfly stages via macerator
 //! - Rayon parallelism across independent fibers
 
 use alloc::vec;
@@ -1000,52 +999,31 @@ pub fn rfft_bf16(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
 // Inverse real FFT (irfft)
 // ============================================================================
 
-/// Inverse complex FFT of size N.
+/// Inverse complex FFT: IFFT(X) = (1/N) * conj(FFT(conj(X))).
 ///
-/// Radix-2 DIT with negated twiddle angles (conjugated twiddles) and 1/N
-/// scaling. This correctly computes the IDFT regardless of whether the
-/// forward FFT uses radix-2 or radix-4.
+/// Conjugates input, runs the forward FFT (with SIMD), conjugates
+/// output, and scales by 1/N.
 #[inline]
 fn inverse_complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
     if n <= 1 {
         return;
     }
 
-    bit_reverse_permute(re, im, n);
-
-    let tw_re = tw.re();
-    let tw_im = tw.im();
-    let offsets = tw.offsets();
-    let num_stages = offsets.len() - 1;
-
-    let mut len = 2;
-    for &tw_off in &offsets[..num_stages] {
-        let half = len / 2;
-        let mut start = 0;
-        while start < n {
-            for k in 0..half {
-                let wr = tw_re[tw_off + k];
-                let wi = -tw_im[tw_off + k]; // negated for inverse
-                let even = start + k;
-                let odd = even + half;
-                let t_re = wr * re[odd] - wi * im[odd];
-                let t_im = wr * im[odd] + wi * re[odd];
-                re[odd] = re[even] - t_re;
-                im[odd] = im[even] - t_im;
-                re[even] += t_re;
-                im[even] += t_im;
-            }
-            start += len;
-        }
-        len <<= 1;
+    // Conjugate input
+    for v in im.iter_mut() {
+        *v = -*v;
     }
 
+    // Forward FFT (uses SIMD radix-2 when available)
+    complex_fft(re, im, n, tw);
+
+    // Conjugate output and scale by 1/N
     let scale = 1.0 / n as f32;
     for v in re.iter_mut() {
         *v *= scale;
     }
     for v in im.iter_mut() {
-        *v *= scale;
+        *v = -*v * scale;
     }
 }
 
@@ -1196,8 +1174,8 @@ pub fn irfft_f64(
     spectrum_im: FlexTensor,
     dim: usize,
 ) -> FlexTensor {
-    // Upcast to f32 is intentional here: we use the same f32 twiddle infrastructure.
-    // For a true f64 irfft, a separate implementation would be needed.
+    // Truncates f64 to f32 for computation (unlike rfft_f64 which operates
+    // in f64). Output precision is limited to ~7 digits.
     use burn_backend::DType;
     match spectrum_re.dtype() {
         DType::F64 => {
