@@ -290,24 +290,23 @@ pub fn round(tensor: FlexTensor) -> FlexTensor {
     unary_op(tensor, round_ties_even_f32, round_ties_even_f64)
 }
 
-#[cfg(feature = "std")]
 fn round_ties_even_f32(x: f32) -> f32 {
-    x.round_ties_even()
+    let r = num_traits::Float::round(x);
+    // If exactly halfway, round to even
+    if (x - r).abs() == 0.5 && r as i64 % 2 != 0 {
+        r - x.signum()
+    } else {
+        r
+    }
 }
 
-#[cfg(not(feature = "std"))]
-fn round_ties_even_f32(x: f32) -> f32 {
-    libm::rintf(x)
-}
-
-#[cfg(feature = "std")]
 fn round_ties_even_f64(x: f64) -> f64 {
-    x.round_ties_even()
-}
-
-#[cfg(not(feature = "std"))]
-fn round_ties_even_f64(x: f64) -> f64 {
-    libm::rint(x)
+    let r = num_traits::Float::round(x);
+    if (x - r).abs() == 0.5 && r as i64 % 2 != 0 {
+        r - x.signum()
+    } else {
+        r
+    }
 }
 
 /// Floor (round down)

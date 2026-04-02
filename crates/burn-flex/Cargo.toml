@@ -28,7 +28,6 @@ burn-std = { workspace = true }
 half = { workspace = true }
 bytemuck = { workspace = true }
 num-traits = { workspace = true }
-libm = { version = "0.2", default-features = false }
 rayon = { workspace = true, optional = true }
 gemm = { workspace = true }
 macerator = { workspace = true, optional = true }
