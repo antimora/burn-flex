@@ -355,7 +355,7 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
 }
 
 // ============================================================================
-// General complex FFT: radix-4/radix-2 with SIMD
+// General complex FFT: radix-2 with SIMD
 // ============================================================================
 
 /// Complex FFT of size n (power of 2) using precomputed twiddles.
@@ -950,7 +950,7 @@ fn fft_f64_inplace(
         }
     }
 
-    // Scalar radix-2 passes (radix-4 fusion not implemented for f64)
+    // Scalar radix-2 passes
     let num_stages = offsets.len() - 1;
     let mut len = 2;
     for &tw_off in &offsets[..num_stages] {
@@ -1116,11 +1116,19 @@ pub fn irfft_f32(
     let spectrum_im = spectrum_im.to_contiguous();
     let shape = spectrum_re.layout().shape().clone();
     assert!(
+        *spectrum_im.layout().shape() == shape,
+        "irfft: spectrum_re and spectrum_im shapes must match"
+    );
+    assert!(
         dim < shape.num_dims(),
         "irfft: dim {dim} out of bounds for {}-D tensor",
         shape.num_dims()
     );
     let half_plus_1 = shape[dim];
+    assert!(
+        half_plus_1 >= 2,
+        "irfft: spectrum must have at least 2 bins along dim {dim}, got {half_plus_1}"
+    );
     let half = half_plus_1 - 1;
     let n = 2 * half;
     assert!(
@@ -1645,5 +1653,15 @@ mod tests {
         let im = make_f32(vec![0.0, 0.0, 0.0], vec![3]);
         let signal = irfft_f32(re, im, 0);
         assert_approx(signal, &[1.0, 1.0, 1.0, 1.0], 1e-5);
+    }
+
+    #[test]
+    fn irfft_f64_roundtrip() {
+        // irfft_f64 truncates to f32 internally, so tolerance is f32-level
+        let data: Vec<f64> = (0..8).map(|i| (i as f64 * 0.3).sin()).collect();
+        let signal = make_f64(data.clone(), vec![8]);
+        let (re, im) = rfft_f64(signal, 0);
+        let reconstructed = irfft_f64(re, im, 0);
+        assert_approx_f64(reconstructed, &data, 1e-5);
     }
 }
