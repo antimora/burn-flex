@@ -6,7 +6,10 @@
 //! ```
 
 use burn_flex::Flex;
-use burn_tensor::{Tensor, TensorData, signal::{irfft, rfft}};
+use burn_tensor::{
+    Tensor, TensorData,
+    signal::{irfft, rfft},
+};
 use divan::{AllocProfiler, Bencher};
 use realfft::RealFftPlanner;
 
@@ -112,19 +115,29 @@ mod flex {
         }
 
         #[divan::bench]
-        fn n_256(bencher: Bencher) { bench_irfft(bencher, 256); }
+        fn n_256(bencher: Bencher) {
+            bench_irfft(bencher, 256);
+        }
 
         #[divan::bench]
-        fn n_1024(bencher: Bencher) { bench_irfft(bencher, 1024); }
+        fn n_1024(bencher: Bencher) {
+            bench_irfft(bencher, 1024);
+        }
 
         #[divan::bench]
-        fn n_4096(bencher: Bencher) { bench_irfft(bencher, 4096); }
+        fn n_4096(bencher: Bencher) {
+            bench_irfft(bencher, 4096);
+        }
 
         #[divan::bench]
-        fn n_16384(bencher: Bencher) { bench_irfft(bencher, 16384); }
+        fn n_16384(bencher: Bencher) {
+            bench_irfft(bencher, 16384);
+        }
 
         #[divan::bench]
-        fn n_65536(bencher: Bencher) { bench_irfft(bencher, 65536); }
+        fn n_65536(bencher: Bencher) {
+            bench_irfft(bencher, 65536);
+        }
     }
 }
 
@@ -235,18 +248,28 @@ mod realfft_bench {
         }
 
         #[divan::bench]
-        fn n_256(bencher: Bencher) { bench_realfft_inverse(bencher, 256); }
+        fn n_256(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 256);
+        }
 
         #[divan::bench]
-        fn n_1024(bencher: Bencher) { bench_realfft_inverse(bencher, 1024); }
+        fn n_1024(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 1024);
+        }
 
         #[divan::bench]
-        fn n_4096(bencher: Bencher) { bench_realfft_inverse(bencher, 4096); }
+        fn n_4096(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 4096);
+        }
 
         #[divan::bench]
-        fn n_16384(bencher: Bencher) { bench_realfft_inverse(bencher, 16384); }
+        fn n_16384(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 16384);
+        }
 
         #[divan::bench]
-        fn n_65536(bencher: Bencher) { bench_realfft_inverse(bencher, 65536); }
+        fn n_65536(bencher: Bencher) {
+            bench_realfft_inverse(bencher, 65536);
+        }
     }
 }

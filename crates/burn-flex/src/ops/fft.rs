@@ -398,8 +398,12 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
 #[cfg(not(feature = "simd"))]
 #[allow(clippy::too_many_arguments)]
 fn radix2_scalar(
-    re: &mut [f32], im: &mut [f32], n: usize,
-    tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
+    re: &mut [f32],
+    im: &mut [f32],
+    n: usize,
+    tw_re: &[f32],
+    tw_im: &[f32],
+    offsets: &[usize],
     num_stages: usize,
 ) {
     let mut len = 2;
@@ -433,15 +437,18 @@ mod simd_fft {
     #[macerator::with_simd]
     #[allow(clippy::too_many_arguments)]
     pub fn radix2_simd<S: Simd>(
-        re: &mut [f32], im: &mut [f32], n: usize,
-        tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
+        re: &mut [f32],
+        im: &mut [f32],
+        n: usize,
+        tw_re: &[f32],
+        tw_im: &[f32],
+        offsets: &[usize],
         num_stages: usize,
     ) {
         let lanes = S::lanes32();
         let mut len = 2;
-        for stage in 0..num_stages {
+        for &tw_off in &offsets[..num_stages] {
             let half = len / 2;
-            let tw_off = offsets[stage];
 
             if half >= lanes {
                 let mut start = 0;
@@ -462,10 +469,22 @@ mod simd_fft {
                             let t_re = wr * re_odd - wi * im_odd;
                             let t_im = wr * im_odd + wi * re_odd;
 
-                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(even_idx), re_even + t_re);
-                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(even_idx), im_even + t_im);
-                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(odd_idx), re_even - t_re);
-                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(odd_idx), im_even - t_im);
+                            vstore_unaligned::<S, f32>(
+                                re.as_mut_ptr().add(even_idx),
+                                re_even + t_re,
+                            );
+                            vstore_unaligned::<S, f32>(
+                                im.as_mut_ptr().add(even_idx),
+                                im_even + t_im,
+                            );
+                            vstore_unaligned::<S, f32>(
+                                re.as_mut_ptr().add(odd_idx),
+                                re_even - t_re,
+                            );
+                            vstore_unaligned::<S, f32>(
+                                im.as_mut_ptr().add(odd_idx),
+                                im_even - t_im,
+                            );
                         }
                         k += lanes;
                     }
@@ -1035,9 +1054,13 @@ fn inverse_complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef
 ///   D  = (X[k] - conj(X[half-k])) / 2
 ///   W  = W_N^k (same twiddle used in rfft unpack)
 fn repack_irfft(
-    x_re: &[f32], x_im: &[f32], half: usize,
-    tw_re: &[f32], tw_im: &[f32],
-    z_re: &mut [f32], z_im: &mut [f32],
+    x_re: &[f32],
+    x_im: &[f32],
+    half: usize,
+    tw_re: &[f32],
+    tw_im: &[f32],
+    z_re: &mut [f32],
+    z_im: &mut [f32],
 ) {
     // k=0: Z[0] = (X[0] + X[half])/2 + i*(X[0] - X[half])/2
     z_re[0] = (x_re[0] + x_re[half]) * 0.5;
@@ -1074,10 +1097,17 @@ fn repack_irfft(
 #[allow(clippy::too_many_arguments)]
 #[inline]
 fn irfft_fiber(
-    re_in: &[f32], im_in: &[f32], in_stride: usize, half: usize,
-    signal_out: &mut [f32], out_stride: usize,
-    tw_half: &TwiddleRef, unpack_tw_re: &[f32], unpack_tw_im: &[f32],
-    z_re: &mut [f32], z_im: &mut [f32],
+    re_in: &[f32],
+    im_in: &[f32],
+    in_stride: usize,
+    half: usize,
+    signal_out: &mut [f32],
+    out_stride: usize,
+    tw_half: &TwiddleRef,
+    unpack_tw_re: &[f32],
+    unpack_tw_im: &[f32],
+    z_re: &mut [f32],
+    z_im: &mut [f32],
 ) {
     // Gather spectrum bins
     let mut spec_re = vec![0.0f32; half + 1];
@@ -1088,7 +1118,15 @@ fn irfft_fiber(
     }
 
     // Repack into N/2 complex values
-    repack_irfft(&spec_re, &spec_im, half, unpack_tw_re, unpack_tw_im, z_re, z_im);
+    repack_irfft(
+        &spec_re,
+        &spec_im,
+        half,
+        unpack_tw_re,
+        unpack_tw_im,
+        z_re,
+        z_im,
+    );
 
     // Inverse complex FFT of size N/2
     inverse_complex_fft(z_re, z_im, half, tw_half);
@@ -1107,11 +1145,7 @@ fn irfft_fiber(
     }
 }
 
-pub fn irfft_f32(
-    spectrum_re: FlexTensor,
-    spectrum_im: FlexTensor,
-    dim: usize,
-) -> FlexTensor {
+pub fn irfft_f32(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -> FlexTensor {
     let spectrum_re = spectrum_re.to_contiguous();
     let spectrum_im = spectrum_im.to_contiguous();
     let shape = spectrum_re.layout().shape().clone();
@@ -1178,10 +1212,17 @@ pub fn irfft_f32(
                 let mut fiber_out = vec![0.0f32; n];
 
                 irfft_fiber(
-                    &re_data[re_base..], &im_data[re_base..],
-                    in_stride, half, &mut fiber_out, 1,
-                    &tw_half, unpack_tw_re, unpack_tw_im,
-                    &mut z_re, &mut z_im,
+                    &re_data[re_base..],
+                    &im_data[re_base..],
+                    in_stride,
+                    half,
+                    &mut fiber_out,
+                    1,
+                    &tw_half,
+                    unpack_tw_re,
+                    unpack_tw_im,
+                    &mut z_re,
+                    &mut z_im,
                 );
                 (fiber_idx, fiber_out)
             })
@@ -1210,10 +1251,17 @@ pub fn irfft_f32(
         let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
 
         irfft_fiber(
-            &re_data[re_base..], &im_data[re_base..],
-            in_stride, half, &mut fiber_out, 1,
-            &tw_half, unpack_tw_re, unpack_tw_im,
-            &mut z_re, &mut z_im,
+            &re_data[re_base..],
+            &im_data[re_base..],
+            in_stride,
+            half,
+            &mut fiber_out,
+            1,
+            &tw_half,
+            unpack_tw_re,
+            unpack_tw_im,
+            &mut z_re,
+            &mut z_im,
         );
 
         for k in 0..n {
@@ -1228,11 +1276,7 @@ pub fn irfft_f32(
     )
 }
 
-pub fn irfft_f64(
-    spectrum_re: FlexTensor,
-    spectrum_im: FlexTensor,
-    dim: usize,
-) -> FlexTensor {
+pub fn irfft_f64(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -> FlexTensor {
     // Truncates f64 to f32 for computation (unlike rfft_f64 which operates
     // in f64). Output precision is limited to ~7 digits.
     use burn_backend::DType;
@@ -1247,11 +1291,7 @@ pub fn irfft_f64(
     }
 }
 
-pub fn irfft_f16(
-    spectrum_re: FlexTensor,
-    spectrum_im: FlexTensor,
-    dim: usize,
-) -> FlexTensor {
+pub fn irfft_f16(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -> FlexTensor {
     use burn_std::f16;
     let re = super::module::cast_to_f32(spectrum_re, f16::to_f32);
     let im = super::module::cast_to_f32(spectrum_im, f16::to_f32);
@@ -1259,11 +1299,7 @@ pub fn irfft_f16(
     super::module::cast_from_f32(result, f16::from_f32)
 }
 
-pub fn irfft_bf16(
-    spectrum_re: FlexTensor,
-    spectrum_im: FlexTensor,
-    dim: usize,
-) -> FlexTensor {
+pub fn irfft_bf16(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -> FlexTensor {
     use burn_std::bf16;
     let re = super::module::cast_to_f32(spectrum_re, bf16::to_f32);
     let im = super::module::cast_to_f32(spectrum_im, bf16::to_f32);
@@ -1637,9 +1673,7 @@ mod tests {
 
     #[test]
     fn irfft_roundtrip_2d_dim0() {
-        let data = vec![
-            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
-        ];
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let signal = make_f32(data.clone(), vec![4, 2]);
         let (re, im) = rfft_f32(signal, 0);
         let reconstructed = irfft_f32(re, im, 0);
