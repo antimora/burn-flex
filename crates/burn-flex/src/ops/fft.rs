@@ -1714,6 +1714,97 @@ mod tests {
     }
 
     #[test]
+    fn rfft_vs_realfft() {
+        // Verify our rfft matches realfft (rustfft-backed) for non-trivial input
+        // at sizes that exercise radix-4 (n>=16) and the complex packing trick.
+        use realfft::RealFftPlanner;
+
+        let mut planner = RealFftPlanner::<f32>::new();
+
+        for &n in &[4, 8, 16, 32, 64, 256, 1024, 4096] {
+            let data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.37).sin() + 0.5).collect();
+
+            // Our rfft
+            let signal = make_f32(data.clone(), vec![n]);
+            let (re_out, im_out) = rfft_f32(signal, 0);
+            let re_data = re_out.into_data();
+            let im_data = im_out.into_data();
+            let our_re = re_data.as_slice::<f32>().unwrap();
+            let our_im = im_data.as_slice::<f32>().unwrap();
+
+            // Reference: realfft
+            let r2c = planner.plan_fft_forward(n);
+            let mut input = data.clone();
+            let mut spectrum = r2c.make_output_vec();
+            r2c.process(&mut input, &mut spectrum).unwrap();
+
+            let out_len = n / 2 + 1;
+            assert_eq!(our_re.len(), out_len);
+            assert_eq!(spectrum.len(), out_len);
+
+            let max_re_err = our_re
+                .iter()
+                .zip(spectrum.iter())
+                .map(|(&a, b)| (a - b.re).abs())
+                .fold(0.0f32, f32::max);
+            let max_im_err = our_im
+                .iter()
+                .zip(spectrum.iter())
+                .map(|(&a, b)| (a - b.im).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_re_err < 1e-3 && max_im_err < 1e-3,
+                "rfft vs realfft mismatch at n={n}: max_re_err={max_re_err}, max_im_err={max_im_err}"
+            );
+        }
+    }
+
+    #[test]
+    fn irfft_vs_realfft() {
+        // Verify our irfft matches realfft's inverse for non-trivial spectra.
+        use realfft::RealFftPlanner;
+
+        let mut planner = RealFftPlanner::<f32>::new();
+
+        for &n in &[4, 8, 16, 32, 64, 256, 1024, 4096] {
+            // Generate a spectrum via realfft forward
+            let r2c = planner.plan_fft_forward(n);
+            let c2r = planner.plan_fft_inverse(n);
+            let data: Vec<f32> = (0..n).map(|i| (i as f32 * 0.37).sin() + 0.5).collect();
+            let mut input = data.clone();
+            let mut spectrum = r2c.make_output_vec();
+            r2c.process(&mut input, &mut spectrum).unwrap();
+
+            // Our irfft
+            let out_len = n / 2 + 1;
+            let spec_re: Vec<f32> = spectrum.iter().map(|c| c.re).collect();
+            let spec_im: Vec<f32> = spectrum.iter().map(|c| c.im).collect();
+            let re_tensor = make_f32(spec_re, vec![out_len]);
+            let im_tensor = make_f32(spec_im, vec![out_len]);
+            let our_result = irfft_f32(re_tensor, im_tensor, 0);
+            let our_data = our_result.into_data();
+            let our_vals = our_data.as_slice::<f32>().unwrap();
+
+            // Reference: realfft inverse (note: realfft doesn't normalize, so scale)
+            let mut spec_copy = spectrum.clone();
+            let mut ref_output = c2r.make_output_vec();
+            c2r.process(&mut spec_copy, &mut ref_output).unwrap();
+            let scale = 1.0 / n as f32;
+            let ref_scaled: Vec<f32> = ref_output.iter().map(|&v| v * scale).collect();
+
+            let max_err = our_vals
+                .iter()
+                .zip(ref_scaled.iter())
+                .map(|(&a, &b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_err < 1e-3,
+                "irfft vs realfft mismatch at n={n}: max_err={max_err}"
+            );
+        }
+    }
+
+    #[test]
     fn forward_complex_fft_impulse() {
         // DFT of impulse [1,0,0,...,0] should be all 1s
         for &n in &[4, 8, 16, 32, 64] {
