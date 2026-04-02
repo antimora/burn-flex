@@ -427,15 +427,20 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
 #[cfg(not(feature = "simd"))]
 #[allow(clippy::too_many_arguments)]
 fn radix4_scalar(
-    re: &mut [f32], im: &mut [f32], n: usize,
-    tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
-    start_stage: usize, num_stages: usize,
+    re: &mut [f32],
+    im: &mut [f32],
+    n: usize,
+    tw_re: &[f32],
+    tw_im: &[f32],
+    offsets: &[usize],
+    start_stage: usize,
+    num_stages: usize,
 ) {
     let mut stage = start_stage;
     while stage + 1 < num_stages {
         let quarter = 1 << stage;
         let group_size = quarter << 2;
-        let tw_off_inner = offsets[stage];     // W_{2q}^k
+        let tw_off_inner = offsets[stage]; // W_{2q}^k
         let tw_off_outer = offsets[stage + 1]; // W_{4q}^k
 
         let mut group_start = 0;
@@ -493,12 +498,18 @@ mod simd_fft {
     use macerator::{Simd, vload_unaligned, vstore_unaligned};
 
     /// Scalar radix-4 butterfly for the SIMD tail path.
+    #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     fn scalar_radix4(
-        re: &mut [f32], im: &mut [f32],
-        p0: usize, quarter: usize,
-        tw_re: &[f32], tw_im: &[f32],
-        tw_off_inner: usize, tw_off_outer: usize, k: usize,
+        re: &mut [f32],
+        im: &mut [f32],
+        p0: usize,
+        quarter: usize,
+        tw_re: &[f32],
+        tw_im: &[f32],
+        tw_off_inner: usize,
+        tw_off_outer: usize,
+        k: usize,
     ) {
         let p1 = p0 + quarter;
         let p2 = p1 + quarter;
@@ -541,9 +552,14 @@ mod simd_fft {
     #[macerator::with_simd]
     #[allow(clippy::too_many_arguments)]
     pub fn radix4_simd<S: Simd>(
-        re: &mut [f32], im: &mut [f32], n: usize,
-        tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
-        start_stage: usize, num_stages: usize,
+        re: &mut [f32],
+        im: &mut [f32],
+        n: usize,
+        tw_re: &[f32],
+        tw_im: &[f32],
+        offsets: &[usize],
+        start_stage: usize,
+        num_stages: usize,
     ) {
         let lanes = S::lanes32();
         let mut stage = start_stage;
@@ -561,8 +577,10 @@ mod simd_fft {
                     while k + lanes <= quarter {
                         unsafe {
                             // Inner twiddle: W_{2q}^k
-                            let wi_r = vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_inner + k));
-                            let wi_i = vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_inner + k));
+                            let wi_r =
+                                vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_inner + k));
+                            let wi_i =
+                                vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_inner + k));
 
                             let p0 = group_start + k;
                             let p1 = p0 + quarter;
@@ -595,8 +613,10 @@ mod simd_fft {
                             let d_im = i2 - tw3_im;
 
                             // Outer twiddle: W_{4q}^k
-                            let wo_r = vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_outer + k));
-                            let wo_i = vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_outer + k));
+                            let wo_r =
+                                vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_outer + k));
+                            let wo_i =
+                                vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_outer + k));
                             let tc_re = wo_r * c_re - wo_i * c_im;
                             let tc_im = wo_r * c_im + wo_i * c_re;
                             let td_re = wo_r * d_re - wo_i * d_im;
@@ -616,8 +636,15 @@ mod simd_fft {
                     }
                     while k < quarter {
                         scalar_radix4(
-                            re, im, group_start + k, quarter,
-                            tw_re, tw_im, tw_off_inner, tw_off_outer, k,
+                            re,
+                            im,
+                            group_start + k,
+                            quarter,
+                            tw_re,
+                            tw_im,
+                            tw_off_inner,
+                            tw_off_outer,
+                            k,
                         );
                         k += 1;
                     }
@@ -628,8 +655,15 @@ mod simd_fft {
                 while group_start < n {
                     for k in 0..quarter {
                         scalar_radix4(
-                            re, im, group_start + k, quarter,
-                            tw_re, tw_im, tw_off_inner, tw_off_outer, k,
+                            re,
+                            im,
+                            group_start + k,
+                            quarter,
+                            tw_re,
+                            tw_im,
+                            tw_off_inner,
+                            tw_off_outer,
+                            k,
                         );
                     }
                     group_start += group_size;
