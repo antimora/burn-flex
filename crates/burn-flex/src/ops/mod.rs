@@ -58,6 +58,7 @@ pub mod conv;
 pub mod cumulative;
 pub mod deform_conv;
 pub mod expand;
+pub mod fft;
 pub mod flip;
 mod float;
 pub mod gather_scatter;

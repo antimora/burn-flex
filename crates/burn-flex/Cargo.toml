@@ -40,6 +40,8 @@ portable-atomic-util = { version = "0.2", default-features = false, features = [
 burn-tensor = { workspace = true }
 burn-ndarray = { workspace = true }
 divan = { workspace = true }
+realfft = "3"
+rustfft = "6"
 
 [[bench]]
 name = "attention"
@@ -115,4 +117,8 @@ harness = false
 
 [[bench]]
 name = "default_ops"
+harness = false
+
+[[bench]]
+name = "fft_ops"
 harness = false
