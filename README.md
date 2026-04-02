@@ -22,7 +22,7 @@ is thread-safe by design.
 - **Convolutions**: Unified 3D implementation with im2col + gemm. Conv1d/2d delegate to conv3d.
   Supports groups, dilation, padding.
 - **Attention**: Auto-selecting between two gemm-backed strategies based on sequence length. Short
-  sequences (score matrix seq_q * seq_kv <= 256K elements) use naive attention with two large gemm
+  sequences (score matrix seq_q \* seq_kv <= 256K elements) use naive attention with two large gemm
   calls for lower overhead. Larger shapes use tiled flash attention with online softmax for
   O(TILE_KV) memory per row. Both support causal masking, additive bias (ALiBi), softcap, custom
   scale, and cross-attention.
@@ -35,6 +35,8 @@ is thread-safe by design.
   - Embedded/other: Scalar fallback
 - **Matrix Multiplication**: Optimized via [gemm](https://crates.io/crates/gemm) with native f16
   support
+- **FFT**: Real FFT (rfft) via Cooley-Tukey with complex packing, mixed radix-4/radix-2,
+  compile-time twiddle tables, and SIMD butterflies. Works in `no_std`.
 - **Parallel Execution**: Optional rayon for large tensors
 - **Quantization**: Full quantize/dequantize support with per-tensor and per-block symmetric
   schemes. All ~40 quantized ops (arithmetic, trig, reductions, sorting, etc.) work out of the box.
@@ -77,6 +79,7 @@ buffer reuse):
 | Comparisons       | **2.1-3.9x** |                                           |
 | Int casting       | **5.0-7.6x** |                                           |
 | Quantize          | **1.6x**     | Fused 2-pass implementation               |
+| FFT (rfft)        | **yes**      | Native implementation, works in no_std    |
 
 #### Structural Improvements
 

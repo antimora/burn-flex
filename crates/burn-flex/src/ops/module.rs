@@ -17,7 +17,10 @@ use burn_std::{Bytes, Shape};
 use bytemuck::Pod;
 
 /// Cast a tensor from half-precision type E to f32.
-fn cast_to_f32<E: Element + Pod + Copy>(tensor: FlexTensor, to_f32: fn(E) -> f32) -> FlexTensor {
+pub(crate) fn cast_to_f32<E: Element + Pod + Copy>(
+    tensor: FlexTensor,
+    to_f32: fn(E) -> f32,
+) -> FlexTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
     let data: &[E] = tensor.storage();
@@ -27,7 +30,7 @@ fn cast_to_f32<E: Element + Pod + Copy>(tensor: FlexTensor, to_f32: fn(E) -> f32
 }
 
 /// Cast a tensor from f32 back to half-precision type E.
-fn cast_from_f32<E: Element + Pod + Copy>(
+pub(crate) fn cast_from_f32<E: Element + Pod + Copy>(
     tensor: FlexTensor,
     from_f32: fn(f32) -> E,
 ) -> FlexTensor {
@@ -693,6 +696,16 @@ impl ModuleOps<Flex> for Flex {
         options: AttentionModuleOptions,
     ) -> FloatTensor<Flex> {
         crate::ops::attention::attention(query, key, value, mask, attn_bias, options)
+    }
+
+    fn rfft(signal: FloatTensor<Flex>, dim: usize) -> (FloatTensor<Flex>, FloatTensor<Flex>) {
+        match signal.dtype() {
+            DType::F32 => crate::ops::fft::rfft_f32(signal, dim),
+            DType::F64 => crate::ops::fft::rfft_f64(signal, dim),
+            DType::F16 => crate::ops::fft::rfft_f16(signal, dim),
+            DType::BF16 => crate::ops::fft::rfft_bf16(signal, dim),
+            dtype => panic!("rfft: unsupported dtype {:?}", dtype),
+        }
     }
 
     fn embedding(weights: FloatTensor<Flex>, indices: IntTensor<Flex>) -> FloatTensor<Flex> {

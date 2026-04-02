@@ -473,20 +473,8 @@ fn contiguous_strides(shape: &Shape) -> Vec<usize> {
     crate::layout::contiguous_strides_usize(shape)
 }
 
-/// Compute the base flat offset for the `slice_idx`-th slice along `dim`.
 fn slice_base_offset(slice_idx: usize, shape: &Shape, strides: &[usize], dim: usize) -> usize {
-    let ndims = shape.num_dims();
-    let mut offset = 0;
-    let mut remaining = slice_idx;
-    for d in (0..ndims).rev() {
-        if d == dim {
-            continue;
-        }
-        let s = shape[d];
-        offset += (remaining % s) * strides[d];
-        remaining /= s;
-    }
-    offset
+    crate::layout::slice_base_offset(slice_idx, shape, strides, dim)
 }
 
 fn make_index_tensor(indices: Vec<isize>, shape: Shape) -> FlexTensor {
