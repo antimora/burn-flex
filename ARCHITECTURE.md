@@ -20,8 +20,8 @@ production. This includes:
 
 - **Integer overflow safety**: `wrapping_abs`, `wrapping_neg`, `wrapping_shl/shr` for signed
   integers at type boundaries (e.g. `i64::MIN`), matching PyTorch two's complement semantics
-- **Rounding correctness**: Uses Rust stdlib `round_ties_even()` for all float types, correct for
-  the full float range
+- **Rounding correctness**: Uses `num_traits::Float::round` with a ties-to-even correction,
+  correct for the full float range (values beyond integer precision have no fractional bits)
 - **Input validation**: Hard assertions for invalid pooling parameters (zero kernel/stride) and
   zero-sized reduce dimensions, preventing undefined behavior on malformed inputs
 - **Negative index detection**: Debug assertions on gather/scatter index conversions

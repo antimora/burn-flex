@@ -23,6 +23,12 @@
 
 extern crate alloc;
 
+#[cfg(all(not(target_has_atomic = "ptr"), not(feature = "critical-section")))]
+compile_error!(
+    "This target lacks atomic CAS support. Enable the `critical-section` feature: \
+     burn-flex = { ..., features = [\"critical-section\"] }"
+);
+
 mod backend;
 mod layout;
 mod qtensor;

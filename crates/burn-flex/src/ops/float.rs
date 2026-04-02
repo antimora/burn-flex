@@ -8,6 +8,9 @@ use burn_backend::{
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
 };
 use burn_std::{Bytes, IntDType, Shape, Slice, bf16, f16};
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use num_traits::Float;
 
 use crate::Layout;
 use num_traits::ToPrimitive;

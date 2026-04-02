@@ -104,6 +104,35 @@ jobs:
       - name: Check 32-bit compilation
         run: cargo check -p burn-flex --target ${{ matrix.target }}
 
+  check-no-std:
+    runs-on: ubuntu-22.04
+    needs: [prepare-checks, code-quality]
+    strategy:
+      matrix:
+        include:
+          # Cortex-M0 (RP2040) - no atomic CAS, needs critical-section polyfill
+          - target: thumbv6m-none-eabi
+            features: critical-section
+          # Cortex-M4F (STM32F4, nRF52)
+          - target: thumbv7em-none-eabihf
+            features: ""
+          # Cortex-M33 (RP2350, nRF5340)
+          - target: thumbv8m.main-none-eabihf
+            features: ""
+          # WASM (browser/Node.js without std)
+          - target: wasm32-unknown-unknown
+            features: ""
+    steps:
+      - name: Setup Rust
+        uses: tracel-ai/github-actions/setup-rust@v7
+        with:
+          rust-toolchain: stable
+          cache-key: stable-linux-${{ matrix.target }}
+      - name: Install target
+        run: rustup target add ${{ matrix.target }}
+      - name: Check no_std compilation
+        run: cargo check -p burn-flex --target ${{ matrix.target }} --no-default-features --features "${{ matrix.features }}"
+
   linux-tests:
     runs-on: ubuntu-22.04
     needs: [prepare-checks, code-quality]
