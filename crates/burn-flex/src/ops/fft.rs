@@ -5,7 +5,8 @@
 //!   do a half-size complex FFT, then unpack using Hermitian symmetry (~2x)
 //! - Compile-time twiddle tables via const fn Taylor-series sin/cos
 //! - Unrolled small complex FFT kernels for N=2, 4, 8
-//! - SIMD-vectorized radix-2 butterfly stages via macerator
+//! - Mixed radix-4/radix-2 butterfly stages (halves passes over data)
+//! - SIMD-vectorized butterflies via macerator
 //! - Rayon parallelism across independent fibers
 
 use alloc::vec;
