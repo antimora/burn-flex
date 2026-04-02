@@ -1304,7 +1304,10 @@ pub fn irfft_f32(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -
         shape.num_dims()
     );
     let half_plus_1 = shape[dim];
-    assert!(half_plus_1 >= 1, "irfft: spectrum dimension cannot be empty");
+    assert!(
+        half_plus_1 >= 1,
+        "irfft: spectrum dimension cannot be empty"
+    );
 
     // N=1: single DC bin, output is just the real value
     if half_plus_1 == 1 {
