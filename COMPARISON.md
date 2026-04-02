@@ -210,6 +210,7 @@ All operations listed below are implemented by both backends unless marked other
 | adaptive_avg_pool2d_backward     | Yes       | Yes          |                                                                                         |
 | interpolate                      | Yes       | Yes          | Nearest, bilinear, bicubic                                                              |
 | attention (SDPA)                 | Yes       | Yes          | Flex: auto-selects naive or flash by score matrix size; NdArray: matmul + softmax        |
+| rfft                             | Yes       | No           | Flex: Cooley-Tukey with complex packing, radix-4, SIMD, compile-time twiddles. no_std.   |
 
 ### Int and Bool Operations
 
@@ -568,6 +569,10 @@ that works today on platforms CubeCL CPU cannot target (no_std, WASM, embedded).
 
 7. **Simpler type system**: `Flex` vs `NdArray<E, I, Q>`. No generic parameters, no element trait
    hierarchy (`FloatNdArrayElement`, `IntNdArrayElement`, `NdArrayElement`, `ExpElement`).
+
+8. **Real FFT**: Optimized rfft implementation with complex packing, mixed radix-4/radix-2, SIMD
+   butterflies, and compile-time twiddle tables. Works in `no_std` (rustfft/realfft require std).
+   NdArray does not implement rfft.
 
 ---
 
