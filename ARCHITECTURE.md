@@ -682,6 +682,32 @@ The returned tensor is non-contiguous (overlapping windows share storage). Opera
 contiguous data call `to_contiguous()` internally. Many operations (reduce, matmul, conv) work
 directly on strided tensors via `StridedIter`.
 
+### FFT (Real Forward and Inverse)
+
+**Location**: `ops/fft.rs`
+
+Forward (rfft) and inverse (irfft) real FFT via Cooley-Tukey radix-2 DIT.
+
+**Key optimizations:**
+
+- **Complex packing**: For rfft, pack N real values as N/2 complex, run a half-size complex FFT,
+  then unpack using Hermitian symmetry. For irfft, reverse the process: repack spectrum, half-size
+  inverse FFT, de-interleave. This halves the work compared to a full N-point FFT.
+- **Compile-time twiddle tables**: `const fn` Taylor-series sin/cos generates static twiddle factor
+  tables for N=2 through 65536. Zero runtime allocation for common sizes. Stored as split f32
+  arrays for direct SIMD loads.
+- **Unrolled small kernels**: Hardcoded butterfly networks for N=2, 4, 8 with compile-time twiddle
+  values (W_4=-i, W_8=sqrt2/2). Eliminates loop overhead for the small inner FFTs produced by
+  complex packing.
+- **SIMD butterflies**: `#[macerator::with_simd]` vectorizes radix-2 butterfly passes across
+  consecutive elements within each stage.
+- **Inverse via conjugation**: irfft computes IFFT as `(1/N)*conj(FFT(conj(X)))`, reusing the
+  forward FFT (with its SIMD path) rather than maintaining a separate inverse kernel.
+- **Rayon parallelism**: Batched transforms (multiple independent fibers along the FFT dimension)
+  are distributed across threads.
+
+**Dtype support**: f32 (native), f64 (scalar radix-2), f16/bf16 (via f32 upcast/downcast).
+
 ---
 
 ## Optimization Decisions
