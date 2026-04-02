@@ -27,9 +27,7 @@ fn make_signal_1d(n: usize) -> Tensor<B, 1> {
 }
 
 fn make_signal_2d(batch: usize, n: usize) -> Tensor<B, 2> {
-    let data: Vec<f32> = (0..batch * n)
-        .map(|i| (i as f32 * 0.1).sin())
-        .collect();
+    let data: Vec<f32> = (0..batch * n).map(|i| (i as f32 * 0.1).sin()).collect();
     Tensor::from_data(TensorData::new(data, [batch, n]), &Default::default())
 }
 

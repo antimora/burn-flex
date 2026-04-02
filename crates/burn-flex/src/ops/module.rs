@@ -17,7 +17,10 @@ use burn_std::{Bytes, Shape};
 use bytemuck::Pod;
 
 /// Cast a tensor from half-precision type E to f32.
-pub(crate) fn cast_to_f32<E: Element + Pod + Copy>(tensor: FlexTensor, to_f32: fn(E) -> f32) -> FlexTensor {
+pub(crate) fn cast_to_f32<E: Element + Pod + Copy>(
+    tensor: FlexTensor,
+    to_f32: fn(E) -> f32,
+) -> FlexTensor {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
     let data: &[E] = tensor.storage();

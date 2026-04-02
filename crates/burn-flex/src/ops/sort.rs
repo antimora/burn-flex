@@ -474,7 +474,12 @@ fn contiguous_strides(shape: &Shape) -> Vec<usize> {
 }
 
 /// Compute the base flat offset for the `slice_idx`-th slice along `dim`.
-pub(crate) fn slice_base_offset(slice_idx: usize, shape: &Shape, strides: &[usize], dim: usize) -> usize {
+pub(crate) fn slice_base_offset(
+    slice_idx: usize,
+    shape: &Shape,
+    strides: &[usize],
+    dim: usize,
+) -> usize {
     let ndims = shape.num_dims();
     let mut offset = 0;
     let mut remaining = slice_idx;

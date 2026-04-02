@@ -13,9 +13,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use burn_std::{Bytes, Shape};
 
-use crate::{FlexTensor, Layout};
-use crate::layout::contiguous_strides_usize;
 use super::sort::slice_base_offset;
+use crate::layout::contiguous_strides_usize;
+use crate::{FlexTensor, Layout};
 
 // ============================================================================
 // Const-evaluable sin/cos via Taylor series (13 terms, ~13 digit accuracy)
@@ -82,7 +82,12 @@ const fn make_twiddle_table<const N: usize, const M: usize>() -> TwiddleTable<M>
         stage += 1;
     }
     offsets[num_stages] = pos;
-    TwiddleTable { re, im, offsets, num_stages }
+    TwiddleTable {
+        re,
+        im,
+        offsets,
+        num_stages,
+    }
 }
 
 macro_rules! def_twiddle {
@@ -109,19 +114,36 @@ def_twiddle!(TW_32768, 32768);
 def_twiddle!(TW_65536, 65536);
 
 enum TwiddleRef {
-    Static { re: &'static [f32], im: &'static [f32], offsets: &'static [usize] },
-    Owned { re: Vec<f32>, im: Vec<f32>, offsets: Vec<usize> },
+    Static {
+        re: &'static [f32],
+        im: &'static [f32],
+        offsets: &'static [usize],
+    },
+    Owned {
+        re: Vec<f32>,
+        im: Vec<f32>,
+        offsets: Vec<usize>,
+    },
 }
 
 impl TwiddleRef {
     fn re(&self) -> &[f32] {
-        match self { Self::Static { re, .. } => re, Self::Owned { re, .. } => re }
+        match self {
+            Self::Static { re, .. } => re,
+            Self::Owned { re, .. } => re,
+        }
     }
     fn im(&self) -> &[f32] {
-        match self { Self::Static { im, .. } => im, Self::Owned { im, .. } => im }
+        match self {
+            Self::Static { im, .. } => im,
+            Self::Owned { im, .. } => im,
+        }
     }
     fn offsets(&self) -> &[usize] {
-        match self { Self::Static { offsets, .. } => offsets, Self::Owned { offsets, .. } => offsets }
+        match self {
+            Self::Static { offsets, .. } => offsets,
+            Self::Owned { offsets, .. } => offsets,
+        }
     }
 }
 
@@ -248,7 +270,10 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
         ($a:expr, $b:expr) => {
             let (ra, rb) = (re[$a] + re[$b], re[$a] - re[$b]);
             let (ia, ib) = (im[$a] + im[$b], im[$a] - im[$b]);
-            re[$a] = ra; re[$b] = rb; im[$a] = ia; im[$b] = ib;
+            re[$a] = ra;
+            re[$b] = rb;
+            im[$a] = ia;
+            im[$b] = ib;
         };
     }
     butterfly2!(0, 1);
@@ -261,22 +286,34 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
     {
         let (r0, r2) = (re[0] + re[2], re[0] - re[2]);
         let (i0, i2) = (im[0] + im[2], im[0] - im[2]);
-        re[0] = r0; im[0] = i0; re[2] = r2; im[2] = i2;
+        re[0] = r0;
+        im[0] = i0;
+        re[2] = r2;
+        im[2] = i2;
         // k=1: W=-i → (im[3], -re[3])
         let (t_re, t_im) = (im[3], -re[3]);
         let (r1a, r1b) = (re[1] + t_re, re[1] - t_re);
         let (i1a, i1b) = (im[1] + t_im, im[1] - t_im);
-        re[1] = r1a; re[3] = r1b; im[1] = i1a; im[3] = i1b;
+        re[1] = r1a;
+        re[3] = r1b;
+        im[1] = i1a;
+        im[3] = i1b;
     }
     // Group [4,5,6,7]: same pattern
     {
         let (r4, r6) = (re[4] + re[6], re[4] - re[6]);
         let (i4, i6) = (im[4] + im[6], im[4] - im[6]);
-        re[4] = r4; im[4] = i4; re[6] = r6; im[6] = i6;
+        re[4] = r4;
+        im[4] = i4;
+        re[6] = r6;
+        im[6] = i6;
         let (t_re, t_im) = (im[7], -re[7]);
         let (r5a, r5b) = (re[5] + t_re, re[5] - t_re);
         let (i5a, i5b) = (im[5] + t_im, im[5] - t_im);
-        re[5] = r5a; re[7] = r5b; im[5] = i5a; im[7] = i5b;
+        re[5] = r5a;
+        re[7] = r5b;
+        im[5] = i5a;
+        im[7] = i5b;
     }
 
     // Stage 2: one size-8 butterfly
@@ -284,7 +321,10 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
     {
         let (a, b) = (re[0] + re[4], re[0] - re[4]);
         let (c, d) = (im[0] + im[4], im[0] - im[4]);
-        re[0] = a; re[4] = b; im[0] = c; im[4] = d;
+        re[0] = a;
+        re[4] = b;
+        im[0] = c;
+        im[4] = d;
     }
     // k=1: W_8^1 = (sqrt2/2, -sqrt2/2)
     {
@@ -293,16 +333,16 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
         let t_im = W * im[5] + (-W) * re[5]; // W*im - W*re
         re[5] = re[1] - t_re;
         im[5] = im[1] - t_im;
-        re[1] = re[1] + t_re;
-        im[1] = im[1] + t_im;
+        re[1] += t_re;
+        im[1] += t_im;
     }
     // k=2: W_8^2 = -i
     {
         let (t_re, t_im) = (im[6], -re[6]);
         re[6] = re[2] - t_re;
         im[6] = im[2] - t_im;
-        re[2] = re[2] + t_re;
-        im[2] = im[2] + t_im;
+        re[2] += t_re;
+        im[2] += t_im;
     }
     // k=3: W_8^3 = (-sqrt2/2, -sqrt2/2)
     {
@@ -311,8 +351,8 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
         let t_im = -W * im[7] + (-W) * re[7]; // -W*im - W*re
         re[7] = re[3] - t_re;
         im[7] = im[3] - t_im;
-        re[3] = re[3] + t_re;
-        im[3] = im[3] + t_im;
+        re[3] += t_re;
+        im[3] += t_im;
     }
 }
 
@@ -325,9 +365,18 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
 fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
     match n {
         0 | 1 => return,
-        2 => { complex_fft_2(re, im); return; }
-        4 => { complex_fft_4(re, im); return; }
-        8 => { complex_fft_8(re, im); return; }
+        2 => {
+            complex_fft_2(re, im);
+            return;
+        }
+        4 => {
+            complex_fft_4(re, im);
+            return;
+        }
+        8 => {
+            complex_fft_8(re, im);
+            return;
+        }
         _ => {}
     }
 
@@ -345,8 +394,10 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
         while start < n {
             let (a, b) = (re[start] + re[start + 1], re[start] - re[start + 1]);
             let (c, d) = (im[start] + im[start + 1], im[start] - im[start + 1]);
-            re[start] = a; re[start + 1] = b;
-            im[start] = c; im[start + 1] = d;
+            re[start] = a;
+            re[start + 1] = b;
+            im[start] = c;
+            im[start + 1] = d;
             start += 2;
         }
         1
@@ -366,12 +417,18 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
 }
 
 /// Single radix-4 butterfly at position p0 with given quarter stride and twiddle offsets.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn scalar_radix4_butterfly(
-    re: &mut [f32], im: &mut [f32],
-    p0: usize, quarter: usize,
-    tw_re: &[f32], tw_im: &[f32],
-    tw_off_inner: usize, tw_off_outer: usize, k: usize,
+    re: &mut [f32],
+    im: &mut [f32],
+    p0: usize,
+    quarter: usize,
+    tw_re: &[f32],
+    tw_im: &[f32],
+    tw_off_inner: usize,
+    tw_off_outer: usize,
+    k: usize,
 ) {
     let p1 = p0 + quarter;
     let p2 = p1 + quarter;
@@ -419,9 +476,14 @@ fn scalar_radix4_butterfly(
 #[cfg(not(feature = "simd"))]
 #[allow(clippy::too_many_arguments)]
 fn radix4_scalar(
-    re: &mut [f32], im: &mut [f32], n: usize,
-    tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
-    start_stage: usize, num_stages: usize,
+    re: &mut [f32],
+    im: &mut [f32],
+    n: usize,
+    tw_re: &[f32],
+    tw_im: &[f32],
+    offsets: &[usize],
+    start_stage: usize,
+    num_stages: usize,
 ) {
     let mut stage = start_stage;
     while stage + 1 < num_stages {
@@ -434,8 +496,15 @@ fn radix4_scalar(
         while group_start < n {
             for k in 0..quarter {
                 scalar_radix4_butterfly(
-                    re, im, group_start + k, quarter,
-                    tw_re, tw_im, tw_off_inner, tw_off_outer, k,
+                    re,
+                    im,
+                    group_start + k,
+                    quarter,
+                    tw_re,
+                    tw_im,
+                    tw_off_inner,
+                    tw_off_outer,
+                    k,
                 );
             }
             group_start += group_size;
@@ -451,9 +520,14 @@ mod simd_fft {
     #[macerator::with_simd]
     #[allow(clippy::too_many_arguments)]
     pub fn radix4_simd<S: Simd>(
-        re: &mut [f32], im: &mut [f32], n: usize,
-        tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
-        start_stage: usize, num_stages: usize,
+        re: &mut [f32],
+        im: &mut [f32],
+        n: usize,
+        tw_re: &[f32],
+        tw_im: &[f32],
+        offsets: &[usize],
+        start_stage: usize,
+        num_stages: usize,
     ) {
         let lanes = S::lanes32();
         let mut stage = start_stage;
@@ -472,10 +546,14 @@ mod simd_fft {
                     while k + lanes <= quarter {
                         unsafe {
                             // Load twiddle factors
-                            let w1r = vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_outer + k));
-                            let w1i = vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_outer + k));
-                            let w2r = vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_inner + k));
-                            let w2i = vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_inner + k));
+                            let w1r =
+                                vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_outer + k));
+                            let w1i =
+                                vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_outer + k));
+                            let w2r =
+                                vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_inner + k));
+                            let w2i =
+                                vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_inner + k));
                             // W3 = W1 * W2
                             let w3r = w1r * w2r - w1i * w2i;
                             let w3i = w1r * w2i + w1i * w2r;
@@ -511,8 +589,8 @@ mod simd_fft {
                             let u2i = b_im + d_im;
                             let dr = b_re - d_re;
                             let di = b_im - d_im;
-                            let u3r = di;  // -i * (dr + di*i) = (di, -dr)
-                            let u3i = dr;  // negated below via subtraction
+                            let u3r = di; // -i * (dr + di*i) = (di, -dr)
+                            let u3i = dr; // negated below via subtraction
 
                             vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p0), u0r + u2r);
                             vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p0), u0i + u2i);
@@ -527,8 +605,15 @@ mod simd_fft {
                     }
                     while k < quarter {
                         super::scalar_radix4_butterfly(
-                            re, im, group_start + k, quarter,
-                            tw_re, tw_im, tw_off_inner, tw_off_outer, k,
+                            re,
+                            im,
+                            group_start + k,
+                            quarter,
+                            tw_re,
+                            tw_im,
+                            tw_off_inner,
+                            tw_off_outer,
+                            k,
                         );
                         k += 1;
                     }
@@ -540,8 +625,15 @@ mod simd_fft {
                 while group_start < n {
                     for k in 0..quarter {
                         super::scalar_radix4_butterfly(
-                            re, im, group_start + k, quarter,
-                            tw_re, tw_im, tw_off_inner, tw_off_outer, k,
+                            re,
+                            im,
+                            group_start + k,
+                            quarter,
+                            tw_re,
+                            tw_im,
+                            tw_off_inner,
+                            tw_off_outer,
+                            k,
                         );
                     }
                     group_start += group_size;
@@ -550,7 +642,6 @@ mod simd_fft {
             stage += 2;
         }
     }
-
 }
 
 // ============================================================================
@@ -564,9 +655,13 @@ mod simd_fft {
 ///   Xo[k] = -i * (Z[k] - conj(Z[N/2-k])) / 2
 ///   X[k]  = Xe[k] + W_N^k * Xo[k]
 fn unpack_rfft(
-    z_re: &[f32], z_im: &[f32], half: usize,
-    unpack_tw_re: &[f32], unpack_tw_im: &[f32],
-    out_re: &mut [f32], out_im: &mut [f32],
+    z_re: &[f32],
+    z_im: &[f32],
+    half: usize,
+    unpack_tw_re: &[f32],
+    unpack_tw_im: &[f32],
+    out_re: &mut [f32],
+    out_im: &mut [f32],
 ) {
     // k=0: X[0] = Z_re[0] + Z_im[0] (real)
     out_re[0] = z_re[0] + z_im[0];
@@ -606,10 +701,16 @@ fn unpack_rfft(
 // ============================================================================
 
 fn make_tensors_typed<E: burn_backend::Element + bytemuck::Pod>(
-    re: Vec<E>, im: Vec<E>, shape: Shape,
+    re: Vec<E>,
+    im: Vec<E>,
+    shape: Shape,
 ) -> (FlexTensor, FlexTensor) {
     let dtype = E::dtype();
-    let re_t = FlexTensor::new(Bytes::from_elems(re), Layout::contiguous(shape.clone()), dtype);
+    let re_t = FlexTensor::new(
+        Bytes::from_elems(re),
+        Layout::contiguous(shape.clone()),
+        dtype,
+    );
     let im_t = FlexTensor::new(Bytes::from_elems(im), Layout::contiguous(shape), dtype);
     (re_t, im_t)
 }
@@ -619,13 +720,19 @@ fn make_tensors_typed<E: burn_backend::Element + bytemuck::Pod>(
 // ============================================================================
 
 /// Process a single fiber: pack real signal as complex, FFT, unpack.
+#[allow(clippy::too_many_arguments)]
 #[inline]
 fn rfft_fiber(
-    signal: &[f32], in_stride: usize, n: usize,
-    out_re: &mut [f32], out_im: &mut [f32],
+    signal: &[f32],
+    in_stride: usize,
+    n: usize,
+    out_re: &mut [f32],
+    out_im: &mut [f32],
     tw_half: &TwiddleRef,
-    unpack_tw_re: &[f32], unpack_tw_im: &[f32],
-    z_re: &mut [f32], z_im: &mut [f32],
+    unpack_tw_re: &[f32],
+    unpack_tw_im: &[f32],
+    z_re: &mut [f32],
+    z_im: &mut [f32],
 ) {
     let half = n / 2;
 
@@ -654,9 +761,16 @@ fn rfft_fiber(
 pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
-    debug_assert!(dim < shape.num_dims(), "rfft: dim {dim} out of bounds for {}-D tensor", shape.num_dims());
+    debug_assert!(
+        dim < shape.num_dims(),
+        "rfft: dim {dim} out of bounds for {}-D tensor",
+        shape.num_dims()
+    );
     let n = shape[dim];
-    debug_assert!(n > 0 && n.is_power_of_two(), "rfft: dimension size must be a power of 2, got {n}");
+    debug_assert!(
+        n > 0 && n.is_power_of_two(),
+        "rfft: dimension size must be a power of 2, got {n}"
+    );
     let out_len = n / 2 + 1;
 
     let mut out_dims: Vec<usize> = shape.as_slice().to_vec();
@@ -710,10 +824,16 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
                 let mut fiber_im = vec![0.0f32; out_len];
 
                 rfft_fiber(
-                    &data[base_offset..], in_stride, n,
-                    &mut fiber_re, &mut fiber_im,
-                    &tw_half, unpack_tw_re, unpack_tw_im,
-                    &mut z_re, &mut z_im,
+                    &data[base_offset..],
+                    in_stride,
+                    n,
+                    &mut fiber_re,
+                    &mut fiber_im,
+                    &tw_half,
+                    unpack_tw_re,
+                    unpack_tw_im,
+                    &mut z_re,
+                    &mut z_im,
                 );
                 (fiber_idx, fiber_re, fiber_im)
             })
@@ -740,10 +860,16 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
         let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
 
         rfft_fiber(
-            &data[base_offset..], in_stride, n,
-            &mut fiber_re, &mut fiber_im,
-            &tw_half, unpack_tw_re, unpack_tw_im,
-            &mut z_re_buf, &mut z_im_buf,
+            &data[base_offset..],
+            in_stride,
+            n,
+            &mut fiber_re,
+            &mut fiber_im,
+            &tw_half,
+            unpack_tw_re,
+            unpack_tw_im,
+            &mut z_re_buf,
+            &mut z_im_buf,
         );
 
         for k in 0..out_len {
@@ -757,11 +883,19 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
 
 #[allow(clippy::too_many_arguments)]
 fn rfft_fiber_f64(
-    signal: &[f64], in_stride: usize, n: usize, half: usize,
-    out_re: &mut [f64], out_im: &mut [f64],
-    tw_re: &[f32], tw_im: &[f32], tw_offsets: &[usize],
-    unpack_re: &[f32], unpack_im: &[f32],
-    z_re: &mut [f64], z_im: &mut [f64],
+    signal: &[f64],
+    in_stride: usize,
+    n: usize,
+    half: usize,
+    out_re: &mut [f64],
+    out_im: &mut [f64],
+    tw_re: &[f32],
+    tw_im: &[f32],
+    tw_offsets: &[usize],
+    unpack_re: &[f32],
+    unpack_im: &[f32],
+    z_re: &mut [f64],
+    z_im: &mut [f64],
 ) {
     if n == 1 {
         out_re[0] = signal[0];
@@ -802,9 +936,16 @@ fn rfft_fiber_f64(
 pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
-    debug_assert!(dim < shape.num_dims(), "rfft: dim {dim} out of bounds for {}-D tensor", shape.num_dims());
+    debug_assert!(
+        dim < shape.num_dims(),
+        "rfft: dim {dim} out of bounds for {}-D tensor",
+        shape.num_dims()
+    );
     let n = shape[dim];
-    debug_assert!(n > 0 && n.is_power_of_two(), "rfft: dimension size must be a power of 2, got {n}");
+    debug_assert!(
+        n > 0 && n.is_power_of_two(),
+        "rfft: dimension size must be a power of 2, got {n}"
+    );
     let out_len = n / 2 + 1;
 
     let mut out_dims: Vec<usize> = shape.as_slice().to_vec();
@@ -822,7 +963,11 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tw_half = get_twiddles(half);
     let tw_full = get_twiddles(n);
     let full_offsets = tw_full.offsets();
-    let last_stage_off = if full_offsets.len() >= 2 { full_offsets[full_offsets.len() - 2] } else { 0 };
+    let last_stage_off = if full_offsets.len() >= 2 {
+        full_offsets[full_offsets.len() - 2]
+    } else {
+        0
+    };
     let unpack_re = &tw_full.re()[last_stage_off..];
     let unpack_im = &tw_full.im()[last_stage_off..];
 
@@ -849,11 +994,19 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
                 let mut fiber_im = vec![0.0f64; out_len];
 
                 rfft_fiber_f64(
-                    &data[base_offset..], in_stride, n, half,
-                    &mut fiber_re, &mut fiber_im,
-                    tw_half_re, tw_half_im, tw_half_offsets,
-                    unpack_re, unpack_im,
-                    &mut z_re, &mut z_im,
+                    &data[base_offset..],
+                    in_stride,
+                    n,
+                    half,
+                    &mut fiber_re,
+                    &mut fiber_im,
+                    tw_half_re,
+                    tw_half_im,
+                    tw_half_offsets,
+                    unpack_re,
+                    unpack_im,
+                    &mut z_re,
+                    &mut z_im,
                 );
                 (fiber_idx, fiber_re, fiber_im)
             })
@@ -880,11 +1033,19 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
         let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
 
         rfft_fiber_f64(
-            &data[base_offset..], in_stride, n, half,
-            &mut fiber_re, &mut fiber_im,
-            tw_half_re, tw_half_im, tw_half_offsets,
-            unpack_re, unpack_im,
-            &mut z_re, &mut z_im,
+            &data[base_offset..],
+            in_stride,
+            n,
+            half,
+            &mut fiber_re,
+            &mut fiber_im,
+            tw_half_re,
+            tw_half_im,
+            tw_half_offsets,
+            unpack_re,
+            unpack_im,
+            &mut z_re,
+            &mut z_im,
         );
 
         for k in 0..out_len {
@@ -900,26 +1061,37 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
 /// Twiddle precision is limited to ~7 digits (f32), so output accuracy
 /// is below full f64 precision for large N.
 fn fft_f64_inplace(
-    re: &mut [f64], im: &mut [f64], n: usize,
-    tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
+    re: &mut [f64],
+    im: &mut [f64],
+    n: usize,
+    tw_re: &[f32],
+    tw_im: &[f32],
+    offsets: &[usize],
 ) {
-    if n <= 1 { return; }
+    if n <= 1 {
+        return;
+    }
 
     // Bit-reversal
     let mut j = 0usize;
     for i in 1..n {
         let mut bit = n >> 1;
-        while j & bit != 0 { j ^= bit; bit >>= 1; }
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
         j ^= bit;
-        if i < j { re.swap(i, j); im.swap(i, j); }
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
     }
 
     // Scalar radix-2 passes (radix-4 fusion not implemented for f64)
     let num_stages = offsets.len() - 1;
     let mut len = 2;
-    for stage in 0..num_stages {
+    for &tw_off in &offsets[..num_stages] {
         let half = len / 2;
-        let tw_off = offsets[stage];
         let mut start = 0;
         while start < n {
             for k in 0..half {
@@ -931,8 +1103,8 @@ fn fft_f64_inplace(
                 let t_im = wr * im[odd] + wi * re[odd];
                 re[odd] = re[even] - t_re;
                 im[odd] = im[even] - t_im;
-                re[even] = re[even] + t_re;
-                im[even] = im[even] + t_im;
+                re[even] += t_re;
+                im[even] += t_im;
             }
             start += len;
         }
@@ -944,14 +1116,20 @@ pub fn rfft_f16(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     use burn_std::f16;
     let tensor = super::module::cast_to_f32(tensor, f16::to_f32);
     let (re, im) = rfft_f32(tensor, dim);
-    (super::module::cast_from_f32(re, f16::from_f32), super::module::cast_from_f32(im, f16::from_f32))
+    (
+        super::module::cast_from_f32(re, f16::from_f32),
+        super::module::cast_from_f32(im, f16::from_f32),
+    )
 }
 
 pub fn rfft_bf16(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     use burn_std::bf16;
     let tensor = super::module::cast_to_f32(tensor, bf16::to_f32);
     let (re, im) = rfft_f32(tensor, dim);
-    (super::module::cast_from_f32(re, bf16::from_f32), super::module::cast_from_f32(im, bf16::from_f32))
+    (
+        super::module::cast_from_f32(re, bf16::from_f32),
+        super::module::cast_from_f32(im, bf16::from_f32),
+    )
 }
 
 #[cfg(test)]
@@ -968,17 +1146,15 @@ mod tests {
     }
 
     fn assert_approx(tensor: FlexTensor, expected: &[f32], tol: f32) {
-        tensor.into_data().assert_approx_eq::<f32>(
-            &TensorData::from(expected),
-            Tolerance::absolute(tol),
-        );
+        tensor
+            .into_data()
+            .assert_approx_eq::<f32>(&TensorData::from(expected), Tolerance::absolute(tol));
     }
 
     fn assert_approx_f64(tensor: FlexTensor, expected: &[f64], tol: f64) {
-        tensor.into_data().assert_approx_eq::<f64>(
-            &TensorData::from(expected),
-            Tolerance::absolute(tol),
-        );
+        tensor
+            .into_data()
+            .assert_approx_eq::<f64>(&TensorData::from(expected), Tolerance::absolute(tol));
     }
 
     // ---- N=1 ----
@@ -1067,8 +1243,12 @@ mod tests {
         let re_vals = re_data.as_slice::<f32>().unwrap();
         let im_vals = im_data.as_slice::<f32>().unwrap();
         assert_eq!(re_vals.len(), 129);
-        for &v in re_vals { assert!((v - 1.0).abs() < 1e-5, "re bin should be 1.0, got {v}"); }
-        for &v in im_vals { assert!(v.abs() < 1e-5, "im bin should be 0.0, got {v}"); }
+        for &v in re_vals {
+            assert!((v - 1.0).abs() < 1e-5, "re bin should be 1.0, got {v}");
+        }
+        for &v in im_vals {
+            assert!(v.abs() < 1e-5, "im bin should be 0.0, got {v}");
+        }
     }
 
     // ---- Multi-dimensional: FFT along dim 1 ----
@@ -1097,7 +1277,9 @@ mod tests {
         assert!((re_vals[4]).abs() < 1e-5);
         assert!((re_vals[5]).abs() < 1e-5);
         // All imaginary should be ~0
-        for &v in im_vals { assert!(v.abs() < 1e-5); }
+        for &v in im_vals {
+            assert!(v.abs() < 1e-5);
+        }
     }
 
     // ---- FFT along dim 0 ----
@@ -1105,12 +1287,7 @@ mod tests {
     #[test]
     fn rfft_2d_dim0() {
         // 4 rows, 2 cols: impulse in each column
-        let data = vec![
-            1.0, 1.0,
-            0.0, 0.0,
-            0.0, 0.0,
-            0.0, 0.0,
-        ];
+        let data = vec![1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         let signal = make_f32(data, vec![4, 2]);
         let (re, im) = rfft_f32(signal, 0);
         // Shape should be [3, 2]
@@ -1118,7 +1295,9 @@ mod tests {
         let re_vals = re_data.as_slice::<f32>().unwrap();
         assert_eq!(re_vals.len(), 6);
         // Each column is an impulse -> all bins = 1
-        for &v in re_vals { assert!((v - 1.0).abs() < 1e-5, "expected 1.0, got {v}"); }
+        for &v in re_vals {
+            assert!((v - 1.0).abs() < 1e-5, "expected 1.0, got {v}");
+        }
     }
 
     // ---- f64 dtype ----
@@ -1163,7 +1342,9 @@ mod tests {
         let re_data = re_f32.into_data();
         let re_vals = re_data.as_slice::<f32>().unwrap();
         assert_eq!(re_vals.len(), 3);
-        for &v in re_vals { assert!((v - 1.0).abs() < 0.01, "expected ~1.0, got {v}"); }
+        for &v in re_vals {
+            assert!((v - 1.0).abs() < 0.01, "expected ~1.0, got {v}");
+        }
     }
 
     // ---- Const twiddle accuracy ----
@@ -1216,6 +1397,9 @@ mod tests {
         freq_energy /= n as f64;
 
         let rel_err = (freq_energy - time_energy).abs() / time_energy;
-        assert!(rel_err < 1e-4, "Parseval's theorem violated: time={time_energy}, freq={freq_energy}, rel_err={rel_err}");
+        assert!(
+            rel_err < 1e-4,
+            "Parseval's theorem violated: time={time_energy}, freq={freq_energy}, rel_err={rel_err}"
+        );
     }
 }
