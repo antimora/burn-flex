@@ -473,12 +473,7 @@ fn contiguous_strides(shape: &Shape) -> Vec<usize> {
     crate::layout::contiguous_strides_usize(shape)
 }
 
-fn slice_base_offset(
-    slice_idx: usize,
-    shape: &Shape,
-    strides: &[usize],
-    dim: usize,
-) -> usize {
+fn slice_base_offset(slice_idx: usize, shape: &Shape, strides: &[usize], dim: usize) -> usize {
     crate::layout::slice_base_offset(slice_idx, shape, strides, dim)
 }
 
