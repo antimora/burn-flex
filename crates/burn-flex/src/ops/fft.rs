@@ -355,7 +355,7 @@ fn complex_fft_8(re: &mut [f32], im: &mut [f32]) {
 }
 
 // ============================================================================
-// General complex FFT: radix-2 with SIMD
+// General complex FFT: mixed radix-4/radix-2 with SIMD
 // ============================================================================
 
 /// Complex FFT of size n (power of 2) using precomputed twiddles.
@@ -385,47 +385,105 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
     let offsets = tw.offsets();
     let num_stages = offsets.len() - 1;
 
+    // For odd number of stages, do one radix-2 pass first so the
+    // remaining stages can be processed in radix-4 pairs.
+    let start_stage = if num_stages % 2 == 1 {
+        let tw_off = offsets[0];
+        let mut start = 0;
+        while start < n {
+            let wr = tw_re[tw_off];
+            let wi = tw_im[tw_off];
+            let t_re = wr * re[start + 1] - wi * im[start + 1];
+            let t_im = wr * im[start + 1] + wi * re[start + 1];
+            re[start + 1] = re[start] - t_re;
+            im[start + 1] = im[start] - t_im;
+            re[start] += t_re;
+            im[start] += t_im;
+            start += 2;
+        }
+        1
+    } else {
+        0
+    };
+
     #[cfg(feature = "simd")]
     {
-        simd_fft::radix2_simd(re, im, n, tw_re, tw_im, offsets, num_stages);
+        simd_fft::radix4_simd(re, im, n, tw_re, tw_im, offsets, start_stage, num_stages);
     }
     #[cfg(not(feature = "simd"))]
     {
-        radix2_scalar(re, im, n, tw_re, tw_im, offsets, num_stages);
+        radix4_scalar(re, im, n, tw_re, tw_im, offsets, start_stage, num_stages);
     }
 }
 
+/// Correct DIT radix-4: fuse two radix-2 stages into one pass.
+///
+/// For each pair of stages (s, s+1) with quarter = 2^s:
+/// 1. Apply W_{2q}^k to x[p1] and x[p3] (inner stage twiddle, same for both)
+/// 2. Inner butterflies: a=p0+tw1, b=p0-tw1, c=p2+tw3, d=p2-tw3
+/// 3. Apply W_{4q}^k to c and d; d also gets -i rotation
+/// 4. Outer butterflies: p0=a+tc, p2=a-tc, p1=b+(-i*td), p3=b-(-i*td)
 #[cfg(not(feature = "simd"))]
 #[allow(clippy::too_many_arguments)]
-fn radix2_scalar(
-    re: &mut [f32],
-    im: &mut [f32],
-    n: usize,
-    tw_re: &[f32],
-    tw_im: &[f32],
-    offsets: &[usize],
-    num_stages: usize,
+fn radix4_scalar(
+    re: &mut [f32], im: &mut [f32], n: usize,
+    tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
+    start_stage: usize, num_stages: usize,
 ) {
-    let mut len = 2;
-    for &tw_off in &offsets[..num_stages] {
-        let half = len / 2;
-        let mut start = 0;
-        while start < n {
-            for k in 0..half {
-                let wr = tw_re[tw_off + k];
-                let wi = tw_im[tw_off + k];
-                let even = start + k;
-                let odd = even + half;
-                let t_re = wr * re[odd] - wi * im[odd];
-                let t_im = wr * im[odd] + wi * re[odd];
-                re[odd] = re[even] - t_re;
-                im[odd] = im[even] - t_im;
-                re[even] += t_re;
-                im[even] += t_im;
+    let mut stage = start_stage;
+    while stage + 1 < num_stages {
+        let quarter = 1 << stage;
+        let group_size = quarter << 2;
+        let tw_off_inner = offsets[stage];     // W_{2q}^k
+        let tw_off_outer = offsets[stage + 1]; // W_{4q}^k
+
+        let mut group_start = 0;
+        while group_start < n {
+            for k in 0..quarter {
+                let p0 = group_start + k;
+                let p1 = p0 + quarter;
+                let p2 = p1 + quarter;
+                let p3 = p2 + quarter;
+
+                // Inner twiddle: W_{2q}^k applied to p1 and p3
+                let wi_re = tw_re[tw_off_inner + k];
+                let wi_im = tw_im[tw_off_inner + k];
+                let tw1_re = wi_re * re[p1] - wi_im * im[p1];
+                let tw1_im = wi_re * im[p1] + wi_im * re[p1];
+                let tw3_re = wi_re * re[p3] - wi_im * im[p3];
+                let tw3_im = wi_re * im[p3] + wi_im * re[p3];
+
+                // Inner butterflies
+                let a_re = re[p0] + tw1_re;
+                let a_im = im[p0] + tw1_im;
+                let b_re = re[p0] - tw1_re;
+                let b_im = im[p0] - tw1_im;
+                let c_re = re[p2] + tw3_re;
+                let c_im = im[p2] + tw3_im;
+                let d_re = re[p2] - tw3_re;
+                let d_im = im[p2] - tw3_im;
+
+                // Outer twiddle: W_{4q}^k applied to c and d
+                let wo_re = tw_re[tw_off_outer + k];
+                let wo_im = tw_im[tw_off_outer + k];
+                let tc_re = wo_re * c_re - wo_im * c_im;
+                let tc_im = wo_re * c_im + wo_im * c_re;
+                let td_re = wo_re * d_re - wo_im * d_im;
+                let td_im = wo_re * d_im + wo_im * d_re;
+
+                // Outer butterflies (-i*(td_re+i*td_im) = (td_im, -td_re))
+                re[p0] = a_re + tc_re;
+                im[p0] = a_im + tc_im;
+                re[p2] = a_re - tc_re;
+                im[p2] = a_im - tc_im;
+                re[p1] = b_re + td_im;
+                im[p1] = b_im - td_re;
+                re[p3] = b_re - td_im;
+                im[p3] = b_im + td_re;
             }
-            start += len;
+            group_start += group_size;
         }
-        len <<= 1;
+        stage += 2;
     }
 }
 
@@ -433,95 +491,150 @@ fn radix2_scalar(
 mod simd_fft {
     use macerator::{Simd, vload_unaligned, vstore_unaligned};
 
-    /// SIMD radix-2 butterfly passes.
+    /// Scalar radix-4 butterfly for the SIMD tail path.
+    #[inline(always)]
+    fn scalar_radix4(
+        re: &mut [f32], im: &mut [f32],
+        p0: usize, quarter: usize,
+        tw_re: &[f32], tw_im: &[f32],
+        tw_off_inner: usize, tw_off_outer: usize, k: usize,
+    ) {
+        let p1 = p0 + quarter;
+        let p2 = p1 + quarter;
+        let p3 = p2 + quarter;
+
+        let wi_r = tw_re[tw_off_inner + k];
+        let wi_i = tw_im[tw_off_inner + k];
+        let tw1_re = wi_r * re[p1] - wi_i * im[p1];
+        let tw1_im = wi_r * im[p1] + wi_i * re[p1];
+        let tw3_re = wi_r * re[p3] - wi_i * im[p3];
+        let tw3_im = wi_r * im[p3] + wi_i * re[p3];
+
+        let a_re = re[p0] + tw1_re;
+        let a_im = im[p0] + tw1_im;
+        let b_re = re[p0] - tw1_re;
+        let b_im = im[p0] - tw1_im;
+        let c_re = re[p2] + tw3_re;
+        let c_im = im[p2] + tw3_im;
+        let d_re = re[p2] - tw3_re;
+        let d_im = im[p2] - tw3_im;
+
+        let wo_r = tw_re[tw_off_outer + k];
+        let wo_i = tw_im[tw_off_outer + k];
+        let tc_re = wo_r * c_re - wo_i * c_im;
+        let tc_im = wo_r * c_im + wo_i * c_re;
+        let td_re = wo_r * d_re - wo_i * d_im;
+        let td_im = wo_r * d_im + wo_i * d_re;
+
+        re[p0] = a_re + tc_re;
+        im[p0] = a_im + tc_im;
+        re[p2] = a_re - tc_re;
+        im[p2] = a_im - tc_im;
+        re[p1] = b_re + td_im;
+        im[p1] = b_im - td_re;
+        re[p3] = b_re - td_im;
+        im[p3] = b_im + td_re;
+    }
+
+    /// SIMD radix-4 butterfly passes (pairs of radix-2 stages).
     #[macerator::with_simd]
     #[allow(clippy::too_many_arguments)]
-    pub fn radix2_simd<S: Simd>(
-        re: &mut [f32],
-        im: &mut [f32],
-        n: usize,
-        tw_re: &[f32],
-        tw_im: &[f32],
-        offsets: &[usize],
-        num_stages: usize,
+    pub fn radix4_simd<S: Simd>(
+        re: &mut [f32], im: &mut [f32], n: usize,
+        tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
+        start_stage: usize, num_stages: usize,
     ) {
         let lanes = S::lanes32();
-        let mut len = 2;
-        for &tw_off in &offsets[..num_stages] {
-            let half = len / 2;
+        let mut stage = start_stage;
 
-            if half >= lanes {
-                let mut start = 0;
-                while start < n {
+        while stage + 1 < num_stages {
+            let quarter = 1 << stage;
+            let group_size = quarter << 2;
+            let tw_off_inner = offsets[stage];
+            let tw_off_outer = offsets[stage + 1];
+
+            if quarter >= lanes {
+                let mut group_start = 0;
+                while group_start < n {
                     let mut k = 0;
-                    while k + lanes <= half {
+                    while k + lanes <= quarter {
                         unsafe {
-                            let wr = vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off + k));
-                            let wi = vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off + k));
-                            let even_idx = start + k;
-                            let odd_idx = even_idx + half;
+                            // Inner twiddle: W_{2q}^k
+                            let wi_r = vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_inner + k));
+                            let wi_i = vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_inner + k));
 
-                            let re_even = vload_unaligned::<S, f32>(re.as_ptr().add(even_idx));
-                            let im_even = vload_unaligned::<S, f32>(im.as_ptr().add(even_idx));
-                            let re_odd = vload_unaligned::<S, f32>(re.as_ptr().add(odd_idx));
-                            let im_odd = vload_unaligned::<S, f32>(im.as_ptr().add(odd_idx));
+                            let p0 = group_start + k;
+                            let p1 = p0 + quarter;
+                            let p2 = p1 + quarter;
+                            let p3 = p2 + quarter;
 
-                            let t_re = wr * re_odd - wi * im_odd;
-                            let t_im = wr * im_odd + wi * re_odd;
+                            let r0 = vload_unaligned::<S, f32>(re.as_ptr().add(p0));
+                            let i0 = vload_unaligned::<S, f32>(im.as_ptr().add(p0));
+                            let r1 = vload_unaligned::<S, f32>(re.as_ptr().add(p1));
+                            let i1 = vload_unaligned::<S, f32>(im.as_ptr().add(p1));
+                            let r2 = vload_unaligned::<S, f32>(re.as_ptr().add(p2));
+                            let i2 = vload_unaligned::<S, f32>(im.as_ptr().add(p2));
+                            let r3 = vload_unaligned::<S, f32>(re.as_ptr().add(p3));
+                            let i3 = vload_unaligned::<S, f32>(im.as_ptr().add(p3));
 
-                            vstore_unaligned::<S, f32>(
-                                re.as_mut_ptr().add(even_idx),
-                                re_even + t_re,
-                            );
-                            vstore_unaligned::<S, f32>(
-                                im.as_mut_ptr().add(even_idx),
-                                im_even + t_im,
-                            );
-                            vstore_unaligned::<S, f32>(
-                                re.as_mut_ptr().add(odd_idx),
-                                re_even - t_re,
-                            );
-                            vstore_unaligned::<S, f32>(
-                                im.as_mut_ptr().add(odd_idx),
-                                im_even - t_im,
-                            );
+                            // Apply inner twiddle to p1 and p3
+                            let tw1_re = wi_r * r1 - wi_i * i1;
+                            let tw1_im = wi_r * i1 + wi_i * r1;
+                            let tw3_re = wi_r * r3 - wi_i * i3;
+                            let tw3_im = wi_r * i3 + wi_i * r3;
+
+                            // Inner butterflies
+                            let a_re = r0 + tw1_re;
+                            let a_im = i0 + tw1_im;
+                            let b_re = r0 - tw1_re;
+                            let b_im = i0 - tw1_im;
+                            let c_re = r2 + tw3_re;
+                            let c_im = i2 + tw3_im;
+                            let d_re = r2 - tw3_re;
+                            let d_im = i2 - tw3_im;
+
+                            // Outer twiddle: W_{4q}^k
+                            let wo_r = vload_unaligned::<S, f32>(tw_re.as_ptr().add(tw_off_outer + k));
+                            let wo_i = vload_unaligned::<S, f32>(tw_im.as_ptr().add(tw_off_outer + k));
+                            let tc_re = wo_r * c_re - wo_i * c_im;
+                            let tc_im = wo_r * c_im + wo_i * c_re;
+                            let td_re = wo_r * d_re - wo_i * d_im;
+                            let td_im = wo_r * d_im + wo_i * d_re;
+
+                            // Outer butterflies: -i*(td_re+i*td_im) = (td_im, -td_re)
+                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p0), a_re + tc_re);
+                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p0), a_im + tc_im);
+                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p2), a_re - tc_re);
+                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p2), a_im - tc_im);
+                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p1), b_re + td_im);
+                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p1), b_im - td_re);
+                            vstore_unaligned::<S, f32>(re.as_mut_ptr().add(p3), b_re - td_im);
+                            vstore_unaligned::<S, f32>(im.as_mut_ptr().add(p3), b_im + td_re);
                         }
                         k += lanes;
                     }
-                    while k < half {
-                        let wr = tw_re[tw_off + k];
-                        let wi = tw_im[tw_off + k];
-                        let even = start + k;
-                        let odd = even + half;
-                        let t_re = wr * re[odd] - wi * im[odd];
-                        let t_im = wr * im[odd] + wi * re[odd];
-                        re[odd] = re[even] - t_re;
-                        im[odd] = im[even] - t_im;
-                        re[even] += t_re;
-                        im[even] += t_im;
+                    while k < quarter {
+                        scalar_radix4(
+                            re, im, group_start + k, quarter,
+                            tw_re, tw_im, tw_off_inner, tw_off_outer, k,
+                        );
                         k += 1;
                     }
-                    start += len;
+                    group_start += group_size;
                 }
             } else {
-                let mut start = 0;
-                while start < n {
-                    for k in 0..half {
-                        let wr = tw_re[tw_off + k];
-                        let wi = tw_im[tw_off + k];
-                        let even = start + k;
-                        let odd = even + half;
-                        let t_re = wr * re[odd] - wi * im[odd];
-                        let t_im = wr * im[odd] + wi * re[odd];
-                        re[odd] = re[even] - t_re;
-                        im[odd] = im[even] - t_im;
-                        re[even] += t_re;
-                        im[even] += t_im;
+                let mut group_start = 0;
+                while group_start < n {
+                    for k in 0..quarter {
+                        scalar_radix4(
+                            re, im, group_start + k, quarter,
+                            tw_re, tw_im, tw_off_inner, tw_off_outer, k,
+                        );
                     }
-                    start += len;
+                    group_start += group_size;
                 }
             }
-            len <<= 1;
+            stage += 2;
         }
     }
 }
