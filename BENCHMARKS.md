@@ -993,9 +993,9 @@ NdArray does not implement rfft. `realfft` requires `std`; Flex works in `no_std
 | n=16384 | 56.8 us       | 21.8 us          | 2.6x     |
 | n=65536 | 275 us        | 93.5 us          | 2.9x     |
 
-Flex implementation: Cooley-Tukey radix-2 with complex packing (forward) / inverse packing
-(inverse), compile-time twiddle tables via const fn, SIMD vectorization via macerator, unrolled
-small kernels (N=2,4,8), and rayon parallelism across fibers. The remaining gap to rustfft is due
+Flex implementation: Cooley-Tukey with mixed radix-4/radix-2, complex packing (forward) / inverse
+packing (inverse), compile-time twiddle tables via const fn, SIMD vectorization via macerator,
+unrolled small kernels (N=2,4,8), and rayon parallelism across fibers. The remaining gap to rustfft is due
 to their hand-tuned per-arch SIMD rewrites, split-radix algorithms, and strength-reduced modular
 arithmetic.
 

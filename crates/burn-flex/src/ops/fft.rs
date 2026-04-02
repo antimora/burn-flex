@@ -388,18 +388,17 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
 
     // For odd number of stages, do one radix-2 pass first so the
     // remaining stages can be processed in radix-4 pairs.
+    // For odd number of stages, do one radix-2 pass first.
+    // Stage 0 twiddle is always W_2^0 = 1, so just add/sub.
     let start_stage = if num_stages % 2 == 1 {
-        let tw_off = offsets[0];
         let mut start = 0;
         while start < n {
-            let wr = tw_re[tw_off];
-            let wi = tw_im[tw_off];
-            let t_re = wr * re[start + 1] - wi * im[start + 1];
-            let t_im = wr * im[start + 1] + wi * re[start + 1];
-            re[start + 1] = re[start] - t_re;
-            im[start + 1] = im[start] - t_im;
-            re[start] += t_re;
-            im[start] += t_im;
+            let (a, b) = (re[start] + re[start + 1], re[start] - re[start + 1]);
+            let (c, d) = (im[start] + im[start + 1], im[start] - im[start + 1]);
+            re[start] = a;
+            re[start + 1] = b;
+            im[start] = c;
+            im[start + 1] = d;
             start += 2;
         }
         1
@@ -1256,19 +1255,17 @@ fn irfft_fiber(
     unpack_tw_im: &[f32],
     z_re: &mut [f32],
     z_im: &mut [f32],
+    spec_re: &mut [f32],
+    spec_im: &mut [f32],
 ) {
-    // Gather spectrum bins
-    let mut spec_re = vec![0.0f32; half + 1];
-    let mut spec_im = vec![0.0f32; half + 1];
     for k in 0..=half {
         spec_re[k] = re_in[k * in_stride];
         spec_im[k] = im_in[k * in_stride];
     }
 
-    // Repack into N/2 complex values
     repack_irfft(
-        &spec_re,
-        &spec_im,
+        spec_re,
+        spec_im,
         half,
         unpack_tw_re,
         unpack_tw_im,
@@ -1307,14 +1304,22 @@ pub fn irfft_f32(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -
         shape.num_dims()
     );
     let half_plus_1 = shape[dim];
-    assert!(
-        half_plus_1 >= 2,
-        "irfft: spectrum must have at least 2 bins along dim {dim}, got {half_plus_1}"
-    );
+    assert!(half_plus_1 >= 1, "irfft: spectrum dimension cannot be empty");
+
+    // N=1: single DC bin, output is just the real value
+    if half_plus_1 == 1 {
+        let data: &[f32] = spectrum_re.storage();
+        return FlexTensor::new(
+            Bytes::from_elems(data.to_vec()),
+            spectrum_re.layout().clone(),
+            burn_backend::DType::F32,
+        );
+    }
+
     let half = half_plus_1 - 1;
     let n = 2 * half;
     assert!(
-        n > 0 && n.is_power_of_two(),
+        n.is_power_of_two(),
         "irfft: reconstructed signal length must be a power of 2, got {n}"
     );
 
@@ -1357,6 +1362,8 @@ pub fn irfft_f32(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -
                 let re_base = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
                 let mut z_re = vec![0.0f32; half.max(1)];
                 let mut z_im = vec![0.0f32; half.max(1)];
+                let mut spec_re = vec![0.0f32; half + 1];
+                let mut spec_im = vec![0.0f32; half + 1];
                 let mut fiber_out = vec![0.0f32; n];
 
                 irfft_fiber(
@@ -1371,6 +1378,8 @@ pub fn irfft_f32(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -
                     unpack_tw_im,
                     &mut z_re,
                     &mut z_im,
+                    &mut spec_re,
+                    &mut spec_im,
                 );
                 (fiber_idx, fiber_out)
             })
@@ -1392,6 +1401,8 @@ pub fn irfft_f32(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -
 
     let mut z_re = vec![0.0f32; half.max(1)];
     let mut z_im = vec![0.0f32; half.max(1)];
+    let mut spec_re = vec![0.0f32; half + 1];
+    let mut spec_im = vec![0.0f32; half + 1];
     let mut fiber_out = vec![0.0f32; n];
 
     for fiber_idx in 0..num_fibers {
@@ -1410,6 +1421,8 @@ pub fn irfft_f32(spectrum_re: FlexTensor, spectrum_im: FlexTensor, dim: usize) -
             unpack_tw_im,
             &mut z_re,
             &mut z_im,
+            &mut spec_re,
+            &mut spec_im,
         );
 
         for k in 0..n {

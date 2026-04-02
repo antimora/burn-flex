@@ -686,7 +686,7 @@ directly on strided tensors via `StridedIter`.
 
 **Location**: `ops/fft.rs`
 
-Forward (rfft) and inverse (irfft) real FFT via Cooley-Tukey radix-2 DIT.
+Forward (rfft) and inverse (irfft) real FFT via Cooley-Tukey with mixed radix-4/radix-2 DIT.
 
 **Key optimizations:**
 
@@ -699,14 +699,17 @@ Forward (rfft) and inverse (irfft) real FFT via Cooley-Tukey radix-2 DIT.
 - **Unrolled small kernels**: Hardcoded butterfly networks for N=2, 4, 8 with compile-time twiddle
   values (W_4=-i, W_8=sqrt2/2). Eliminates loop overhead for the small inner FFTs produced by
   complex packing.
-- **SIMD butterflies**: `#[macerator::with_simd]` vectorizes radix-2 butterfly passes across
+- **Mixed radix-4/radix-2**: Pairs of radix-2 stages are fused into radix-4 passes, halving the
+  number of data passes for better cache behavior. Odd-stage-count FFTs do one radix-2 pass first.
+- **SIMD butterflies**: `#[macerator::with_simd]` vectorizes radix-4 butterfly passes across
   consecutive elements within each stage.
 - **Inverse via conjugation**: irfft computes IFFT as `(1/N)*conj(FFT(conj(X)))`, reusing the
   forward FFT (with its SIMD path) rather than maintaining a separate inverse kernel.
 - **Rayon parallelism**: Batched transforms (multiple independent fibers along the FFT dimension)
   are distributed across threads.
 
-**Dtype support**: f32 (native), f64 (scalar radix-2), f16/bf16 (via f32 upcast/downcast).
+**Dtype support**: f32 (native with SIMD radix-4), f64 (rfft computes in f64 with widened f32
+twiddles; irfft truncates to f32 for computation), f16/bf16 (via f32 upcast/downcast).
 
 ---
 

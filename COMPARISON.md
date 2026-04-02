@@ -210,7 +210,7 @@ All operations listed below are implemented by both backends unless marked other
 | adaptive_avg_pool2d_backward     | Yes       | Yes          |                                                                                        |
 | interpolate                      | Yes       | Yes          | Nearest, bilinear, bicubic                                                             |
 | attention (SDPA)                 | Yes       | Yes          | Flex: auto-selects naive or flash by score matrix size; NdArray: matmul + softmax      |
-| rfft                             | Yes       | No           | Flex: Cooley-Tukey with complex packing, SIMD, compile-time twiddles. no_std.          |
+| rfft                             | Yes       | No           | Flex: Cooley-Tukey with complex packing, radix-4, SIMD, compile-time twiddles. no_std. |
 | irfft                            | Yes       | No           | Flex: Inverse packing trick, SIMD via conjugate-forward-conjugate. no_std.             |
 
 ### Int and Bool Operations
