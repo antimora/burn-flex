@@ -755,6 +755,50 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     make_tensors_typed(re_out, im_out, out_shape)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn rfft_fiber_f64(
+    signal: &[f64], in_stride: usize, n: usize, half: usize,
+    out_re: &mut [f64], out_im: &mut [f64],
+    tw_re: &[f32], tw_im: &[f32], tw_offsets: &[usize],
+    unpack_re: &[f32], unpack_im: &[f32],
+    z_re: &mut [f64], z_im: &mut [f64],
+) {
+    if n == 1 {
+        out_re[0] = signal[0];
+        out_im[0] = 0.0;
+        return;
+    }
+
+    for k in 0..half {
+        z_re[k] = signal[(2 * k) * in_stride];
+        z_im[k] = signal[(2 * k + 1) * in_stride];
+    }
+
+    fft_f64_inplace(z_re, z_im, half, tw_re, tw_im, tw_offsets);
+
+    out_re[0] = z_re[0] + z_im[0];
+    out_im[0] = 0.0;
+    out_re[half] = z_re[0] - z_im[0];
+    out_im[half] = 0.0;
+
+    for k in 1..half {
+        let j = half - k;
+        let (zk_re, zk_im) = (z_re[k], z_im[k]);
+        let (zj_re, zj_im) = (z_re[j], z_im[j]);
+
+        let xe_re = (zk_re + zj_re) * 0.5;
+        let xe_im = (zk_im - zj_im) * 0.5;
+        let xo_re = (zk_im + zj_im) * 0.5;
+        let xo_im = (zj_re - zk_re) * 0.5;
+
+        let wr = unpack_re[k] as f64;
+        let wi = unpack_im[k] as f64;
+
+        out_re[k] = xe_re + wr * xo_re - wi * xo_im;
+        out_im[k] = xe_im + wr * xo_im + wi * xo_re;
+    }
+}
+
 pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
@@ -787,52 +831,65 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let in_stride = in_strides[dim];
     let out_stride = out_strides[dim];
 
-    // f64 path: use the packing trick with f64 arithmetic
-    let mut z_re = vec![0.0f64; half.max(1)];
-    let mut z_im = vec![0.0f64; half.max(1)];
-
     let tw_half_re = tw_half.re();
     let tw_half_im = tw_half.im();
     let tw_half_offsets = tw_half.offsets();
+
+    #[cfg(feature = "rayon")]
+    if num_fibers >= 4 && n >= 64 {
+        use rayon::prelude::*;
+
+        let fiber_results: Vec<(usize, Vec<f64>, Vec<f64>)> = (0..num_fibers)
+            .into_par_iter()
+            .map(|fiber_idx| {
+                let base_offset = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
+                let mut z_re = vec![0.0f64; half.max(1)];
+                let mut z_im = vec![0.0f64; half.max(1)];
+                let mut fiber_re = vec![0.0f64; out_len];
+                let mut fiber_im = vec![0.0f64; out_len];
+
+                rfft_fiber_f64(
+                    &data[base_offset..], in_stride, n, half,
+                    &mut fiber_re, &mut fiber_im,
+                    tw_half_re, tw_half_im, tw_half_offsets,
+                    unpack_re, unpack_im,
+                    &mut z_re, &mut z_im,
+                );
+                (fiber_idx, fiber_re, fiber_im)
+            })
+            .collect();
+
+        for (fiber_idx, fiber_re, fiber_im) in fiber_results {
+            let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
+            for k in 0..out_len {
+                re_out[out_base + k * out_stride] = fiber_re[k];
+                im_out[out_base + k * out_stride] = fiber_im[k];
+            }
+        }
+
+        return make_tensors_typed(re_out, im_out, out_shape);
+    }
+
+    let mut z_re = vec![0.0f64; half.max(1)];
+    let mut z_im = vec![0.0f64; half.max(1)];
+    let mut fiber_re = vec![0.0f64; out_len];
+    let mut fiber_im = vec![0.0f64; out_len];
 
     for fiber_idx in 0..num_fibers {
         let base_offset = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
         let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
 
-        if n == 1 {
-            re_out[out_base] = data[base_offset];
-            im_out[out_base] = 0.0;
-            continue;
-        }
+        rfft_fiber_f64(
+            &data[base_offset..], in_stride, n, half,
+            &mut fiber_re, &mut fiber_im,
+            tw_half_re, tw_half_im, tw_half_offsets,
+            unpack_re, unpack_im,
+            &mut z_re, &mut z_im,
+        );
 
-        for k in 0..half {
-            z_re[k] = data[base_offset + (2 * k) * in_stride];
-            z_im[k] = data[base_offset + (2 * k + 1) * in_stride];
-        }
-
-        // Complex FFT of size half (f64 scalar, using f32 twiddles widened)
-        fft_f64_inplace(&mut z_re, &mut z_im, half, tw_half_re, tw_half_im, tw_half_offsets);
-
-        re_out[out_base] = z_re[0] + z_im[0];
-        im_out[out_base] = 0.0;
-        re_out[out_base + half * out_stride] = z_re[0] - z_im[0];
-        im_out[out_base + half * out_stride] = 0.0;
-
-        for k in 1..half {
-            let j = half - k;
-            let (zk_re, zk_im) = (z_re[k], z_im[k]);
-            let (zj_re, zj_im) = (z_re[j], z_im[j]);
-
-            let xe_re = (zk_re + zj_re) * 0.5;
-            let xe_im = (zk_im - zj_im) * 0.5;
-            let xo_re = (zk_im + zj_im) * 0.5;
-            let xo_im = (zj_re - zk_re) * 0.5;
-
-            let wr = unpack_re[k] as f64;
-            let wi = unpack_im[k] as f64;
-
-            re_out[out_base + k * out_stride] = xe_re + wr * xo_re - wi * xo_im;
-            im_out[out_base + k * out_stride] = xe_im + wr * xo_im + wi * xo_re;
+        for k in 0..out_len {
+            re_out[out_base + k * out_stride] = fiber_re[k];
+            im_out[out_base + k * out_stride] = fiber_im[k];
         }
     }
 
@@ -895,4 +952,270 @@ pub fn rfft_bf16(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = super::module::cast_to_f32(tensor, bf16::to_f32);
     let (re, im) = rfft_f32(tensor, dim);
     (super::module::cast_from_f32(re, bf16::from_f32), super::module::cast_from_f32(im, bf16::from_f32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn_backend::{DType, TensorData, Tolerance};
+
+    fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> FlexTensor {
+        FlexTensor::from_data(TensorData::new(data, shape))
+    }
+
+    fn make_f64(data: Vec<f64>, shape: Vec<usize>) -> FlexTensor {
+        FlexTensor::from_data(TensorData::new(data, shape))
+    }
+
+    fn assert_approx(tensor: FlexTensor, expected: &[f32], tol: f32) {
+        tensor.into_data().assert_approx_eq::<f32>(
+            &TensorData::from(expected),
+            Tolerance::absolute(tol),
+        );
+    }
+
+    fn assert_approx_f64(tensor: FlexTensor, expected: &[f64], tol: f64) {
+        tensor.into_data().assert_approx_eq::<f64>(
+            &TensorData::from(expected),
+            Tolerance::absolute(tol),
+        );
+    }
+
+    // ---- N=1 ----
+
+    #[test]
+    fn rfft_n1() {
+        let signal = make_f32(vec![5.0], vec![1]);
+        let (re, im) = rfft_f32(signal, 0);
+        assert_approx(re, &[5.0], 1e-6);
+        assert_approx(im, &[0.0], 1e-6);
+    }
+
+    // ---- N=2 ----
+
+    #[test]
+    fn rfft_n2() {
+        let signal = make_f32(vec![1.0, -1.0], vec![2]);
+        let (re, im) = rfft_f32(signal, 0);
+        assert_approx(re, &[0.0, 2.0], 1e-6);
+        assert_approx(im, &[0.0, 0.0], 1e-6);
+    }
+
+    // ---- N=4: known DFT of [1,0,0,0] = [1,1,1] (all real) ----
+
+    #[test]
+    fn rfft_n4_impulse() {
+        let signal = make_f32(vec![1.0, 0.0, 0.0, 0.0], vec![4]);
+        let (re, im) = rfft_f32(signal, 0);
+        assert_approx(re, &[1.0, 1.0, 1.0], 1e-6);
+        assert_approx(im, &[0.0, 0.0, 0.0], 1e-6);
+    }
+
+    // ---- N=4: constant signal [1,1,1,1] -> DC only ----
+
+    #[test]
+    fn rfft_n4_constant() {
+        let signal = make_f32(vec![1.0, 1.0, 1.0, 1.0], vec![4]);
+        let (re, im) = rfft_f32(signal, 0);
+        assert_approx(re, &[4.0, 0.0, 0.0], 1e-6);
+        assert_approx(im, &[0.0, 0.0, 0.0], 1e-6);
+    }
+
+    // ---- N=4: zeros ----
+
+    #[test]
+    fn rfft_n4_zeros() {
+        let signal = make_f32(vec![0.0; 4], vec![4]);
+        let (re, im) = rfft_f32(signal, 0);
+        assert_approx(re, &[0.0, 0.0, 0.0], 1e-6);
+        assert_approx(im, &[0.0, 0.0, 0.0], 1e-6);
+    }
+
+    // ---- N=8 ----
+
+    #[test]
+    fn rfft_n8_impulse() {
+        let mut signal = vec![0.0f32; 8];
+        signal[0] = 1.0;
+        let (re, im) = rfft_f32(make_f32(signal, vec![8]), 0);
+        // DFT of impulse is all 1s
+        assert_approx(re, &[1.0, 1.0, 1.0, 1.0, 1.0], 1e-6);
+        assert_approx(im, &[0.0, 0.0, 0.0, 0.0, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn rfft_n8_cosine() {
+        // cos(2*pi*k/8) for k=0..7 -> energy at bin 1
+        let signal: Vec<f32> = (0..8)
+            .map(|k| (2.0 * std::f32::consts::PI * k as f32 / 8.0).cos())
+            .collect();
+        let (re, im) = rfft_f32(make_f32(signal, vec![8]), 0);
+        // Bin 1 should have amplitude 4 (real), rest ~0
+        assert_approx(re, &[0.0, 4.0, 0.0, 0.0, 0.0], 1e-4);
+        assert_approx(im, &[0.0, 0.0, 0.0, 0.0, 0.0], 1e-4);
+    }
+
+    // ---- Larger size: N=256 ----
+
+    #[test]
+    fn rfft_n256_impulse() {
+        let mut signal = vec![0.0f32; 256];
+        signal[0] = 1.0;
+        let (re, im) = rfft_f32(make_f32(signal, vec![256]), 0);
+        let re_data = re.into_data();
+        let im_data = im.into_data();
+        let re_vals = re_data.as_slice::<f32>().unwrap();
+        let im_vals = im_data.as_slice::<f32>().unwrap();
+        assert_eq!(re_vals.len(), 129);
+        for &v in re_vals { assert!((v - 1.0).abs() < 1e-5, "re bin should be 1.0, got {v}"); }
+        for &v in im_vals { assert!(v.abs() < 1e-5, "im bin should be 0.0, got {v}"); }
+    }
+
+    // ---- Multi-dimensional: FFT along dim 1 ----
+
+    #[test]
+    fn rfft_2d_dim1() {
+        // 2 rows, each of length 4: impulse and constant
+        let data = vec![
+            1.0, 0.0, 0.0, 0.0, // row 0: impulse
+            1.0, 1.0, 1.0, 1.0, // row 1: constant
+        ];
+        let signal = make_f32(data, vec![2, 4]);
+        let (re, im) = rfft_f32(signal, 1);
+        // Shape should be [2, 3]
+        let re_data = re.into_data();
+        let im_data = im.into_data();
+        let re_vals = re_data.as_slice::<f32>().unwrap();
+        let im_vals = im_data.as_slice::<f32>().unwrap();
+        assert_eq!(re_vals.len(), 6); // 2 * 3
+        // Row 0 (impulse): [1, 1, 1]
+        assert!((re_vals[0] - 1.0).abs() < 1e-5);
+        assert!((re_vals[1] - 1.0).abs() < 1e-5);
+        assert!((re_vals[2] - 1.0).abs() < 1e-5);
+        // Row 1 (constant): [4, 0, 0]
+        assert!((re_vals[3] - 4.0).abs() < 1e-5);
+        assert!((re_vals[4]).abs() < 1e-5);
+        assert!((re_vals[5]).abs() < 1e-5);
+        // All imaginary should be ~0
+        for &v in im_vals { assert!(v.abs() < 1e-5); }
+    }
+
+    // ---- FFT along dim 0 ----
+
+    #[test]
+    fn rfft_2d_dim0() {
+        // 4 rows, 2 cols: impulse in each column
+        let data = vec![
+            1.0, 1.0,
+            0.0, 0.0,
+            0.0, 0.0,
+            0.0, 0.0,
+        ];
+        let signal = make_f32(data, vec![4, 2]);
+        let (re, im) = rfft_f32(signal, 0);
+        // Shape should be [3, 2]
+        let re_data = re.into_data();
+        let re_vals = re_data.as_slice::<f32>().unwrap();
+        assert_eq!(re_vals.len(), 6);
+        // Each column is an impulse -> all bins = 1
+        for &v in re_vals { assert!((v - 1.0).abs() < 1e-5, "expected 1.0, got {v}"); }
+    }
+
+    // ---- f64 dtype ----
+
+    #[test]
+    fn rfft_f64_n4_impulse() {
+        let signal = make_f64(vec![1.0, 0.0, 0.0, 0.0], vec![4]);
+        let (re, im) = rfft_f64(signal, 0);
+        assert_approx_f64(re, &[1.0, 1.0, 1.0], 1e-10);
+        assert_approx_f64(im, &[0.0, 0.0, 0.0], 1e-10);
+    }
+
+    #[test]
+    fn rfft_f64_n8_cosine() {
+        let signal: Vec<f64> = (0..8)
+            .map(|k| (2.0 * std::f64::consts::PI * k as f64 / 8.0).cos())
+            .collect();
+        let (re, im) = rfft_f64(make_f64(signal, vec![8]), 0);
+        assert_approx_f64(re, &[0.0, 4.0, 0.0, 0.0, 0.0], 1e-6);
+        assert_approx_f64(im, &[0.0, 0.0, 0.0, 0.0, 0.0], 1e-6);
+    }
+
+    // ---- f16 dtype ----
+
+    #[test]
+    fn rfft_f16_n4_impulse() {
+        use burn_std::f16;
+        let f16_data = vec![
+            f16::from_f32(1.0),
+            f16::from_f32(0.0),
+            f16::from_f32(0.0),
+            f16::from_f32(0.0),
+        ];
+        let signal = FlexTensor::new(
+            Bytes::from_elems(f16_data),
+            Layout::contiguous(Shape::from(vec![4])),
+            DType::F16,
+        );
+        let (re, _im) = rfft_f16(signal, 0);
+        // Verify via round-trip to f32
+        let re_f32 = super::super::module::cast_to_f32(re, f16::to_f32);
+        let re_data = re_f32.into_data();
+        let re_vals = re_data.as_slice::<f32>().unwrap();
+        assert_eq!(re_vals.len(), 3);
+        for &v in re_vals { assert!((v - 1.0).abs() < 0.01, "expected ~1.0, got {v}"); }
+    }
+
+    // ---- Const twiddle accuracy ----
+
+    #[test]
+    fn const_sin_cos_accuracy() {
+        let test_angles = [0.0, 0.1, 0.5, 1.0, 2.0, 3.0, -1.0, -3.0, 6.0];
+        for &angle in &test_angles {
+            let cs = const_sin(angle);
+            let cc = const_cos(angle);
+            let rs = angle.sin();
+            let rc = angle.cos();
+            assert!(
+                (cs - rs).abs() < 1e-12,
+                "const_sin({angle}) = {cs}, expected {rs}"
+            );
+            assert!(
+                (cc - rc).abs() < 1e-12,
+                "const_cos({angle}) = {cc}, expected {rc}"
+            );
+        }
+    }
+
+    // ---- N=1024 round-trip with known property: Parseval's theorem ----
+    // Sum of |x|^2 = (1/N) * Sum of |X|^2
+
+    #[test]
+    fn rfft_n1024_parseval() {
+        let n = 1024;
+        let signal: Vec<f32> = (0..n).map(|i| (i as f32 * 0.37).sin()).collect();
+        let time_energy: f64 = signal.iter().map(|&x| (x as f64) * (x as f64)).sum();
+
+        let (re, im) = rfft_f32(make_f32(signal, vec![n]), 0);
+        let re_data = re.into_data();
+        let im_data = im.into_data();
+        let re_vals = re_data.as_slice::<f32>().unwrap();
+        let im_vals = im_data.as_slice::<f32>().unwrap();
+
+        // Frequency energy: DC and Nyquist count once, others count double
+        let out_len = n / 2 + 1;
+        let mut freq_energy = 0.0f64;
+        for k in 0..out_len {
+            let mag2 = (re_vals[k] as f64).powi(2) + (im_vals[k] as f64).powi(2);
+            if k == 0 || k == n / 2 {
+                freq_energy += mag2;
+            } else {
+                freq_energy += 2.0 * mag2;
+            }
+        }
+        freq_energy /= n as f64;
+
+        let rel_err = (freq_energy - time_energy).abs() / time_energy;
+        assert!(rel_err < 1e-4, "Parseval's theorem violated: time={time_energy}, freq={freq_energy}, rel_err={rel_err}");
+    }
 }
