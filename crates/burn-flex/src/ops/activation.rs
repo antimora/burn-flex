@@ -6,6 +6,9 @@
 use burn_backend::Scalar;
 use burn_backend::ops::ActivationOps;
 use burn_backend::tensor::FloatTensor;
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use num_traits::Float;
 use num_traits::ToPrimitive;
 
 use crate::Flex;

@@ -8,6 +8,10 @@
 //! - Use optimized GEMM for the actual convolution
 //! - Rayon parallelism over batch dimension
 
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use alloc::vec;
 use alloc::vec::Vec;
 use burn_backend::DType;

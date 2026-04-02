@@ -14,8 +14,8 @@ broken_intra_doc_links = "deny"
 invalid_html_tags = "deny"
 
 [workspace.dependencies]
-burn-backend = { git = "https://github.com/tracel-ai/burn.git", rev = "0f133622a" }
-burn-std = { git = "https://github.com/tracel-ai/burn.git", rev = "0f133622a" }
+burn-backend = { git = "https://github.com/tracel-ai/burn.git", rev = "0f133622a", default-features = false }
+burn-std = { git = "https://github.com/tracel-ai/burn.git", rev = "0f133622a", default-features = false }
 burn-tensor = { git = "https://github.com/tracel-ai/burn.git", rev = "0f133622a" }
 burn-ir = { git = "https://github.com/tracel-ai/burn.git", rev = "0f133622a", default-features = false }
 burn-ndarray = { git = "https://github.com/tracel-ai/burn.git", rev = "0f133622a" }
@@ -27,7 +27,7 @@ burn-ndarray = { git = "https://github.com/tracel-ai/burn.git", rev = "0f133622a
 # burn-ir = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-ir", default-features = false }
 # burn-ndarray = { path = "/Users/dilshod/Projects/burn-flex-worktree/crates/burn-ndarray" }
 
-half = { version = "2", features = ["bytemuck"] }
+half = { version = "2", default-features = false, features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 

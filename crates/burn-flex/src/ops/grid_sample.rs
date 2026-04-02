@@ -6,6 +6,10 @@ use burn_backend::DType;
 use burn_backend::ops::{GridSampleOptions, GridSamplePaddingMode, InterpolateMode};
 use burn_std::{Bytes, Shape};
 
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use num_traits::Float;
+
 use crate::{FlexTensor, Layout};
 
 /// Grid sample 2D (bilinear and nearest-neighbor interpolation).

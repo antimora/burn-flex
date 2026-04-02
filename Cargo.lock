@@ -319,8 +319,12 @@ dependencies = [
  "divan",
  "gemm",
  "half",
+ "libm",
  "macerator",
  "num-traits",
+ "once_cell",
+ "portable-atomic",
+ "portable-atomic-util",
  "rayon",
 ]
 
@@ -2916,6 +2920,10 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+dependencies = [
+ "critical-section",
+ "portable-atomic",
+]
 
 [[package]]
 name = "once_cell_polyfill"
@@ -3031,6 +3039,7 @@ version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 dependencies = [
+ "critical-section",
  "serde",
 ]
 

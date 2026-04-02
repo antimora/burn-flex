@@ -3,6 +3,9 @@
 use alloc::vec::Vec;
 use burn_backend::DType;
 use burn_std::{Bytes, bf16, f16};
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use num_traits::Float;
 
 use crate::layout::StridedBlocks;
 use crate::{FlexTensor, Layout};
@@ -156,22 +159,22 @@ where
 
 /// Exponential: e^x
 pub fn exp(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::exp, f64::exp)
+    unary_op(tensor, |x| x.exp(), |x| x.exp())
 }
 
 /// Natural logarithm: ln(x)
 pub fn log(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::ln, f64::ln)
+    unary_op(tensor, |x| x.ln(), |x| x.ln())
 }
 
 /// Natural logarithm of (1 + x): ln(1 + x)
 pub fn log1p(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::ln_1p, f64::ln_1p)
+    unary_op(tensor, |x| x.ln_1p(), |x| x.ln_1p())
 }
 
 /// Square root
 pub fn sqrt(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::sqrt, f64::sqrt)
+    unary_op(tensor, |x| x.sqrt(), |x| x.sqrt())
 }
 
 /// Absolute value (float)
@@ -188,7 +191,7 @@ pub fn abs(tensor: FlexTensor) -> FlexTensor {
         crate::simd::abs_inplace_f32(&mut storage[..n]);
         return tensor;
     }
-    unary_op(tensor, f32::abs, f64::abs)
+    unary_op(tensor, |x| x.abs(), |x| x.abs())
 }
 
 /// Absolute value (integer)
@@ -224,62 +227,62 @@ pub fn recip(tensor: FlexTensor) -> FlexTensor {
 
 /// Cosine
 pub fn cos(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::cos, f64::cos)
+    unary_op(tensor, |x| x.cos(), |x| x.cos())
 }
 
 /// Sine
 pub fn sin(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::sin, f64::sin)
+    unary_op(tensor, |x| x.sin(), |x| x.sin())
 }
 
 /// Tangent
 pub fn tan(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::tan, f64::tan)
+    unary_op(tensor, |x| x.tan(), |x| x.tan())
 }
 
 /// Hyperbolic cosine
 pub fn cosh(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::cosh, f64::cosh)
+    unary_op(tensor, |x| x.cosh(), |x| x.cosh())
 }
 
 /// Hyperbolic sine
 pub fn sinh(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::sinh, f64::sinh)
+    unary_op(tensor, |x| x.sinh(), |x| x.sinh())
 }
 
 /// Hyperbolic tangent
 pub fn tanh(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::tanh, f64::tanh)
+    unary_op(tensor, |x| x.tanh(), |x| x.tanh())
 }
 
 /// Inverse cosine (arccos)
 pub fn acos(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::acos, f64::acos)
+    unary_op(tensor, |x| x.acos(), |x| x.acos())
 }
 
 /// Inverse hyperbolic cosine
 pub fn acosh(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::acosh, f64::acosh)
+    unary_op(tensor, |x| x.acosh(), |x| x.acosh())
 }
 
 /// Inverse sine (arcsin)
 pub fn asin(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::asin, f64::asin)
+    unary_op(tensor, |x| x.asin(), |x| x.asin())
 }
 
 /// Inverse hyperbolic sine
 pub fn asinh(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::asinh, f64::asinh)
+    unary_op(tensor, |x| x.asinh(), |x| x.asinh())
 }
 
 /// Inverse tangent (arctan)
 pub fn atan(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::atan, f64::atan)
+    unary_op(tensor, |x| x.atan(), |x| x.atan())
 }
 
 /// Inverse hyperbolic tangent
 pub fn atanh(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::atanh, f64::atanh)
+    unary_op(tensor, |x| x.atanh(), |x| x.atanh())
 }
 
 /// Round to nearest integer (ties to even / banker's rounding)
@@ -287,31 +290,27 @@ pub fn round(tensor: FlexTensor) -> FlexTensor {
     unary_op(tensor, round_ties_even_f32, round_ties_even_f64)
 }
 
-/// Round ties to even for f32 (banker's rounding).
-/// Uses the stdlib intrinsic which handles all edge cases including large values.
 fn round_ties_even_f32(x: f32) -> f32 {
-    x.round_ties_even()
+    libm::rintf(x)
 }
 
-/// Round ties to even for f64 (banker's rounding).
-/// Uses the stdlib intrinsic which handles all edge cases including large values.
 fn round_ties_even_f64(x: f64) -> f64 {
-    x.round_ties_even()
+    libm::rint(x)
 }
 
 /// Floor (round down)
 pub fn floor(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::floor, f64::floor)
+    unary_op(tensor, |x| x.floor(), |x| x.floor())
 }
 
 /// Ceiling (round up)
 pub fn ceil(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::ceil, f64::ceil)
+    unary_op(tensor, |x| x.ceil(), |x| x.ceil())
 }
 
 /// Truncate (round towards zero)
 pub fn trunc(tensor: FlexTensor) -> FlexTensor {
-    unary_op(tensor, f32::trunc, f64::trunc)
+    unary_op(tensor, |x| x.trunc(), |x| x.trunc())
 }
 
 /// Error function

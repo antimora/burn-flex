@@ -2,6 +2,9 @@
 
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
+#[cfg(not(feature = "std"))]
+#[allow(unused_imports)]
+use num_traits::Float;
 
 use burn_backend::{
     DType, ExecutionError, FloatDType, TensorData, TensorMetadata,
