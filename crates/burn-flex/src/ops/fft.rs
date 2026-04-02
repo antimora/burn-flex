@@ -1027,45 +1027,82 @@ fn inverse_complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef
     }
 }
 
-/// Process a single irfft fiber.
+/// Repack N/2+1 spectrum bins into N/2 complex values Z[k],
+/// reversing rfft's unpack step.
 ///
-/// Reconstructs the full N-point spectrum from N/2+1 bins using Hermitian
-/// symmetry (X[N-k] = conj(X[k])), then runs inverse complex FFT of size N.
+/// Z[k] = Xe[k] + i*conj(W)*D[k] where:
+///   Xe = (X[k] + conj(X[half-k])) / 2
+///   D  = (X[k] - conj(X[half-k])) / 2
+///   W  = W_N^k (same twiddle used in rfft unpack)
+fn repack_irfft(
+    x_re: &[f32], x_im: &[f32], half: usize,
+    tw_re: &[f32], tw_im: &[f32],
+    z_re: &mut [f32], z_im: &mut [f32],
+) {
+    // k=0: Z[0] = (X[0] + X[half])/2 + i*(X[0] - X[half])/2
+    z_re[0] = (x_re[0] + x_re[half]) * 0.5;
+    z_im[0] = (x_re[0] - x_re[half]) * 0.5;
+
+    for k in 1..half {
+        let j = half - k;
+        let (xk_re, xk_im) = (x_re[k], x_im[k]);
+        let (xj_re, xj_im) = (x_re[j], x_im[j]);
+
+        // Xe = (X[k] + conj(X[j])) / 2
+        let a_re = (xk_re + xj_re) * 0.5;
+        let a_im = (xk_im - xj_im) * 0.5;
+
+        // D = (X[k] - conj(X[j])) / 2
+        let d_re = (xk_re - xj_re) * 0.5;
+        let d_im = (xk_im + xj_im) * 0.5;
+
+        // i*conj(W)*D where W = (wr, wi), conj(W) = (wr, -wi)
+        // conj(W)*D = (wr*d_re + wi*d_im, wr*d_im - wi*d_re)
+        // i*(...) = (-(wr*d_im - wi*d_re), wr*d_re + wi*d_im)
+        let wr = tw_re[k];
+        let wi = tw_im[k];
+
+        z_re[k] = a_re - wr * d_im + wi * d_re;
+        z_im[k] = a_im + wr * d_re + wi * d_im;
+    }
+}
+
+/// Process a single irfft fiber via inverse packing trick.
+///
+/// Repacks N/2+1 spectrum bins into N/2 complex values, runs N/2-point
+/// inverse complex FFT, then de-interleaves to N real output values.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 fn irfft_fiber(
-    re_in: &[f32],
-    im_in: &[f32],
-    in_stride: usize,
-    half: usize,
-    signal_out: &mut [f32],
-    out_stride: usize,
-    tw_full: &TwiddleRef,
-    full_re: &mut [f32],
-    full_im: &mut [f32],
+    re_in: &[f32], im_in: &[f32], in_stride: usize, half: usize,
+    signal_out: &mut [f32], out_stride: usize,
+    tw_half: &TwiddleRef, unpack_tw_re: &[f32], unpack_tw_im: &[f32],
+    z_re: &mut [f32], z_im: &mut [f32],
 ) {
-    let n = 2 * half;
-
-    // Reconstruct full N-point complex spectrum from N/2+1 non-redundant bins
+    // Gather spectrum bins
+    let mut spec_re = vec![0.0f32; half + 1];
+    let mut spec_im = vec![0.0f32; half + 1];
     for k in 0..=half {
-        full_re[k] = re_in[k * in_stride];
-        full_im[k] = im_in[k * in_stride];
-    }
-    // Hermitian symmetry: X[N-k] = conj(X[k]) for k=1..half-1
-    for k in 1..half {
-        full_re[n - k] = full_re[k];
-        full_im[n - k] = -full_im[k];
+        spec_re[k] = re_in[k * in_stride];
+        spec_im[k] = im_in[k * in_stride];
     }
 
-    // Inverse complex FFT of size N
-    inverse_complex_fft(full_re, full_im, n, tw_full);
+    // Repack into N/2 complex values
+    repack_irfft(&spec_re, &spec_im, half, unpack_tw_re, unpack_tw_im, z_re, z_im);
 
-    // Output real part (imaginary is ~0 for real signals)
+    // Inverse complex FFT of size N/2
+    inverse_complex_fft(z_re, z_im, half, tw_half);
+
+    // De-interleave: signal[2k] = z_re[k], signal[2k+1] = z_im[k]
     if out_stride == 1 {
-        signal_out[..n].copy_from_slice(&full_re[..n]);
+        for k in 0..half {
+            signal_out[2 * k] = z_re[k];
+            signal_out[2 * k + 1] = z_im[k];
+        }
     } else {
-        for k in 0..n {
-            signal_out[k * out_stride] = full_re[k];
+        for k in 0..half {
+            signal_out[(2 * k) * out_stride] = z_re[k];
+            signal_out[(2 * k + 1) * out_stride] = z_im[k];
         }
     }
 }
@@ -1102,7 +1139,19 @@ pub fn irfft_f32(
     let in_strides = contiguous_strides_usize(&shape);
     let out_strides = contiguous_strides_usize(&out_shape);
 
+    // Twiddles for N/2-point inverse complex FFT
+    let tw_half = get_twiddles(half);
+
+    // Unpack twiddles: last stage of size-N table (same as rfft)
     let tw_full = get_twiddles(n);
+    let full_offsets = tw_full.offsets();
+    let last_stage_off = if full_offsets.len() >= 2 {
+        full_offsets[full_offsets.len() - 2]
+    } else {
+        0
+    };
+    let unpack_tw_re = &tw_full.re()[last_stage_off..];
+    let unpack_tw_im = &tw_full.im()[last_stage_off..];
 
     let mut signal_out = vec![0.0f32; total_out];
     let in_stride = in_strides[dim];
@@ -1116,14 +1165,15 @@ pub fn irfft_f32(
             .into_par_iter()
             .map(|fiber_idx| {
                 let re_base = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
-                let mut full_re = vec![0.0f32; n];
-                let mut full_im = vec![0.0f32; n];
+                let mut z_re = vec![0.0f32; half.max(1)];
+                let mut z_im = vec![0.0f32; half.max(1)];
                 let mut fiber_out = vec![0.0f32; n];
 
                 irfft_fiber(
                     &re_data[re_base..], &im_data[re_base..],
                     in_stride, half, &mut fiber_out, 1,
-                    &tw_full, &mut full_re, &mut full_im,
+                    &tw_half, unpack_tw_re, unpack_tw_im,
+                    &mut z_re, &mut z_im,
                 );
                 (fiber_idx, fiber_out)
             })
@@ -1143,8 +1193,8 @@ pub fn irfft_f32(
         );
     }
 
-    let mut full_re = vec![0.0f32; n];
-    let mut full_im = vec![0.0f32; n];
+    let mut z_re = vec![0.0f32; half.max(1)];
+    let mut z_im = vec![0.0f32; half.max(1)];
     let mut fiber_out = vec![0.0f32; n];
 
     for fiber_idx in 0..num_fibers {
@@ -1154,7 +1204,8 @@ pub fn irfft_f32(
         irfft_fiber(
             &re_data[re_base..], &im_data[re_base..],
             in_stride, half, &mut fiber_out, 1,
-            &tw_full, &mut full_re, &mut full_im,
+            &tw_half, unpack_tw_re, unpack_tw_im,
+            &mut z_re, &mut z_im,
         );
 
         for k in 0..n {
