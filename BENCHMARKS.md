@@ -969,29 +969,29 @@ NdArray does not implement rfft. `realfft` requires `std`; Flex works in `no_std
 
 | Size    | Flex (median) | realfft (median) | Ratio    |
 | ------- | ------------- | ---------------- | -------- |
-| n=256   | 874 ns        | 229 ns           | 3.8x     |
-| n=1024  | 2.73 us       | 961 ns           | 2.8x     |
-| n=4096  | 10.9 us       | 4.33 us          | 2.5x     |
-| n=16384 | 47.9 us       | 22.0 us          | 2.2x     |
-| n=65536 | 239 us        | 93.9 us          | 2.5x     |
+| n=256   | 1.16 us       | 318 ns           | 3.6x     |
+| n=1024  | 3.56 us       | 1.26 us          | 2.8x     |
+| n=4096  | 13.5 us       | 5.43 us          | 2.5x     |
+| n=16384 | 57.3 us       | 26.4 us          | 2.2x     |
+| n=65536 | 282 us        | 111 us           | 2.5x     |
 
 ### Batched 2D rfft (along last dim)
 
 | Size          | Flex (median) | realfft (median) | Ratio    |
 | ------------- | ------------- | ---------------- | -------- |
-| 16 x 1024     | 58 us         | 16 us            | 3.6x     |
-| 64 x 1024     | 111 us        | 66 us            | 1.7x     |
-| 256 x 256     | 162 us        | 70 us            | 2.3x     |
+| 16 x 1024     | 77 us         | 19 us            | 4.0x     |
+| 64 x 1024     | 133 us        | 77 us            | 1.7x     |
+| 256 x 256     | 188 us        | 82 us            | 2.3x     |
 
 ### 1D irfft (inverse)
 
 | Size    | Flex (median) | realfft (median) | Ratio    |
 | ------- | ------------- | ---------------- | -------- |
-| n=256   | 1.05 us       | 253 ns           | 4.2x     |
-| n=1024  | 3.93 us       | 1.00 us          | 3.9x     |
-| n=4096  | 13.2 us       | 4.45 us          | 3.0x     |
-| n=16384 | 56.8 us       | 21.8 us          | 2.6x     |
-| n=65536 | 275 us        | 93.5 us          | 2.9x     |
+| n=256   | 1.39 us       | 291 ns           | 4.8x     |
+| n=1024  | 4.39 us       | 1.20 us          | 3.7x     |
+| n=4096  | 16.5 us       | 5.43 us          | 3.0x     |
+| n=16384 | 68.8 us       | 26.4 us          | 2.6x     |
+| n=65536 | 333 us        | 113 us           | 2.9x     |
 
 Flex implementation: Cooley-Tukey with mixed radix-4/radix-2, complex packing (forward) / inverse
 packing (inverse), compile-time twiddle tables via const fn, SIMD vectorization via macerator,
