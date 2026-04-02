@@ -18,7 +18,7 @@ use crate::layout::contiguous_strides_usize;
 use super::sort::slice_base_offset;
 
 // ============================================================================
-// Const-evaluable sin/cos via Taylor series
+// Const-evaluable sin/cos via Taylor series (13 terms, ~13 digit accuracy)
 // ============================================================================
 
 const PI: f64 = core::f64::consts::PI;
@@ -654,7 +654,9 @@ fn rfft_fiber(
 pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
+    debug_assert!(dim < shape.num_dims(), "rfft: dim {dim} out of bounds for {}-D tensor", shape.num_dims());
     let n = shape[dim];
+    debug_assert!(n > 0 && n.is_power_of_two(), "rfft: dimension size must be a power of 2, got {n}");
     let out_len = n / 2 + 1;
 
     let mut out_dims: Vec<usize> = shape.as_slice().to_vec();
@@ -756,7 +758,9 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
 pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
+    debug_assert!(dim < shape.num_dims(), "rfft: dim {dim} out of bounds for {}-D tensor", shape.num_dims());
     let n = shape[dim];
+    debug_assert!(n > 0 && n.is_power_of_two(), "rfft: dimension size must be a power of 2, got {n}");
     let out_len = n / 2 + 1;
 
     let mut out_dims: Vec<usize> = shape.as_slice().to_vec();
@@ -836,6 +840,8 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
 }
 
 /// f64 complex FFT using f32 twiddle table (widened in inner loop).
+/// Twiddle precision is limited to ~7 digits (f32), so output accuracy
+/// is below full f64 precision for large N.
 fn fft_f64_inplace(
     re: &mut [f64], im: &mut [f64], n: usize,
     tw_re: &[f32], tw_im: &[f32], offsets: &[usize],
@@ -851,7 +857,7 @@ fn fft_f64_inplace(
         if i < j { re.swap(i, j); im.swap(i, j); }
     }
 
-    // Radix-2 butterfly passes (f64 doesn't benefit much from radix-4 due to fewer SIMD lanes)
+    // Scalar radix-2 passes (radix-4 fusion not implemented for f64)
     let num_stages = offsets.len() - 1;
     let mut len = 2;
     for stage in 0..num_stages {
