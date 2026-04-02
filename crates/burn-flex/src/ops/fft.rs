@@ -14,6 +14,8 @@ use alloc::vec::Vec;
 use burn_std::{Bytes, Shape};
 
 use crate::{FlexTensor, Layout};
+use crate::layout::contiguous_strides_usize;
+use super::sort::slice_base_offset;
 
 // ============================================================================
 // Const-evaluable sin/cos via Taylor series
@@ -363,6 +365,56 @@ fn complex_fft(re: &mut [f32], im: &mut [f32], n: usize, tw: &TwiddleRef) {
     }
 }
 
+/// Single radix-4 butterfly at position p0 with given quarter stride and twiddle offsets.
+#[inline(always)]
+fn scalar_radix4_butterfly(
+    re: &mut [f32], im: &mut [f32],
+    p0: usize, quarter: usize,
+    tw_re: &[f32], tw_im: &[f32],
+    tw_off_inner: usize, tw_off_outer: usize, k: usize,
+) {
+    let p1 = p0 + quarter;
+    let p2 = p1 + quarter;
+    let p3 = p2 + quarter;
+
+    let w1_re = tw_re[tw_off_outer + k];
+    let w1_im = tw_im[tw_off_outer + k];
+    let w2_re = tw_re[tw_off_inner + k];
+    let w2_im = tw_im[tw_off_inner + k];
+    // W3 = W1 * W2
+    let w3_re = w1_re * w2_re - w1_im * w2_im;
+    let w3_im = w1_re * w2_im + w1_im * w2_re;
+
+    let b_re = w1_re * re[p1] - w1_im * im[p1];
+    let b_im = w1_re * im[p1] + w1_im * re[p1];
+    let c_re = w2_re * re[p2] - w2_im * im[p2];
+    let c_im = w2_re * im[p2] + w2_im * re[p2];
+    let d_re = w3_re * re[p3] - w3_im * im[p3];
+    let d_im = w3_re * im[p3] + w3_im * re[p3];
+
+    let a_re = re[p0];
+    let a_im = im[p0];
+
+    // Radix-4 core: -i * (b - d) where -i*(x+iy) = (y, -x)
+    let u0_re = a_re + c_re;
+    let u0_im = a_im + c_im;
+    let u1_re = a_re - c_re;
+    let u1_im = a_im - c_im;
+    let u2_re = b_re + d_re;
+    let u2_im = b_im + d_im;
+    let diff_re = b_re - d_re;
+    let diff_im = b_im - d_im;
+
+    re[p0] = u0_re + u2_re;
+    im[p0] = u0_im + u2_im;
+    re[p1] = u1_re + diff_im;
+    im[p1] = u1_im - diff_re;
+    re[p2] = u0_re - u2_re;
+    im[p2] = u0_im - u2_im;
+    re[p3] = u1_re - diff_im;
+    im[p3] = u1_im + diff_re;
+}
+
 /// Scalar radix-4 butterfly stages. Processes two radix-2 stages at once.
 #[cfg(not(feature = "simd"))]
 #[allow(clippy::too_many_arguments)]
@@ -373,65 +425,18 @@ fn radix4_scalar(
 ) {
     let mut stage = start_stage;
     while stage + 1 < num_stages {
-        // Combined radix-4: group size = 2^(stage+2), quarter = 2^stage
         let quarter = 1 << stage;
         let group_size = quarter << 2;
-
-        // Twiddle offsets for the two constituent radix-2 stages
-        let tw_off_inner = offsets[stage];     // W_{2*quarter}^k twiddles
-        let tw_off_outer = offsets[stage + 1]; // W_{4*quarter}^k twiddles
+        let tw_off_inner = offsets[stage];
+        let tw_off_outer = offsets[stage + 1];
 
         let mut group_start = 0;
         while group_start < n {
             for k in 0..quarter {
-                let p0 = group_start + k;
-                let p1 = p0 + quarter;
-                let p2 = p1 + quarter;
-                let p3 = p2 + quarter;
-
-                // Twiddle factors
-                // W1 = W_{4q}^k (outer stage twiddle)
-                let w1_re = tw_re[tw_off_outer + k];
-                let w1_im = tw_im[tw_off_outer + k];
-                // W2 = W_{2q}^k (inner stage twiddle)
-                let w2_re = tw_re[tw_off_inner + k];
-                let w2_im = tw_im[tw_off_inner + k];
-                // W3 = W1 * W2
-                let w3_re = w1_re * w2_re - w1_im * w2_im;
-                let w3_im = w1_re * w2_im + w1_im * w2_re;
-
-                // Apply twiddles to odd elements
-                let b_re = w1_re * re[p1] - w1_im * im[p1];
-                let b_im = w1_re * im[p1] + w1_im * re[p1];
-                let c_re = w2_re * re[p2] - w2_im * im[p2];
-                let c_im = w2_re * im[p2] + w2_im * re[p2];
-                let d_re = w3_re * re[p3] - w3_im * im[p3];
-                let d_im = w3_re * im[p3] + w3_im * re[p3];
-
-                let a_re = re[p0];
-                let a_im = im[p0];
-
-                // Radix-4 core: combines two stages of butterflies
-                let u0_re = a_re + c_re;
-                let u0_im = a_im + c_im;
-                let u1_re = a_re - c_re;
-                let u1_im = a_im - c_im;
-                let u2_re = b_re + d_re;
-                let u2_im = b_im + d_im;
-                // -i * (b - d): -i*(x+iy) = (y, -x)
-                let diff_re = b_re - d_re;
-                let diff_im = b_im - d_im;
-                let u3_re = diff_im;
-                let u3_im = -diff_re;
-
-                re[p0] = u0_re + u2_re;
-                im[p0] = u0_im + u2_im;
-                re[p1] = u1_re + u3_re;
-                im[p1] = u1_im + u3_im;
-                re[p2] = u0_re - u2_re;
-                im[p2] = u0_im - u2_im;
-                re[p3] = u1_re - u3_re;
-                im[p3] = u1_im - u3_im;
+                scalar_radix4_butterfly(
+                    re, im, group_start + k, quarter,
+                    tw_re, tw_im, tw_off_inner, tw_off_outer, k,
+                );
             }
             group_start += group_size;
         }
@@ -520,9 +525,8 @@ mod simd_fft {
                         }
                         k += lanes;
                     }
-                    // Scalar tail
                     while k < quarter {
-                        scalar_radix4_butterfly(
+                        super::scalar_radix4_butterfly(
                             re, im, group_start + k, quarter,
                             tw_re, tw_im, tw_off_inner, tw_off_outer, k,
                         );
@@ -535,7 +539,7 @@ mod simd_fft {
                 let mut group_start = 0;
                 while group_start < n {
                     for k in 0..quarter {
-                        scalar_radix4_butterfly(
+                        super::scalar_radix4_butterfly(
                             re, im, group_start + k, quarter,
                             tw_re, tw_im, tw_off_inner, tw_off_outer, k,
                         );
@@ -547,52 +551,6 @@ mod simd_fft {
         }
     }
 
-    #[inline(always)]
-    fn scalar_radix4_butterfly(
-        re: &mut [f32], im: &mut [f32],
-        p0: usize, quarter: usize,
-        tw_re: &[f32], tw_im: &[f32],
-        tw_off_inner: usize, tw_off_outer: usize, k: usize,
-    ) {
-        let p1 = p0 + quarter;
-        let p2 = p1 + quarter;
-        let p3 = p2 + quarter;
-
-        let w1_re = tw_re[tw_off_outer + k];
-        let w1_im = tw_im[tw_off_outer + k];
-        let w2_re = tw_re[tw_off_inner + k];
-        let w2_im = tw_im[tw_off_inner + k];
-        let w3_re = w1_re * w2_re - w1_im * w2_im;
-        let w3_im = w1_re * w2_im + w1_im * w2_re;
-
-        let b_re = w1_re * re[p1] - w1_im * im[p1];
-        let b_im = w1_re * im[p1] + w1_im * re[p1];
-        let c_re = w2_re * re[p2] - w2_im * im[p2];
-        let c_im = w2_re * im[p2] + w2_im * re[p2];
-        let d_re = w3_re * re[p3] - w3_im * im[p3];
-        let d_im = w3_re * im[p3] + w3_im * re[p3];
-
-        let a_re = re[p0];
-        let a_im = im[p0];
-
-        let u0_re = a_re + c_re;
-        let u0_im = a_im + c_im;
-        let u1_re = a_re - c_re;
-        let u1_im = a_im - c_im;
-        let u2_re = b_re + d_re;
-        let u2_im = b_im + d_im;
-        let diff_re = b_re - d_re;
-        let diff_im = b_im - d_im;
-
-        re[p0] = u0_re + u2_re;
-        im[p0] = u0_im + u2_im;
-        re[p1] = u1_re + diff_im;
-        im[p1] = u1_im - diff_re;
-        re[p2] = u0_re - u2_re;
-        im[p2] = u0_im - u2_im;
-        re[p3] = u1_re - diff_im;
-        im[p3] = u1_im + diff_re;
-    }
 }
 
 // ============================================================================
@@ -647,31 +605,12 @@ fn unpack_rfft(
 // Tensor helpers
 // ============================================================================
 
-fn contiguous_strides(shape: &Shape) -> Vec<usize> {
-    let ndims = shape.num_dims();
-    let mut strides = vec![1usize; ndims];
-    for i in (0..ndims.saturating_sub(1)).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-    strides
-}
-
-fn fiber_base_offset(
-    mut fiber_idx: usize, shape: &Shape, strides: &[usize], dim: usize, ndims: usize,
-) -> usize {
-    let mut offset = 0;
-    for d in (0..ndims).rev() {
-        if d == dim { continue; }
-        let size = shape[d];
-        offset += (fiber_idx % size) * strides[d];
-        fiber_idx /= size;
-    }
-    offset
-}
-
-fn make_tensors(re: Vec<f32>, im: Vec<f32>, shape: Shape) -> (FlexTensor, FlexTensor) {
-    let re_t = FlexTensor::new(Bytes::from_elems(re), Layout::contiguous(shape.clone()), burn_backend::DType::F32);
-    let im_t = FlexTensor::new(Bytes::from_elems(im), Layout::contiguous(shape), burn_backend::DType::F32);
+fn make_tensors_typed<E: burn_backend::Element + bytemuck::Pod>(
+    re: Vec<E>, im: Vec<E>, shape: Shape,
+) -> (FlexTensor, FlexTensor) {
+    let dtype = E::dtype();
+    let re_t = FlexTensor::new(Bytes::from_elems(re), Layout::contiguous(shape.clone()), dtype);
+    let im_t = FlexTensor::new(Bytes::from_elems(im), Layout::contiguous(shape), dtype);
     (re_t, im_t)
 }
 
@@ -696,9 +635,7 @@ fn rfft_fiber(
         return;
     }
 
-    // Pack: z[k] = signal[2k] + i*signal[2k+1]
     if in_stride == 1 {
-        // Contiguous fast path
         for k in 0..half {
             z_re[k] = signal[2 * k];
             z_im[k] = signal[2 * k + 1];
@@ -710,17 +647,13 @@ fn rfft_fiber(
         }
     }
 
-    // Complex FFT of size N/2
     complex_fft(z_re, z_im, half, tw_half);
-
-    // Unpack into output
     unpack_rfft(z_re, z_im, half, unpack_tw_re, unpack_tw_im, out_re, out_im);
 }
 
 pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
-    let ndims = shape.num_dims();
     let n = shape[dim];
     let out_len = n / 2 + 1;
 
@@ -731,12 +664,17 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let num_fibers = shape.num_elements() / n;
 
     let data: &[f32] = tensor.storage();
-    let in_strides = contiguous_strides(&shape);
-    let out_strides = contiguous_strides(&out_shape);
+    let in_strides = contiguous_strides_usize(&shape);
+    let out_strides = contiguous_strides_usize(&out_shape);
+
+    // N=1: each element is its own DFT, no twiddles needed
+    if n == 1 {
+        let re_out: Vec<f32> = data.to_vec();
+        let im_out = vec![0.0f32; total_out];
+        return make_tensors_typed(re_out, im_out, out_shape);
+    }
 
     let half = n / 2;
-
-    // Twiddles for the N/2-point complex FFT
     let tw_half = get_twiddles(half);
 
     // Unpacking twiddles: last stage of size-N twiddle table = W_N^k for k=0..N/2-1
@@ -763,7 +701,7 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
         let fiber_results: Vec<(usize, Vec<f32>, Vec<f32>)> = (0..num_fibers)
             .into_par_iter()
             .map(|fiber_idx| {
-                let base_offset = fiber_base_offset(fiber_idx, &shape, &in_strides, dim, ndims);
+                let base_offset = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
                 let mut z_re = vec![0.0f32; half.max(1)];
                 let mut z_im = vec![0.0f32; half.max(1)];
                 let mut fiber_re = vec![0.0f32; out_len];
@@ -780,25 +718,24 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
             .collect();
 
         for (fiber_idx, fiber_re, fiber_im) in fiber_results {
-            let out_base = fiber_base_offset(fiber_idx, &out_shape, &out_strides, dim, ndims);
+            let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
             for k in 0..out_len {
                 re_out[out_base + k * out_stride] = fiber_re[k];
                 im_out[out_base + k * out_stride] = fiber_im[k];
             }
         }
 
-        return make_tensors(re_out, im_out, out_shape);
+        return make_tensors_typed(re_out, im_out, out_shape);
     }
 
-    // Sequential path
     let mut z_re_buf = vec![0.0f32; half.max(1)];
     let mut z_im_buf = vec![0.0f32; half.max(1)];
     let mut fiber_re = vec![0.0f32; out_len];
     let mut fiber_im = vec![0.0f32; out_len];
 
     for fiber_idx in 0..num_fibers {
-        let base_offset = fiber_base_offset(fiber_idx, &shape, &in_strides, dim, ndims);
-        let out_base = fiber_base_offset(fiber_idx, &out_shape, &out_strides, dim, ndims);
+        let base_offset = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
+        let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
 
         rfft_fiber(
             &data[base_offset..], in_stride, n,
@@ -813,13 +750,12 @@ pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
         }
     }
 
-    make_tensors(re_out, im_out, out_shape)
+    make_tensors_typed(re_out, im_out, out_shape)
 }
 
 pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
-    let ndims = shape.num_dims();
     let n = shape[dim];
     let out_len = n / 2 + 1;
 
@@ -830,8 +766,8 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let num_fibers = shape.num_elements() / n;
 
     let data: &[f64] = tensor.storage();
-    let in_strides = contiguous_strides(&shape);
-    let out_strides = contiguous_strides(&out_shape);
+    let in_strides = contiguous_strides_usize(&shape);
+    let out_strides = contiguous_strides_usize(&out_shape);
     let half = n / 2;
 
     // Use f32 twiddles widened to f64
@@ -856,8 +792,8 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tw_half_offsets = tw_half.offsets();
 
     for fiber_idx in 0..num_fibers {
-        let base_offset = fiber_base_offset(fiber_idx, &shape, &in_strides, dim, ndims);
-        let out_base = fiber_base_offset(fiber_idx, &out_shape, &out_strides, dim, ndims);
+        let base_offset = slice_base_offset(fiber_idx, &shape, &in_strides, dim);
+        let out_base = slice_base_offset(fiber_idx, &out_shape, &out_strides, dim);
 
         if n == 1 {
             re_out[out_base] = data[base_offset];
@@ -865,7 +801,6 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
             continue;
         }
 
-        // Pack
         for k in 0..half {
             z_re[k] = data[base_offset + (2 * k) * in_stride];
             z_im[k] = data[base_offset + (2 * k + 1) * in_stride];
@@ -874,7 +809,6 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
         // Complex FFT of size half (f64 scalar, using f32 twiddles widened)
         fft_f64_inplace(&mut z_re, &mut z_im, half, tw_half_re, tw_half_im, tw_half_offsets);
 
-        // Unpack
         re_out[out_base] = z_re[0] + z_im[0];
         im_out[out_base] = 0.0;
         re_out[out_base + half * out_stride] = z_re[0] - z_im[0];
@@ -898,9 +832,7 @@ pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
         }
     }
 
-    let re_t = FlexTensor::new(Bytes::from_elems(re_out), Layout::contiguous(out_shape.clone()), burn_backend::DType::F64);
-    let im_t = FlexTensor::new(Bytes::from_elems(im_out), Layout::contiguous(out_shape), burn_backend::DType::F64);
-    (re_t, im_t)
+    make_tensors_typed(re_out, im_out, out_shape)
 }
 
 /// f64 complex FFT using f32 twiddle table (widened in inner loop).
