@@ -24,6 +24,31 @@ pub(crate) fn contiguous_strides_usize(shape: &Shape) -> Vec<usize> {
     strides
 }
 
+/// Compute the flat offset for the `slice_idx`-th 1D fiber along `dim`.
+///
+/// Enumerates all index combinations for dimensions other than `dim`,
+/// mapping the flat `slice_idx` (0..product of non-dim sizes) to the
+/// corresponding starting offset in a contiguous buffer.
+pub(crate) fn slice_base_offset(
+    slice_idx: usize,
+    shape: &Shape,
+    strides: &[usize],
+    dim: usize,
+) -> usize {
+    let ndims = shape.num_dims();
+    let mut offset = 0;
+    let mut remaining = slice_idx;
+    for d in (0..ndims).rev() {
+        if d == dim {
+            continue;
+        }
+        let s = shape[d];
+        offset += (remaining % s) * strides[d];
+        remaining /= s;
+    }
+    offset
+}
+
 impl Layout {
     /// Create a new contiguous layout (row-major/C-order).
     pub fn contiguous(shape: Shape) -> Self {

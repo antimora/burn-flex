@@ -13,8 +13,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use burn_std::{Bytes, Shape};
 
-use super::sort::slice_base_offset;
-use crate::layout::contiguous_strides_usize;
+use crate::layout::{contiguous_strides_usize, slice_base_offset};
 use crate::{FlexTensor, Layout};
 
 // ============================================================================
@@ -184,8 +183,8 @@ fn precompute_twiddles_runtime(n: usize) -> (Vec<f32>, Vec<f32>, Vec<usize>) {
         let angle_step = -2.0 * core::f64::consts::PI / len as f64;
         for k in 0..half {
             let angle = angle_step * k as f64;
-            re.push(angle.cos() as f32);
-            im.push(angle.sin() as f32);
+            re.push(const_cos(angle) as f32);
+            im.push(const_sin(angle) as f32);
         }
         len <<= 1;
     }
@@ -761,13 +760,13 @@ fn rfft_fiber(
 pub fn rfft_f32(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
-    debug_assert!(
+    assert!(
         dim < shape.num_dims(),
         "rfft: dim {dim} out of bounds for {}-D tensor",
         shape.num_dims()
     );
     let n = shape[dim];
-    debug_assert!(
+    assert!(
         n > 0 && n.is_power_of_two(),
         "rfft: dimension size must be a power of 2, got {n}"
     );
@@ -936,13 +935,13 @@ fn rfft_fiber_f64(
 pub fn rfft_f64(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape().clone();
-    debug_assert!(
+    assert!(
         dim < shape.num_dims(),
         "rfft: dim {dim} out of bounds for {}-D tensor",
         shape.num_dims()
     );
     let n = shape[dim];
-    debug_assert!(
+    assert!(
         n > 0 && n.is_power_of_two(),
         "rfft: dimension size must be a power of 2, got {n}"
     );
