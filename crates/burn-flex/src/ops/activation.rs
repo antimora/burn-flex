@@ -947,6 +947,190 @@ mod tests {
     }
 
     #[test]
+    fn test_softmax_simd_body_row() {
+        // Row length of 32 ensures the SIMD body of softmax_row_f32_simd runs
+        // on every supported target: NEON (lanes=4), AVX2 (lanes=8), AVX-512
+        // (lanes=16), SIMD128 (lanes=4). Earlier tests use rows of length 3-4
+        // which leaves the SIMD body at zero iterations on AVX2+.
+        use burn_tensor::{Tensor, TensorData, TensorPrimitive};
+        let data: Vec<f32> = (0..32).map(|i| i as f32 * 0.1).collect();
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(data, [1, 32]),
+            &Default::default(),
+        );
+        let reference = activation::softmax(t.clone(), 1);
+
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 1);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused
+            .into_data()
+            .assert_approx_eq::<f32>(&reference.into_data(), Tolerance::absolute(1e-5));
+    }
+
+    #[test]
+    fn test_softmax_multi_chunk_rayon() {
+        // 100 rows > ROWS_PER_TASK (64), so the rayon par_chunks path
+        // produces at least two tasks. Combined with d_model=16 this also
+        // exercises the SIMD body with a row length that doesn't divide
+        // evenly on AVX-512 (lanes=16 leaves simd_len=16 and a zero tail;
+        // NEON lanes=4 leaves simd_len=16 and a zero tail; on AVX2 lanes=8
+        // same story).
+        use burn_tensor::{Tensor, TensorData, TensorPrimitive};
+        let data: Vec<f32> = (0..100 * 16).map(|i| ((i % 17) as f32) * 0.05).collect();
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(data, [100, 16]),
+            &Default::default(),
+        );
+        let reference = activation::softmax(t.clone(), 1);
+
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 1);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused
+            .into_data()
+            .assert_approx_eq::<f32>(&reference.into_data(), Tolerance::absolute(1e-5));
+    }
+
+    #[test]
+    fn test_softmax_f64() {
+        // Exercises the softmax_last_dtype! + softmax_row_native f64 path.
+        // Cross-check against burn_tensor::activation::softmax on f64.
+        use burn_tensor::{Tensor, TensorData, TensorPrimitive};
+        let data = [1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(data.to_vec(), [2, 4]),
+            (&Default::default(), burn_backend::DType::F64),
+        );
+        let reference = activation::softmax(t.clone(), 1);
+
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 1);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused
+            .into_data()
+            .assert_approx_eq::<f64>(&reference.into_data(), Tolerance::absolute(1e-10));
+    }
+
+    #[test]
+    fn test_softmax_f16() {
+        // Exercises the softmax_last_dtype! + softmax_row_half f16 path.
+        // f16 has ~1e-3 precision (11-bit mantissa), so cross-check with a
+        // matching tolerance against burn_tensor::activation::softmax.
+        use burn_std::f16;
+        use burn_tensor::{Tensor, TensorData, TensorPrimitive};
+        let data: Vec<f16> = [1.0f32, 2.0, 3.0, 4.0, 0.5, 0.5, 0.5, 0.5]
+            .iter()
+            .map(|&x| f16::from_f32(x))
+            .collect();
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(data, [2, 4]),
+            (&Default::default(), burn_backend::DType::F16),
+        );
+        let reference = activation::softmax(t.clone(), 1);
+
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 1);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused
+            .into_data()
+            .assert_approx_eq::<f16>(&reference.into_data(), Tolerance::absolute(1e-2));
+    }
+
+    #[test]
+    fn test_softmax_bf16() {
+        // Exercises the softmax_last_dtype! + softmax_row_half bf16 path.
+        // bf16 has ~1e-2 precision (8-bit mantissa).
+        use burn_std::bf16;
+        use burn_tensor::{Tensor, TensorData, TensorPrimitive};
+        let data: Vec<bf16> = [1.0f32, 2.0, 3.0, 4.0, 0.5, 0.5, 0.5, 0.5]
+            .iter()
+            .map(|&x| bf16::from_f32(x))
+            .collect();
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(data, [2, 4]),
+            (&Default::default(), burn_backend::DType::BF16),
+        );
+        let reference = activation::softmax(t.clone(), 1);
+
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 1);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused
+            .into_data()
+            .assert_approx_eq::<bf16>(&reference.into_data(), Tolerance::absolute(5e-2));
+    }
+
+    #[test]
+    fn test_layer_norm_multi_chunk_rayon() {
+        // 128 rows > ROWS_PER_TASK (64) so rayon produces multiple tasks.
+        // d_model=16 also exercises the SIMD body across common lane widths
+        // (NEON 4, AVX2 8, AVX-512 16).
+        use burn_tensor::TensorPrimitive;
+        let data: Vec<f32> = (0..128 * 16).map(|i| ((i % 19) as f32) * 0.03).collect();
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(data, [128, 16]),
+            &Default::default(),
+        );
+        let gamma: Tensor<Flex, 1> = Tensor::from_data([1.0f32; 16], &Default::default());
+        let beta: Tensor<Flex, 1> = Tensor::from_data([0.0f32; 16], &Default::default());
+
+        // Reference: manually compute per-row (x - mean) / sqrt(var + eps),
+        // same formula the fused path implements.
+        let rows_in = t.clone().into_data().to_vec::<f32>().unwrap();
+        let mut expected = vec![0.0f32; rows_in.len()];
+        let eps = 1e-5f32;
+        for (in_row, out_row) in rows_in.chunks(16).zip(expected.chunks_mut(16)) {
+            let mean: f32 = in_row.iter().sum::<f32>() / 16.0;
+            let var: f32 = in_row.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / 16.0;
+            let inv_std = 1.0 / (var + eps).sqrt();
+            for (i, &x) in in_row.iter().enumerate() {
+                out_row[i] = (x - mean) * inv_std;
+            }
+        }
+
+        let t_prim = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_prim = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let b_prim = match beta.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::layer_norm(t_prim, g_prim, Some(b_prim), 1e-5);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused.into_data().assert_approx_eq::<f32>(
+            &TensorData::new(expected, [128, 16]),
+            Tolerance::absolute(1e-4),
+        );
+    }
+
+    #[test]
     fn test_log_sigmoid() {
         let t: Tensor<Flex, 1> = Tensor::from_data([-10.0f32, 0.0, 10.0], &Default::default());
         // log_sigmoid(-10) ~ -10, log_sigmoid(0) = ln(0.5) = -0.6931..., log_sigmoid(10) ~ 0
