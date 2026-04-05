@@ -34,9 +34,8 @@ use crate::simd::aligned;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
-/// Threshold for parallel execution (elements).
 #[cfg(feature = "rayon")]
-const PARALLEL_THRESHOLD: usize = 256 * 1024; // 256K elements
+use super::PARALLEL_THRESHOLD;
 
 /// Truncate an i64 to a smaller Pod type, keeping the low-order bytes.
 /// Endian-safe: works correctly on both little-endian and big-endian targets.

@@ -14,12 +14,8 @@ use rayon::prelude::*;
 use crate::{FlexTensor, Layout};
 
 use super::INDEX_DTYPE;
-
-/// Minimum total element count before per-row sorting switches to rayon.
-/// Below this, rayon's task-dispatch overhead dominates per-row sort time
-/// (e.g. 256x256 = 65K ties candle serially; 1024x1024 = 1M benefits).
 #[cfg(feature = "rayon")]
-const PARALLEL_SORT_THRESHOLD: usize = 256 * 1024;
+use super::PARALLEL_THRESHOLD;
 
 /// Validate sort dimension and check for empty tensors.
 /// Returns `true` if the tensor is empty (caller should return early).
@@ -247,7 +243,7 @@ fn sort_along_dim<E: Copy + Send>(
         };
 
         #[cfg(feature = "rayon")]
-        if data.len() >= PARALLEL_SORT_THRESHOLD {
+        if data.len() >= PARALLEL_THRESHOLD {
             data.par_chunks_exact_mut(dim_size).for_each(sort_row);
             return;
         }
@@ -309,7 +305,7 @@ fn sort_along_dim_with_indices<E: Copy + Send>(
         };
 
         #[cfg(feature = "rayon")]
-        if data.len() >= PARALLEL_SORT_THRESHOLD {
+        if data.len() >= PARALLEL_THRESHOLD {
             data.par_chunks_exact_mut(dim_size)
                 .zip(indices.par_chunks_exact_mut(dim_size))
                 .for_each(sort_row);
@@ -376,7 +372,7 @@ fn argsort_along_dim<E: Copy + Sync>(
         };
 
         #[cfg(feature = "rayon")]
-        if data.len() >= PARALLEL_SORT_THRESHOLD {
+        if data.len() >= PARALLEL_THRESHOLD {
             data.par_chunks_exact(dim_size)
                 .zip(indices.par_chunks_exact_mut(dim_size))
                 .for_each(sort_row);
@@ -555,7 +551,9 @@ mod tests {
     fn check_sort_last_dim(rows: usize, cols: usize) {
         let n = rows * cols;
         // Deterministic non-monotonic input with repeats (mirrors bench fill % 1000).
-        let src: Vec<f32> = (0..n).map(|i| ((i * 1664525 + 1013904223) % 1000) as f32).collect();
+        let src: Vec<f32> = (0..n)
+            .map(|i| ((i * 1664525 + 1013904223) % 1000) as f32)
+            .collect();
 
         let mut data = src.clone();
         let shape = Shape::new([rows, cols]);
@@ -574,13 +572,13 @@ mod tests {
 
     #[test]
     fn sort_along_last_dim_small_serial() {
-        // 64*64 = 4K elements, well under PARALLEL_SORT_THRESHOLD.
+        // 64*64 = 4K elements, well under PARALLEL_THRESHOLD.
         check_sort_last_dim(64, 64);
     }
 
     #[test]
     fn sort_along_last_dim_large_parallel() {
-        // 1024*1024 = 1M elements, above PARALLEL_SORT_THRESHOLD when rayon is on.
+        // 1024*1024 = 1M elements, above PARALLEL_THRESHOLD when rayon is on.
         check_sort_last_dim(1024, 1024);
     }
 
@@ -605,23 +603,16 @@ mod tests {
         let mut values = src.clone();
         let mut indices = vec![0isize; rows * cols];
         let shape = Shape::new([rows, cols]);
-        sort_along_dim_with_indices(
-            &mut values,
-            &mut indices,
-            &shape,
-            1,
-            false,
-            f32::total_cmp,
-        );
+        sort_along_dim_with_indices(&mut values, &mut indices, &shape, 1, false, f32::total_cmp);
         for r in 0..rows {
             let vs = &values[r * cols..(r + 1) * cols];
-            let is_ = &indices[r * cols..(r + 1) * cols];
+            let idx_row = &indices[r * cols..(r + 1) * cols];
             let orig = &src[r * cols..(r + 1) * cols];
             for w in vs.windows(2) {
                 assert!(f32::total_cmp(&w[0], &w[1]) != core::cmp::Ordering::Greater);
             }
             // Indices must reconstruct the sorted values from the original row.
-            for (i, &orig_idx) in is_.iter().enumerate() {
+            for (i, &orig_idx) in idx_row.iter().enumerate() {
                 assert_eq!(vs[i], orig[orig_idx as usize]);
             }
         }
@@ -631,14 +622,16 @@ mod tests {
     fn argsort_last_dim_matches_permutation() {
         let rows = 200;
         let cols = 1500; // 300K, over threshold with rayon on
-        let src: Vec<f32> = (0..rows * cols).map(|i| ((i * 7919) % 997) as f32).collect();
+        let src: Vec<f32> = (0..rows * cols)
+            .map(|i| ((i * 7919) % 997) as f32)
+            .collect();
         let mut indices = vec![0isize; rows * cols];
         let shape = Shape::new([rows, cols]);
         argsort_along_dim(&src, &mut indices, &shape, 1, false, f32::total_cmp);
         for r in 0..rows {
-            let is_ = &indices[r * cols..(r + 1) * cols];
+            let idx_row = &indices[r * cols..(r + 1) * cols];
             let orig = &src[r * cols..(r + 1) * cols];
-            let sorted: Vec<f32> = is_.iter().map(|&i| orig[i as usize]).collect();
+            let sorted: Vec<f32> = idx_row.iter().map(|&i| orig[i as usize]).collect();
             for w in sorted.windows(2) {
                 assert!(w[0] <= w[1]);
             }

@@ -138,6 +138,7 @@ highlights on the same hardware:
 | conv2d ResNet layer 2             | 1×128×28² k=3                          | **1.03 ms**  | 1.90 ms  | **1.85×**      |
 | max_pool2d k=3 s=2                | 8×64×56²                               | **684 µs**   | 1.81 ms  | **2.64×**      |
 | cumsum last dim                   | 256×256                                | **42 µs**    | 436 µs   | **10.4×**      |
+| sort last dim                     | 1024²                                  | **1.18 ms**  | 1.55 ms  | **1.30×**      |
 | full-tensor max / min             | 1024²                                  | **129 µs**   | 520 µs   | **4.0×**       |
 | sum along non-last dim            | 1024²                                  | **78 µs**    | 1.20 ms  | **15.3×**      |
 | gather last dim                   | 1024², half-index                      | **244 µs**   | 511 µs   | **2.09×**      |
@@ -145,10 +146,10 @@ highlights on the same hardware:
 | basic elementwise (add/mul/...)   | 1M f32                                 | 112 µs       | 112 µs   | tied (BW-bound)|
 
 Ties cover all basic elementwise arithmetic, transcendentals, view ops (transpose/reshape/narrow),
-square matmul, and gelu. Ten specific regressions vs candle are documented and prioritized as a
+square matmul, and gelu. Nine specific regressions vs candle are documented and prioritized as a
 perf bug list in [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md#perf-bug-list-prioritized). The biggest
-are `conv_transpose2d` (8× slower, upsampling decoders), `sort_last` at large rows (8× slower), and
-`max_dim`/`argmax_dim` (4× slower, affects classifier output paths).
+remaining are `conv_transpose2d` (8× slower, upsampling decoders) and `max_dim`/`argmax_dim`
+(4× slower, affects classifier output paths).
 
 See [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md) for the full breakdown including conv1d L1-L6, all
 transformer shapes, per-forward-pass estimates, and the complete bench output.

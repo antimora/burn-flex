@@ -9,6 +9,11 @@ pub(crate) const INDEX_DTYPE: DType = DType::I64;
 #[cfg(target_pointer_width = "32")]
 pub(crate) const INDEX_DTYPE: DType = DType::I32;
 
+/// Minimum total element count for rayon fan-out on per-row or per-chunk loops.
+/// Below this, task-dispatch overhead dominates the per-unit work.
+#[cfg(feature = "rayon")]
+pub(crate) const PARALLEL_THRESHOLD: usize = 256 * 1024;
+
 /// Wrapper for raw mutable pointers that can be sent across rayon threads.
 ///
 /// # Safety

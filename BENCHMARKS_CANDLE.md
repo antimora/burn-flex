@@ -288,12 +288,13 @@ Flex wins gather (the hottest indexing op in language models) by 2×; loses `ind
 | ----------------------------- | ------------ | ------- | --------- |
 | cumsum last dim, 256²         | **42 µs**    | 436 µs  | **10.4×** |
 | cumsum last dim, 1024²        | **696 µs**   | 4.68 ms | **6.72×** |
-| sort last dim, 256²           | 202 µs       | 186 µs  | tied      |
-| sort last dim, 1024²          | **11.95 ms** | 1.54 ms | 0.13× ⚠️  |
-| nearest2d upsample 64² → 128² | 56 µs        | 30 µs   | 0.54×     |
+| sort last dim, 256²           | 202 µs       | 186 µs  | tied       |
+| sort last dim, 1024²          | **1.18 ms**  | 1.55 ms | **1.30×**  |
+| nearest2d upsample 64² → 128² | 56 µs        | 30 µs   | 0.54×      |
 
-Cumsum is one of the biggest flex wins (6–10×). Sort ties at 256² but scales poorly to 1024² (8×
-slower, listed below).
+Cumsum is one of the biggest flex wins (6–10×). Sort-last-dim now beats candle at 1024² after
+adding rayon fan-out across rows (fixed in
+[antimora/burn-flex#45](https://github.com/antimora/burn-flex/pull/45), was 11.95 ms / 0.13×).
 
 ---
 
@@ -303,24 +304,26 @@ Surfaced by the broader coverage pass. Ordered by impact on real workloads.
 
 1. **conv_transpose2d: 8× slower** (12.5 ms vs 1.45 ms). Largest single gap. Affects any model with
    an upsampling decoder (segmentation, GAN, super-resolution).
-2. **sort_last at 1024²: 7.8× slower** (12 ms vs 1.5 ms). Ties at 256² then regresses sharply as
-   rows grow.
-3. **max_dim / argmax_dim: ~4× slower** (3.4 ms vs ~900 µs at 1024²). On the classifier output path
+2. **max_dim / argmax_dim: ~4× slower** (3.4 ms vs ~900 µs at 1024²). On the classifier output path
    for any model with an argmax head.
-4. **matmul on transposed-view input at small seqs: 4× slower than candle, 6× slower than flex's own
+3. **matmul on transposed-view input at small seqs: 4× slower than candle, 6× slower than flex's own
    contiguous path**. `Q @ K.swap_dims(1,2)` at `[16, 50, 64]` takes 340 µs on flex vs 52 µs for the
    contiguous-input form. Affects any attention kernel written in the idiomatic transpose form.
-5. **conv1d L3–L6 (small wav2vec2 shapes): 1.2–1.5× slower**. Already tracked at
+4. **conv1d L3–L6 (small wav2vec2 shapes): 1.2–1.5× slower**. Already tracked at
    [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
-6. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
-7. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
-8. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
+5. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
+6. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
+7. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
    the fused-layer_norm dependency path.
-9. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
-10. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
-    pointwise; flex's im2col adds overhead.
+8. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
+9. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
+   pointwise; flex's im2col adds overhead.
 
-Items 1–4 together cover decoder models, classifiers, and any attention not written in the
+Fixed since the first pass:
+- sort_last at 1024² (was 7.8× slower; now 1.3× faster) —
+  [antimora/burn-flex#45](https://github.com/antimora/burn-flex/pull/45).
+
+Items 1–3 together cover decoder models, classifiers, and any attention not written in the
 pre-transposed-K form. Fixing them would move flex into a "wins everywhere" state against candle on
 this hardware.
 
