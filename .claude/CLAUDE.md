@@ -29,6 +29,27 @@ Do not start new feature work without confirming the PR/merge status first.
 - Index-producing ops must respect `out_dtype`/`indices_dtype` parameters. Use `isize` +
   `INDEX_DTYPE` internally, then `int_cast` to requested dtype. Never hardcode `i64`.
 
+## SIMD: use macerator, not arch-specific intrinsics
+
+All SIMD work goes through `macerator`. Do not write `#[cfg(target_arch = "aarch64")]`
+blocks with raw `core::arch::aarch64::*` intrinsics, and likewise for x86_64/avx, wasm32,
+etc. The existing `crates/burn-flex/src/simd/portable.rs` and `simd/kernels.rs` show the
+expected patterns — `#[macerator::with_simd]` functions that contain the slice loop
+internally so the dispatch amortizes over many SIMD ops. The benefits:
+
+- One source of truth for SIMD code across NEON, AVX2, AVX-512, SIMD128, scalar fallback
+- Picks up future ISAs (e.g. SVE on ARM) without code changes
+- No per-target code to maintain or keep in sync
+- Matches the style of the rest of the crate
+
+If you find yourself reaching for `core::arch::*` intrinsics, stop — the right move is
+either (a) a `#[macerator::with_simd]` helper with the hot loop inside it, or (b) a
+portable scalar form that LLVM autovectorizes (see `sum_f32` in `simd/kernels.rs`).
+
+The only place `#[cfg(target_arch = ...)]` is acceptable is for importing macerator's
+own target-specific backend types when you need to name them directly — which should
+be rare and justified in a code comment.
+
 ## Tensor Creation in Tests
 
 Never rely on default `IntElem`/`FloatElem` associated types for dtype. Always use explicit dtypes:
