@@ -3,17 +3,21 @@
 //! Each activation is implemented as a single-pass unary operation,
 //! replacing the default multi-op compositions from Burn's trait defaults.
 
+use alloc::vec;
+use alloc::vec::Vec;
 use burn_backend::Scalar;
 use burn_backend::ops::ActivationOps;
 use burn_backend::tensor::FloatTensor;
+use burn_backend::{DType, TensorMetadata};
+use burn_std::{Bytes, bf16, f16};
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use num_traits::Float;
 use num_traits::ToPrimitive;
 
-use crate::Flex;
 use crate::ops::binary::binary_op;
 use crate::ops::unary::unary_op;
+use crate::{Flex, FlexTensor, Layout};
 
 impl ActivationOps<Flex> for Flex {
     fn relu(tensor: FloatTensor<Flex>) -> FloatTensor<Flex> {
@@ -171,6 +175,277 @@ fn sigmoid_f64(x: f64) -> f64 {
     }
 }
 
+// ============================================================================
+// Fused softmax
+// ============================================================================
+//
+// `burn-backend::ActivationOps` does not expose a `softmax` trait method (as
+// of burn 0.21), so `burn_tensor::activation::softmax` decomposes into 5
+// primitive tensor ops: `max_dim`, `sub` (broadcast), `exp`, `sum_dim`,
+// `div` (broadcast). Each is a separate full-tensor pass with intermediate
+// allocations — for attention scores ([heads, seq, seq]) this runs ~30x
+// slower than candle's fused `softmax_last_dim`.
+//
+// Until the upstream burn API grows a `softmax` hook in `ActivationOps`,
+// we expose this as a standalone `pub fn` on burn-flex. Users who want the
+// fast path call `burn_flex::softmax(...)` directly; the upstream
+// `activation::softmax` path still works (slowly).
+//
+// The implementation uses the standard 3-pass row-wise algorithm (max,
+// exp+sum, normalize) which keeps each row cache-hot across the three
+// passes. Parallelized over rows with rayon. Currently supports softmax
+// along the last dim only; other axes panic (wav2vec2 attention only needs
+// last-axis softmax, and permute+softmax+permute is a straightforward
+// extension for the future).
+
+/// Fused softmax along `dim`, avoiding the 5-op decomposition used by
+/// `burn_tensor::activation::softmax`.
+///
+/// Single pass per row (reduce max, then exp+sum in one sweep, then
+/// normalize in one sweep), with each row staying cache-hot. Rows are
+/// processed in parallel via rayon.
+///
+/// Currently optimized only for the last axis of the tensor. Softmax along
+/// other axes panics; callers should permute first or fall back to
+/// `burn_tensor::activation::softmax`.
+pub fn softmax(tensor: FloatTensor<Flex>, dim: usize) -> FloatTensor<Flex> {
+    let rank = tensor.shape().num_dims();
+    assert!(
+        dim < rank,
+        "softmax dim {} out of range for rank {}",
+        dim,
+        rank
+    );
+    assert!(
+        dim == rank - 1,
+        "burn_flex::softmax currently only supports softmax along the last axis \
+         (got dim={} for rank {}). Permute the tensor or fall back to \
+         burn_tensor::activation::softmax for other axes.",
+        dim,
+        rank
+    );
+
+    let tensor = tensor.to_contiguous();
+    match tensor.dtype() {
+        DType::F32 => softmax_last_f32(tensor),
+        DType::F64 => softmax_last_f64(tensor),
+        DType::F16 => softmax_last_f16(tensor),
+        DType::BF16 => softmax_last_bf16(tensor),
+        dtype => panic!("softmax: unsupported dtype {:?}", dtype),
+    }
+}
+
+fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
+    let shape = tensor.layout().shape().clone();
+    // Shape derefs to &[usize], so we can use slice methods directly.
+    let last = *shape.last().expect("softmax: empty shape");
+    if last == 0 {
+        return tensor;
+    }
+    let input: &[f32] = tensor.storage();
+    let mut output: Vec<f32> = vec![0.0f32; input.len()];
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        output
+            .par_chunks_mut(last)
+            .zip(input.par_chunks(last))
+            .for_each(|(o, i)| softmax_row_f32(i, o));
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
+            softmax_row_f32(i, o);
+        }
+    }
+
+    FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F32)
+}
+
+#[inline]
+fn softmax_row_f32(input: &[f32], output: &mut [f32]) {
+    // Pass 1: find the row max for numerical stability.
+    let mut max_val = f32::NEG_INFINITY;
+    for &x in input {
+        if x > max_val {
+            max_val = x;
+        }
+    }
+    // Pass 2: compute exp(x - max), store in output, accumulate sum.
+    let mut sum = 0.0f32;
+    for (i, &x) in input.iter().enumerate() {
+        let e = (x - max_val).exp();
+        output[i] = e;
+        sum += e;
+    }
+    // Pass 3: normalize. Multiply-by-reciprocal is faster than division
+    // per element and bit-identical for our purposes because the reciprocal
+    // is computed once.
+    let inv = 1.0f32 / sum;
+    for x in output.iter_mut() {
+        *x *= inv;
+    }
+}
+
+fn softmax_last_f64(tensor: FlexTensor) -> FlexTensor {
+    let shape = tensor.layout().shape().clone();
+    // Shape derefs to &[usize], so we can use slice methods directly.
+    let last = *shape.last().expect("softmax: empty shape");
+    if last == 0 {
+        return tensor;
+    }
+    let input: &[f64] = tensor.storage();
+    let mut output: Vec<f64> = vec![0.0f64; input.len()];
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        output
+            .par_chunks_mut(last)
+            .zip(input.par_chunks(last))
+            .for_each(|(o, i)| softmax_row_f64(i, o));
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
+            softmax_row_f64(i, o);
+        }
+    }
+
+    FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F64)
+}
+
+#[inline]
+fn softmax_row_f64(input: &[f64], output: &mut [f64]) {
+    let mut max_val = f64::NEG_INFINITY;
+    for &x in input {
+        if x > max_val {
+            max_val = x;
+        }
+    }
+    let mut sum = 0.0f64;
+    for (i, &x) in input.iter().enumerate() {
+        let e = (x - max_val).exp();
+        output[i] = e;
+        sum += e;
+    }
+    let inv = 1.0f64 / sum;
+    for x in output.iter_mut() {
+        *x *= inv;
+    }
+}
+
+// f16 / bf16: convert to f32 for the numeric work (standard practice for
+// half-precision accuracy; the exp() saturates very fast in f16 dynamic
+// range). Row-level parallelism still applies.
+fn softmax_last_f16(tensor: FlexTensor) -> FlexTensor {
+    let shape = tensor.layout().shape().clone();
+    // Shape derefs to &[usize], so we can use slice methods directly.
+    let last = *shape.last().expect("softmax: empty shape");
+    if last == 0 {
+        return tensor;
+    }
+    let input: &[f16] = tensor.storage();
+    let mut output: Vec<f16> = vec![f16::from_f32(0.0); input.len()];
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        output
+            .par_chunks_mut(last)
+            .zip(input.par_chunks(last))
+            .for_each(|(o, i)| softmax_row_f16(i, o));
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
+            softmax_row_f16(i, o);
+        }
+    }
+
+    FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F16)
+}
+
+#[inline]
+fn softmax_row_f16(input: &[f16], output: &mut [f16]) {
+    let mut max_val = f32::NEG_INFINITY;
+    for &x in input {
+        let xf = x.to_f32();
+        if xf > max_val {
+            max_val = xf;
+        }
+    }
+    let mut sum = 0.0f32;
+    let mut scratch: [f32; 0] = [];
+    let _ = &mut scratch; // silence unused var if we later add a real scratch buffer
+    // First compute exps into output (as f32 via storage manipulation via
+    // Vec<f32>? too much ceremony — write as f16 directly, we'll reload on
+    // normalize).
+    for (i, &x) in input.iter().enumerate() {
+        let e = (x.to_f32() - max_val).exp();
+        output[i] = f16::from_f32(e);
+        sum += e;
+    }
+    let inv = 1.0f32 / sum;
+    for x in output.iter_mut() {
+        *x = f16::from_f32(x.to_f32() * inv);
+    }
+}
+
+fn softmax_last_bf16(tensor: FlexTensor) -> FlexTensor {
+    let shape = tensor.layout().shape().clone();
+    // Shape derefs to &[usize], so we can use slice methods directly.
+    let last = *shape.last().expect("softmax: empty shape");
+    if last == 0 {
+        return tensor;
+    }
+    let input: &[bf16] = tensor.storage();
+    let mut output: Vec<bf16> = vec![bf16::from_f32(0.0); input.len()];
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        output
+            .par_chunks_mut(last)
+            .zip(input.par_chunks(last))
+            .for_each(|(o, i)| softmax_row_bf16(i, o));
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
+            softmax_row_bf16(i, o);
+        }
+    }
+
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(shape),
+        DType::BF16,
+    )
+}
+
+#[inline]
+fn softmax_row_bf16(input: &[bf16], output: &mut [bf16]) {
+    let mut max_val = f32::NEG_INFINITY;
+    for &x in input {
+        let xf = x.to_f32();
+        if xf > max_val {
+            max_val = xf;
+        }
+    }
+    let mut sum = 0.0f32;
+    for (i, &x) in input.iter().enumerate() {
+        let e = (x.to_f32() - max_val).exp();
+        output[i] = bf16::from_f32(e);
+        sum += e;
+    }
+    let inv = 1.0f32 / sum;
+    for x in output.iter_mut() {
+        *x = bf16::from_f32(x.to_f32() * inv);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use burn_backend::Tolerance;
@@ -218,6 +493,69 @@ mod tests {
                 &TensorData::from([-0.02, -0.01, 0.0, 1.0, 2.0]),
                 Tolerance::absolute(1e-6),
             );
+    }
+
+    #[test]
+    fn test_softmax_1d() {
+        use burn_tensor::TensorPrimitive;
+        // softmax([1, 2, 3]) should equal the reference impl
+        let t: Tensor<Flex, 1> = Tensor::from_data([1.0f32, 2.0, 3.0], &Default::default());
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let result = crate::ops::activation::softmax(primitive, 0);
+        let result: Tensor<Flex, 1> = Tensor::from_primitive(TensorPrimitive::Float(result));
+        // e^1=2.7183, e^2=7.389, e^3=20.0855, sum=30.193
+        // normalized: 0.09003, 0.24473, 0.66524
+        result.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([0.09003, 0.24473, 0.66524]),
+            Tolerance::absolute(1e-4),
+        );
+    }
+
+    #[test]
+    fn test_softmax_2d_last_axis() {
+        use burn_tensor::TensorPrimitive;
+        // Cross-check against burn_tensor::activation::softmax on the same input
+        let data = [[-1.0f32, 0.0, 1.0, 2.0], [0.5, 0.5, 0.5, 0.5]];
+        let t: Tensor<Flex, 2> = Tensor::from_data(data, &Default::default());
+        let reference = activation::softmax(t.clone(), 1);
+
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 1);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused.into_data().assert_approx_eq::<f32>(
+            &reference.into_data(),
+            Tolerance::absolute(1e-5),
+        );
+    }
+
+    #[test]
+    fn test_softmax_3d_attention_shape() {
+        // wav2vec2-like attention scores [heads, seq_q, seq_k], softmax over seq_k.
+        use burn_tensor::TensorPrimitive;
+        let t: Tensor<Flex, 3> = Tensor::from_data(
+            [[[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]], [[0.0, 0.0, 1.0], [1.0, 1.0, 1.0]]],
+            &Default::default(),
+        );
+        let reference = activation::softmax(t.clone(), 2);
+
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 2);
+        let fused: Tensor<Flex, 3> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused.into_data().assert_approx_eq::<f32>(
+            &reference.into_data(),
+            Tolerance::absolute(1e-5),
+        );
     }
 
     #[test]

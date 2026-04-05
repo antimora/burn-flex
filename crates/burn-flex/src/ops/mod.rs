@@ -48,7 +48,7 @@ impl<T> SendMutPtr<T> {
     }
 }
 
-mod activation;
+pub mod activation;
 pub mod attention;
 pub mod binary;
 mod bool;
