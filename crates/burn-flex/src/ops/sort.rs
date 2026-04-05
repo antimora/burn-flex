@@ -612,7 +612,14 @@ mod tests {
         let mut values = src.clone();
         let mut indices = vec![0isize; rows * cols];
         let shape = Shape::new([rows, cols]);
-        sort_along_dim_with_indices(&mut values, &mut indices, &shape, 1, descending, f32::total_cmp);
+        sort_along_dim_with_indices(
+            &mut values,
+            &mut indices,
+            &shape,
+            1,
+            descending,
+            f32::total_cmp,
+        );
         for r in 0..rows {
             let vs = &values[r * cols..(r + 1) * cols];
             let idx_row = &indices[r * cols..(r + 1) * cols];
