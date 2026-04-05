@@ -8,9 +8,18 @@ use burn_backend::{DType, Element};
 use burn_std::{Bytes, Shape, bf16, f16};
 use bytemuck::Pod;
 
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
+
 use crate::{FlexTensor, Layout};
 
 use super::INDEX_DTYPE;
+
+/// Minimum total element count before per-row sorting switches to rayon.
+/// Below this, rayon's task-dispatch overhead dominates per-row sort time
+/// (e.g. 256x256 = 65K ties candle serially; 1024x1024 = 1M benefits).
+#[cfg(feature = "rayon")]
+const PARALLEL_SORT_THRESHOLD: usize = 256 * 1024;
 
 /// Validate sort dimension and check for empty tensors.
 /// Returns `true` if the tensor is empty (caller should return early).
@@ -98,7 +107,7 @@ pub fn argsort(tensor: FlexTensor, dim: usize, descending: bool) -> FlexTensor {
 // Typed sort (operates directly on storage)
 // ---------------------------------------------------------------------------
 
-fn sort_typed<E: Element + Pod + Copy>(
+fn sort_typed<E: Element + Pod + Copy + Send>(
     tensor: FlexTensor,
     dim: usize,
     descending: bool,
@@ -126,7 +135,7 @@ fn sort_typed<E: Element + Pod + Copy>(
     FlexTensor::new(Bytes::from_elems(data), Layout::contiguous(shape), dtype)
 }
 
-fn sort_with_indices_typed<E: Element + Pod + Copy>(
+fn sort_with_indices_typed<E: Element + Pod + Copy + Send>(
     tensor: FlexTensor,
     dim: usize,
     descending: bool,
@@ -157,7 +166,7 @@ fn sort_with_indices_typed<E: Element + Pod + Copy>(
 }
 
 /// Argsort without materializing sorted values.
-fn argsort_typed<E: Element + Pod + Copy>(
+fn argsort_typed<E: Element + Pod + Copy + Sync>(
     tensor: FlexTensor,
     dim: usize,
     descending: bool,
@@ -213,7 +222,7 @@ fn sort_1d_with_indices<E: Copy>(
 }
 
 /// Sort along a given dimension for N-D tensors.
-fn sort_along_dim<E: Copy>(
+fn sort_along_dim<E: Copy + Send>(
     data: &mut [E],
     shape: &Shape,
     dim: usize,
@@ -225,17 +234,25 @@ fn sort_along_dim<E: Copy>(
     let dim_stride = strides[dim];
     let num_slices = data.len() / dim_size;
 
-    // Fast path: last dimension (stride==1), sort contiguous sub-slices in-place
+    // Fast path: last dimension (stride==1). Rows are contiguous at
+    // offsets `slice_idx * dim_size`, so `chunks_exact_mut(dim_size)`
+    // walks them directly. Parallelized with rayon above the threshold.
     if dim_stride == 1 {
-        for slice_idx in 0..num_slices {
-            let base = slice_base_offset(slice_idx, shape, &strides, dim);
-            let slice = &mut data[base..base + dim_size];
+        let sort_row = |row: &mut [E]| {
             if descending {
-                slice.sort_unstable_by(|a, b| cmp(b, a));
+                row.sort_unstable_by(|a, b| cmp(b, a));
             } else {
-                slice.sort_unstable_by(cmp);
+                row.sort_unstable_by(cmp);
             }
+        };
+
+        #[cfg(feature = "rayon")]
+        if data.len() >= PARALLEL_SORT_THRESHOLD {
+            data.par_chunks_exact_mut(dim_size).for_each(sort_row);
+            return;
         }
+
+        data.chunks_exact_mut(dim_size).for_each(sort_row);
         return;
     }
 
@@ -261,7 +278,7 @@ fn sort_along_dim<E: Copy>(
 }
 
 /// Sort along a dimension, tracking original indices.
-fn sort_along_dim_with_indices<E: Copy>(
+fn sort_along_dim_with_indices<E: Copy + Send>(
     data: &mut [E],
     indices: &mut [isize],
     shape: &Shape,
@@ -274,20 +291,45 @@ fn sort_along_dim_with_indices<E: Copy>(
     let dim_stride = strides[dim];
     let num_slices = data.len() / dim_size;
 
+    // Fast path: last dimension (stride==1). Values and indices rows
+    // are both contiguous at `slice_idx * dim_size`, so we can zip
+    // matching chunks and avoid the per-row stride arithmetic.
+    if dim_stride == 1 {
+        let sort_row = |(row, idx_row): (&mut [E], &mut [isize])| {
+            let mut pairs: Vec<(usize, E)> = (0..dim_size).map(|i| (i, row[i])).collect();
+            if descending {
+                pairs.sort_unstable_by(|a, b| cmp(&b.1, &a.1));
+            } else {
+                pairs.sort_unstable_by(|a, b| cmp(&a.1, &b.1));
+            }
+            for (i, &(orig_idx, val)) in pairs.iter().enumerate() {
+                row[i] = val;
+                idx_row[i] = orig_idx as isize;
+            }
+        };
+
+        #[cfg(feature = "rayon")]
+        if data.len() >= PARALLEL_SORT_THRESHOLD {
+            data.par_chunks_exact_mut(dim_size)
+                .zip(indices.par_chunks_exact_mut(dim_size))
+                .for_each(sort_row);
+            return;
+        }
+
+        data.chunks_exact_mut(dim_size)
+            .zip(indices.chunks_exact_mut(dim_size))
+            .for_each(sort_row);
+        return;
+    }
+
     let mut pairs: Vec<(usize, E)> = Vec::with_capacity(dim_size);
 
     for slice_idx in 0..num_slices {
         let base = slice_base_offset(slice_idx, shape, &strides, dim);
 
         pairs.clear();
-        if dim_stride == 1 {
-            for (i, &val) in data[base..base + dim_size].iter().enumerate() {
-                pairs.push((i, val));
-            }
-        } else {
-            for i in 0..dim_size {
-                pairs.push((i, data[base + i * dim_stride]));
-            }
+        for i in 0..dim_size {
+            pairs.push((i, data[base + i * dim_stride]));
         }
 
         if descending {
@@ -305,7 +347,7 @@ fn sort_along_dim_with_indices<E: Copy>(
 }
 
 /// Argsort along a dimension without writing sorted values.
-fn argsort_along_dim<E: Copy>(
+fn argsort_along_dim<E: Copy + Sync>(
     data: &[E],
     indices: &mut [isize],
     shape: &Shape,
@@ -318,6 +360,35 @@ fn argsort_along_dim<E: Copy>(
     let dim_stride = strides[dim];
     let num_slices = data.len() / dim_size;
 
+    // Fast path: last dimension (stride==1). Both input rows and
+    // output index rows are contiguous at `slice_idx * dim_size`.
+    if dim_stride == 1 {
+        let sort_row = |(row, idx_row): (&[E], &mut [isize])| {
+            let mut idx_buf: Vec<usize> = (0..dim_size).collect();
+            if descending {
+                idx_buf.sort_unstable_by(|&a, &b| cmp(&row[b], &row[a]));
+            } else {
+                idx_buf.sort_unstable_by(|&a, &b| cmp(&row[a], &row[b]));
+            }
+            for (i, &orig_idx) in idx_buf.iter().enumerate() {
+                idx_row[i] = orig_idx as isize;
+            }
+        };
+
+        #[cfg(feature = "rayon")]
+        if data.len() >= PARALLEL_SORT_THRESHOLD {
+            data.par_chunks_exact(dim_size)
+                .zip(indices.par_chunks_exact_mut(dim_size))
+                .for_each(sort_row);
+            return;
+        }
+
+        data.chunks_exact(dim_size)
+            .zip(indices.chunks_exact_mut(dim_size))
+            .for_each(sort_row);
+        return;
+    }
+
     let mut idx_buf: Vec<usize> = (0..dim_size).collect();
 
     for slice_idx in 0..num_slices {
@@ -326,14 +397,7 @@ fn argsort_along_dim<E: Copy>(
         idx_buf.clear();
         idx_buf.extend(0..dim_size);
 
-        if dim_stride == 1 {
-            let slice = &data[base..base + dim_size];
-            if descending {
-                idx_buf.sort_unstable_by(|&a, &b| cmp(&slice[b], &slice[a]));
-            } else {
-                idx_buf.sort_unstable_by(|&a, &b| cmp(&slice[a], &slice[b]));
-            }
-        } else if descending {
+        if descending {
             idx_buf.sort_unstable_by(|&a, &b| {
                 cmp(&data[base + b * dim_stride], &data[base + a * dim_stride])
             });
@@ -480,4 +544,104 @@ fn slice_base_offset(slice_idx: usize, shape: &Shape, strides: &[usize], dim: us
 fn make_index_tensor(indices: Vec<isize>, shape: Shape) -> FlexTensor {
     let bytes = Bytes::from_elems(indices);
     FlexTensor::new(bytes, Layout::contiguous(shape), INDEX_DTYPE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Exercise both below and above the parallel threshold so serial and
+    // rayon fast paths in sort_along_dim agree on row-wise sort results.
+    fn check_sort_last_dim(rows: usize, cols: usize) {
+        let n = rows * cols;
+        // Deterministic non-monotonic input with repeats (mirrors bench fill % 1000).
+        let src: Vec<f32> = (0..n).map(|i| ((i * 1664525 + 1013904223) % 1000) as f32).collect();
+
+        let mut data = src.clone();
+        let shape = Shape::new([rows, cols]);
+        sort_along_dim(&mut data, &shape, 1, false, f32::total_cmp);
+
+        for r in 0..rows {
+            let row = &data[r * cols..(r + 1) * cols];
+            for w in row.windows(2) {
+                assert!(w[0] <= w[1], "row {r} not sorted: {:?}", row);
+            }
+            let mut expected: Vec<f32> = src[r * cols..(r + 1) * cols].to_vec();
+            expected.sort_unstable_by(f32::total_cmp);
+            assert_eq!(row, expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn sort_along_last_dim_small_serial() {
+        // 64*64 = 4K elements, well under PARALLEL_SORT_THRESHOLD.
+        check_sort_last_dim(64, 64);
+    }
+
+    #[test]
+    fn sort_along_last_dim_large_parallel() {
+        // 1024*1024 = 1M elements, above PARALLEL_SORT_THRESHOLD when rayon is on.
+        check_sort_last_dim(1024, 1024);
+    }
+
+    #[test]
+    fn sort_along_last_dim_descending() {
+        let mut data: Vec<f32> = (0..4096).map(|i| (i % 17) as f32).collect();
+        let shape = Shape::new([128, 32]);
+        sort_along_dim(&mut data, &shape, 1, true, f32::total_cmp);
+        for r in 0..128 {
+            let row = &data[r * 32..(r + 1) * 32];
+            for w in row.windows(2) {
+                assert!(w[0] >= w[1]);
+            }
+        }
+    }
+
+    #[test]
+    fn sort_with_indices_last_dim_roundtrip() {
+        let rows = 512;
+        let cols = 512; // 256K — straddles threshold equal-case
+        let src: Vec<f32> = (0..rows * cols).map(|i| (i as f32 * 0.37).sin()).collect();
+        let mut values = src.clone();
+        let mut indices = vec![0isize; rows * cols];
+        let shape = Shape::new([rows, cols]);
+        sort_along_dim_with_indices(
+            &mut values,
+            &mut indices,
+            &shape,
+            1,
+            false,
+            f32::total_cmp,
+        );
+        for r in 0..rows {
+            let vs = &values[r * cols..(r + 1) * cols];
+            let is_ = &indices[r * cols..(r + 1) * cols];
+            let orig = &src[r * cols..(r + 1) * cols];
+            for w in vs.windows(2) {
+                assert!(f32::total_cmp(&w[0], &w[1]) != core::cmp::Ordering::Greater);
+            }
+            // Indices must reconstruct the sorted values from the original row.
+            for (i, &orig_idx) in is_.iter().enumerate() {
+                assert_eq!(vs[i], orig[orig_idx as usize]);
+            }
+        }
+    }
+
+    #[test]
+    fn argsort_last_dim_matches_permutation() {
+        let rows = 200;
+        let cols = 1500; // 300K, over threshold with rayon on
+        let src: Vec<f32> = (0..rows * cols).map(|i| ((i * 7919) % 997) as f32).collect();
+        let mut indices = vec![0isize; rows * cols];
+        let shape = Shape::new([rows, cols]);
+        argsort_along_dim(&src, &mut indices, &shape, 1, false, f32::total_cmp);
+        for r in 0..rows {
+            let is_ = &indices[r * cols..(r + 1) * cols];
+            let orig = &src[r * cols..(r + 1) * cols];
+            let sorted: Vec<f32> = is_.iter().map(|&i| orig[i as usize]).collect();
+            for w in sorted.windows(2) {
+                assert!(w[0] <= w[1]);
+            }
+        }
+    }
 }
