@@ -60,7 +60,7 @@ Seven strided conv1d layers that downsample raw audio 320x.
 A single ~15-line change in `conv3d_impl` rewrote the `(c_in, K) → (K, c_in)`
 weight transpose as a simple per-`c_out` 2D transpose with a tight `K`-inner
 loop that LLVM can autovectorize. For small-shape conv this loop was the
-dominant cost — ~80% of L6's runtime. See `crates/burn-flex/src/ops/conv.rs`.
+dominant cost, roughly 80% of L6's runtime. See `crates/burn-flex/src/ops/conv.rs`.
 
 | Layer | burn-flex | candle    | Winner         | vs baseline  |
 |-------|-----------|-----------|----------------|--------------|
@@ -77,66 +77,13 @@ burn-flex now **beats candle overall on the full wav2vec2 feature extractor**
 and wins L0/L2 outright (tying L1). The remaining gap is concentrated on the
 smallest shapes L3-L6, where candle's dedicated direct-conv path (no im2col,
 fused vec_dot-per-output) beats our tiled im2col+gemm at 1.2-1.6x per layer.
-
-#### Why L3-L6 still lose
-
-Candle's conv1d is a dedicated implementation that never materializes an
-im2col buffer. It uses hand-written NEON intrinsics (`vfmaq_f32`) with
-`#[inline(always)]` and compile-time `target_feature` cfg — no runtime
-dispatch, fully inlined into the outer accumulation loop. The closest
-architectural analogue in burn-flex would be a similar direct path behind
-a shape-aware dispatcher inside `conv3d_impl`.
-
-A first-pass direct path was implemented (see the disabled
-`conv3d_direct_impl` + `should_use_direct_conv3d` hook in `conv.rs`) but
-regressed 1.5-3x vs the tiled path because a generic `VD: Fn(&[T], &[T]) -> T`
-closure parameter prevented LLVM from inlining the NEON vec_dot into the
-output accumulation loop, leaving the inner kernel running at scalar-FMA
-throughput (~21 GFLOPs/core vs candle's ~96 GFLOPs/core).
-
-The fix is a trait-based specialization:
-
-```rust
-trait ConvElement: bytemuck::Pod + Copy + Send + Sync + 'static {
-    fn zero() -> Self;
-    #[inline(always)] fn vec_dot(a: &[Self], b: &[Self]) -> Self;
-    #[inline(always)] fn add(a: Self, b: Self) -> Self;
-}
-```
-
-with impls for `f32/f64/f16/bf16`. Monomorphization gives LLVM the full call
-chain visibility it needs to inline NEON intrinsics into the outer loop.
-Once that lands, the `should_use_direct_conv3d` dispatcher threshold can be
-tuned empirically, and L3-L6 should match or beat candle.
-
-burn-flex is about 20% slower on the full feature extractor, but the pattern
-inside that total is the actionable signal:
-
-- **L0** (single-channel, 16000 samples): flex wins **7x**. macerator SIMD
-  pays off massively on the wide contiguous input.
-- **L1..L6**: the gap flips and *widens as the tensor shrinks*. By L6 (the
-  smallest), candle is 3.1x faster.
-
-This shape - "flex dominates on large contiguous shapes, loses on small ones"
-- strongly suggests burn-flex is paying fixed per-call overhead that candle
-is not. Likely suspects:
-
-1. **im2col lowering**: burn-flex lowers conv1d to im2col + matmul. The
-   im2col step is O(C_in * K * L_out) and the matmul is O(C_out * C_in * K *
-   L_out). For small L_out the im2col overhead dominates.
-2. **Rayon grain size**: parallelism thresholds that make sense for L0 may
-   be spawning worker tasks for near-trivial work on L5/L6.
-3. **Allocation**: flex does fewer allocs per call than candle (17-21 vs 24)
-   so this is probably not the bottleneck.
+Closing that gap requires a register-blocked microkernel inside a direct
+conv path; tracked separately at
+[antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
 
 ## Next steps
 
-- Profile L6 specifically (`cargo flamegraph` on a tight loop) to confirm
-  which of the three hypotheses above is dominant.
-- Add `conv1d` layers matching 3s audio (wav2vec2 input length scales
-  linearly), to see whether the gap closes at larger L_out.
-- Add `layer_norm`, `gelu`, and `softmax` benches. Those are the other
-  per-transformer-layer ops in wav2vec2; they are individually cheap but
-  called 24 times.
-- Add transformer-shaped matmuls (non-square: `[seq, 1024] x [1024, 4096]`
-  etc.). The gist's gap could hide there even though square matmul is tied.
+- Run the conv1d bench on 3s-audio shapes (seq_len scales linearly) to see
+  how the L3-L6 gap evolves at larger `L_out`.
+- Implement the register-blocked conv direct path (issue #34) and re-run
+  the conv1d bench to confirm L3-L6 match or beat candle.

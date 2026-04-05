@@ -187,11 +187,14 @@ fn sigmoid_f64(x: f64) -> f64 {
 /// Fused softmax along `dim`.
 ///
 /// Three-pass row-wise algorithm (max, exp+sum, normalize) keeping each row
-/// cache-hot. Rows are processed in parallel via rayon. Last axis only.
+/// cache-hot. Rows are processed in parallel via rayon. Last axis only;
+/// callers that need softmax on another axis should permute first or fall
+/// back to `burn_tensor::activation::softmax`.
 ///
-/// Currently optimized only for the last axis of the tensor. Softmax along
-/// other axes panics; callers should permute first or fall back to
-/// `burn_tensor::activation::softmax`.
+/// # Panics
+///
+/// * If `dim` is not the last axis of `input`.
+/// * If `input`'s dtype is not one of `f32`/`f64`/`f16`/`bf16`.
 pub fn softmax(tensor: FloatTensor<Flex>, dim: usize) -> FloatTensor<Flex> {
     let rank = tensor.shape().num_dims();
     assert!(
@@ -237,9 +240,8 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
         let spare = output.spare_capacity_mut();
         // SAFETY: every element of `out_slice` is written by
         // softmax_rows_f32_simd below before we call set_len.
-        let out_slice: &mut [f32] = unsafe {
-            core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<f32>(), n)
-        };
+        let out_slice: &mut [f32] =
+            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<f32>(), n) };
 
         // Row-parallel via rayon: one macerator dispatch per chunk of rows,
         // amortized over all rows in the chunk.
@@ -323,7 +325,7 @@ fn softmax_row_f32_simd<S: macerator::Simd>(input: &[f32], output: &mut [f32]) {
         sum += e;
     }
 
-    // Pass 3: normalize — multiply every element by 1/sum.
+    // Pass 3: normalize.
     // SIMD splat + multiply, scalar tail.
     let inv = 1.0f32 / sum;
     let inv_vec = inv.splat::<S>();
@@ -466,9 +468,15 @@ softmax_last_dtype!(
 /// sweep, then one normalize+affine sweep). Both passes are SIMD via
 /// macerator; each row stays cache-hot across both passes.
 ///
-/// Supports `f32` fast path. Other dtypes fall through to an f32 cast and
-/// back — a dedicated f64/f16/bf16 SIMD path can be added if profiling
-/// shows it matters.
+/// Supports `f32` only. Other dtypes panic with an actionable message
+/// pointing at `burn::nn::LayerNorm` as the fallback. A dedicated
+/// f64/f16/bf16 SIMD path can be added if profiling shows it matters.
+///
+/// # Panics
+///
+/// * If `input`'s dtype is not `f32`.
+/// * If `input` has rank 0.
+/// * If `gamma.len()` or `beta.len()` does not equal `input.shape()[-1]`.
 pub fn layer_norm(
     input: FloatTensor<Flex>,
     gamma: FloatTensor<Flex>,
@@ -531,13 +539,12 @@ fn layer_norm_f32(
         let spare = output.spare_capacity_mut();
         // SAFETY: every element of `out_slice` is written by the row
         // kernel (with_beta or no_beta) before we call set_len below.
-        let out_slice: &mut [f32] = unsafe {
-            core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<f32>(), n)
-        };
+        let out_slice: &mut [f32] =
+            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<f32>(), n) };
 
         // `#[macerator::with_simd]` can't auto-lifetime through
         // `Option<&[T]>`, so we dispatch two separate monomorphized
-        // versions — one with beta, one without. Both call into the
+        // versions, one with beta and one without. Both call into the
         // same shared row kernel.
         #[cfg(feature = "rayon")]
         {

@@ -7,7 +7,7 @@ decompose into 5-6 primitive tensor ops with intermediate allocations. Every
 burn CPU backend inherits this decomposition because there is no trait hook
 for backends to override. On wav2vec2-large transformer inference, this makes
 burn up to **29x slower per softmax call** and **7x slower per layer_norm
-call** than a single-pass fused implementation — even against candle, which
+call** than a single-pass fused implementation, even against candle, which
 does expose fused versions through its own ops layer.
 
 This proposes adding `softmax` / `log_softmax` / `softmin` methods to the
@@ -31,7 +31,7 @@ Apple M3 Max, pure Rust, no BLAS on either side. Full per-op bench setup at
 
 For wav2vec2-large inference specifically (24 transformer layers, softmax +
 2× layer_norm per layer), the per-forward-pass impact is ~38 ms at 1s audio
-and ~190 ms at 3s audio — enough to flip burn from ~2x slower to *faster*
+and ~190 ms at 3s audio, enough to flip burn from ~2x slower to *faster*
 than candle on the same workload.
 
 ## The problem
@@ -63,7 +63,7 @@ So does `burn-flex`. Any future CPU backend will too.
 Crucially, `ActivationOps<B>` already exposes trait hooks for
 `leaky_relu`/`relu`/`gelu`/`sigmoid`/`hard_sigmoid`/`log_sigmoid`, each with
 a decomposed default impl. Backends that care about performance override
-them. `softmax` just happens to be missing from that list — an asymmetric
+them. `softmax` just happens to be missing from that list: an asymmetric
 gap in an otherwise consistent design.
 
 ### layer_norm
@@ -112,7 +112,7 @@ Key observations from that bench:
 
 The delta between (1) and (2)/(3) is almost entirely the
 presence/absence of a trait hook. It is *not* a difference in kernel
-quality — burn-flex's primitive ops (`max_dim`, `exp`, `sum_dim`, `mean`,
+quality. burn-flex's primitive ops (`max_dim`, `exp`, `sum_dim`, `mean`,
 `var`, `sqrt`, broadcast arithmetic) are already SIMD-optimized via
 `macerator`. The overhead is architectural: repeated full-tensor sweeps
 and intermediate heap allocations that cannot be elided by the caller.
@@ -178,7 +178,7 @@ This mirrors exactly how `activation::relu`, `activation::gelu`,
 Two options here, and the burn maintainers are better placed to pick:
 
 **Option A:** extend `ActivationOps` (it already contains `log_sigmoid`
-which does the log-sum-exp trick with multi-op expansions — layer_norm is
+which does the log-sum-exp trick with multi-op expansions, and layer_norm is
 similar):
 
 ```rust
@@ -227,7 +227,7 @@ Both proposals are additive:
 
 - New trait methods, all with default implementations that are
   byte-equivalent to the current decomposed behavior.
-- Existing backends compile unchanged — they inherit the defaults.
+- Existing backends compile unchanged; they inherit the defaults.
 - Backends that want to opt into fused kernels add a single trait method
   implementation. burn-flex's implementations are ready to port in (see
   reference impls below).
@@ -245,10 +245,10 @@ then exp+sum pass, then normalize pass for softmax).
 
 Source:
 
-- `crates/burn-flex/src/ops/activation.rs` — fused `softmax` and
+- `crates/burn-flex/src/ops/activation.rs`: fused `softmax` and
   `layer_norm` functions, ~500 lines total including comments and dtype
   branching.
-- `crates/burn-flex/src/ops/activation.rs` test module — cross-check tests
+- `crates/burn-flex/src/ops/activation.rs` test module: cross-check tests
   against manually computed references and against
   `burn_tensor::activation::softmax`.
 
@@ -286,7 +286,7 @@ With the hooks in place, backends can progressively adopt fused versions:
    in a new `NormOps` trait?
 2. Should the softmax hook take `dim: usize` or a more structured
    descriptor (e.g. supporting negative indexing)?
-3. For `layer_norm`, what's the preferred shape of the weight tensor — a
+3. For `layer_norm`, what's the preferred shape of the weight tensor: a
    1-D `[d_model]` aligned with the last axis (as burn-nn's `LayerNorm`
    currently does), or something more flexible?
 4. Is there a preferred naming: `float_softmax` / `float_layer_norm`

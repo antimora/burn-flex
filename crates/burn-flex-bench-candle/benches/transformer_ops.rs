@@ -26,7 +26,7 @@ fn flex_fused_softmax<const D: usize>(tensor: Tensor<Flex, D>, dim: usize) -> Te
     Tensor::from_primitive(TensorPrimitive::Float(result))
 }
 
-/// Wrapper for burn-flex's fused layer_norm. Same pattern as softmax —
+/// Wrapper for burn-flex's fused layer_norm. Same pattern as softmax.
 /// users opt into the fast path via this function until burn upstream
 /// grows a layer_norm backend hook.
 fn flex_fused_layer_norm(
@@ -236,7 +236,7 @@ fn flex_layer_norm(
 }
 
 /// Decomposed path: primitive tensor ops (mean, sub, var, sqrt, mul, add)
-/// — what burn::nn::LayerNorm::forward produces today.
+/// matching what burn::nn::LayerNorm::forward produces today.
 #[divan::bench_group(name = "flex/layer_norm_decomposed")]
 mod flex_layer_norm_decomposed {
     use super::*;
@@ -251,7 +251,7 @@ mod flex_layer_norm_decomposed {
     }
 }
 
-/// Fused path: burn_flex::ops::activation::layer_norm — two SIMD passes
+/// Fused path: burn_flex::ops::activation::layer_norm. Two SIMD passes
 /// per row (sum+sumsq, then normalize+affine), one macerator dispatch per
 /// chunk of rows.
 #[divan::bench_group(name = "flex/layer_norm_fused")]
