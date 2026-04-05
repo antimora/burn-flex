@@ -301,8 +301,7 @@ fn sort_along_dim_with_indices<E: Copy + Send>(
         debug_assert_eq!(data.len() % dim_size, 0);
         // Buffer is reused across rows (one per thread under rayon via
         // `for_each_init`) to avoid a heap alloc per row.
-        let sort_row = |pairs: &mut Vec<(usize, E)>,
-                        (row, idx_row): (&mut [E], &mut [isize])| {
+        let sort_row = |pairs: &mut Vec<(usize, E)>, (row, idx_row): (&mut [E], &mut [isize])| {
             pairs.clear();
             pairs.extend((0..dim_size).map(|i| (i, row[i])));
             if descending {
@@ -378,8 +377,7 @@ fn argsort_along_dim<E: Copy + Sync>(
         debug_assert_eq!(data.len() % dim_size, 0);
         // Buffer is reused across rows (one per thread under rayon via
         // `for_each_init`) to avoid a heap alloc per row.
-        let sort_row = |idx_buf: &mut Vec<usize>,
-                        (row, idx_row): (&[E], &mut [isize])| {
+        let sort_row = |idx_buf: &mut Vec<usize>, (row, idx_row): (&[E], &mut [isize])| {
             idx_buf.clear();
             idx_buf.extend(0..dim_size);
             if descending {
