@@ -618,9 +618,9 @@ fn layer_norm_f32(
                 Some(beta_slice) => layer_norm_rows_f32_with_beta(
                     input_data, out_slice, gamma_data, beta_slice, d_model, epsilon,
                 ),
-                None => layer_norm_rows_f32_no_beta(
-                    input_data, out_slice, gamma_data, d_model, epsilon,
-                ),
+                None => {
+                    layer_norm_rows_f32_no_beta(input_data, out_slice, gamma_data, d_model, epsilon)
+                }
             }
         }
     }
@@ -1077,10 +1077,8 @@ mod tests {
         // which leaves the SIMD body at zero iterations on AVX2+.
         use burn_tensor::{Tensor, TensorData, TensorPrimitive};
         let data: Vec<f32> = (0..32).map(|i| i as f32 * 0.1).collect();
-        let t: Tensor<Flex, 2> = Tensor::from_data(
-            TensorData::new(data, [1, 32]),
-            &Default::default(),
-        );
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data(TensorData::new(data, [1, 32]), &Default::default());
         let reference = activation::softmax(t.clone(), 1);
 
         let primitive = match t.into_primitive() {
@@ -1105,10 +1103,8 @@ mod tests {
         // same story).
         use burn_tensor::{Tensor, TensorData, TensorPrimitive};
         let data: Vec<f32> = (0..100 * 16).map(|i| ((i % 17) as f32) * 0.05).collect();
-        let t: Tensor<Flex, 2> = Tensor::from_data(
-            TensorData::new(data, [100, 16]),
-            &Default::default(),
-        );
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data(TensorData::new(data, [100, 16]), &Default::default());
         let reference = activation::softmax(t.clone(), 1);
 
         let primitive = match t.into_primitive() {
@@ -1211,10 +1207,8 @@ mod tests {
         // (NEON 4, AVX2 8, AVX-512 16).
         use burn_tensor::TensorPrimitive;
         let data: Vec<f32> = (0..128 * 16).map(|i| ((i % 19) as f32) * 0.03).collect();
-        let t: Tensor<Flex, 2> = Tensor::from_data(
-            TensorData::new(data, [128, 16]),
-            &Default::default(),
-        );
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data(TensorData::new(data, [128, 16]), &Default::default());
         let gamma: Tensor<Flex, 1> = Tensor::from_data([1.0f32; 16], &Default::default());
         let beta: Tensor<Flex, 1> = Tensor::from_data([0.0f32; 16], &Default::default());
 
@@ -1251,6 +1245,145 @@ mod tests {
             &TensorData::new(expected, [128, 16]),
             Tolerance::absolute(1e-4),
         );
+    }
+
+    #[test]
+    fn test_softmax_non_contiguous_input() {
+        // A transposed tensor has non-contiguous strides. softmax calls
+        // `to_contiguous()` internally, and the fused kernel reads via
+        // `.storage::<f32>()` which would read stale data if the
+        // to_contiguous call were ever dropped. This test pins the contract.
+        use burn_tensor::TensorPrimitive;
+        // [3, 4] tensor, then transpose to [4, 3] (non-contiguous), softmax last axis.
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            [
+                [1.0f32, 2.0, 3.0, 4.0],
+                [5.0, 6.0, 7.0, 8.0],
+                [9.0, 10.0, 11.0, 12.0],
+            ],
+            &Default::default(),
+        );
+        let t_transposed = t.transpose();
+        let reference = activation::softmax(t_transposed.clone(), 1);
+
+        let primitive = match t_transposed.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 1);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused
+            .into_data()
+            .assert_approx_eq::<f32>(&reference.into_data(), Tolerance::absolute(1e-5));
+    }
+
+    #[test]
+    fn test_softmax_empty_last_dim_returns_input() {
+        // shape [2, 0] has zero elements; the early return in softmax_last_f32
+        // is supposed to hand the input back unchanged rather than produce
+        // NaN via 0/0. Locks that behavior so a future refactor that
+        // removes the early-return check gets caught.
+        use burn_tensor::TensorPrimitive;
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data(TensorData::new(Vec::<f32>::new(), [2, 0]), &Default::default());
+        let shape_before = t.shape();
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let result = crate::ops::activation::softmax(primitive, 1);
+        let result: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(result));
+        assert_eq!(result.shape(), shape_before);
+    }
+
+    #[test]
+    fn test_layer_norm_empty_last_dim_returns_input() {
+        use burn_tensor::TensorPrimitive;
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data(TensorData::new(Vec::<f32>::new(), [3, 0]), &Default::default());
+        let gamma: Tensor<Flex, 1> =
+            Tensor::from_data(TensorData::new(Vec::<f32>::new(), [0]), &Default::default());
+        let beta: Tensor<Flex, 1> =
+            Tensor::from_data(TensorData::new(Vec::<f32>::new(), [0]), &Default::default());
+        let shape_before = t.shape();
+
+        let t_p = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_p = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let b_p = match beta.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let result = crate::ops::activation::layer_norm(t_p, g_p, Some(b_p), 1e-5);
+        let result: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(result));
+        assert_eq!(result.shape(), shape_before);
+    }
+
+    #[test]
+    #[should_panic(expected = "gamma length must equal last dim of input")]
+    fn test_layer_norm_gamma_length_mismatch_panics() {
+        use burn_tensor::TensorPrimitive;
+        // input last dim is 4, but gamma length is 3 — the assert_eq on
+        // gamma.last == d_model should fire.
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
+        let gamma: Tensor<Flex, 1> =
+            Tensor::from_data([1.0f32, 1.0, 1.0], &Default::default());
+
+        let t_p = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_p = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let _ = crate::ops::activation::layer_norm(t_p, g_p, None, 1e-5);
+    }
+
+    #[test]
+    #[should_panic(expected = "beta length must equal last dim of input")]
+    fn test_layer_norm_beta_length_mismatch_panics() {
+        use burn_tensor::TensorPrimitive;
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
+        let gamma: Tensor<Flex, 1> =
+            Tensor::from_data([1.0f32, 1.0, 1.0, 1.0], &Default::default());
+        let beta: Tensor<Flex, 1> = Tensor::from_data([0.0f32, 0.0, 0.0], &Default::default());
+
+        let t_p = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_p = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let b_p = match beta.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let _ = crate::ops::activation::layer_norm(t_p, g_p, Some(b_p), 1e-5);
+    }
+
+    #[test]
+    #[should_panic(expected = "only supports softmax along the last axis")]
+    fn test_softmax_non_last_axis_panics() {
+        use burn_tensor::TensorPrimitive;
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data([[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]], &Default::default());
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        // dim=0 is not the last axis (rank 2, last = 1)
+        let _ = crate::ops::activation::softmax(primitive, 0);
     }
 
     #[test]

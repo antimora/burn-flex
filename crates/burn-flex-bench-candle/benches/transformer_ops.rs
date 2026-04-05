@@ -93,24 +93,30 @@ fn candle_3d(d0: usize, d1: usize, d2: usize) -> CandleTensor {
     CandleTensor::from_vec(fill(d0 * d1 * d2), (d0, d1, d2), &CandleDevice::Cpu).unwrap()
 }
 
+/// Named-field bench shape for 2D and "seq-square" (3D attention) ops.
+/// The `label` field is what divan prints as the bench arg name.
+#[derive(Copy, Clone)]
+struct Shape2D {
+    rows: usize,
+    cols: usize,
+    label: &'static str,
+}
+
+impl std::fmt::Display for Shape2D {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label)
+    }
+}
+
 // ============================================================================
 // gelu: one call per transformer layer, on the FFN intermediate [seq, 4096]
 // ============================================================================
 
-#[derive(Copy, Clone)]
-struct GeluShape(usize, usize, &'static str);
-
-impl std::fmt::Display for GeluShape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.2)
-    }
-}
-
-const GELU_SHAPES: &[GeluShape] = &[
-    GeluShape(50, 4096, "ffn_inter_1s"), // FFN intermediate after up-proj, 1s
-    GeluShape(150, 4096, "ffn_inter_3s"), // FFN intermediate after up-proj, 3s
-    GeluShape(50, 1024, "hidden_1s"),    // hidden state, 1s
-    GeluShape(150, 1024, "hidden_3s"),   // hidden state, 3s
+const GELU_SHAPES: &[Shape2D] = &[
+    Shape2D { rows: 50,  cols: 4096, label: "ffn_inter_1s" },
+    Shape2D { rows: 150, cols: 4096, label: "ffn_inter_3s" },
+    Shape2D { rows: 50,  cols: 1024, label: "hidden_1s" },
+    Shape2D { rows: 150, cols: 1024, label: "hidden_3s" },
 ];
 
 #[divan::bench_group(name = "flex/gelu")]
@@ -118,9 +124,8 @@ mod flex_gelu {
     use super::*;
 
     #[divan::bench(args = GELU_SHAPES)]
-    fn gelu(bencher: Bencher, shape: &GeluShape) {
-        let GeluShape(rows, cols, _) = *shape;
-        let x = flex_2d(rows, cols);
+    fn gelu(bencher: Bencher, shape: &Shape2D) {
+        let x = flex_2d(shape.rows, shape.cols);
         bencher.bench(|| activation::gelu(x.clone()));
     }
 }
@@ -130,30 +135,21 @@ mod candle_gelu {
     use super::*;
 
     #[divan::bench(args = GELU_SHAPES)]
-    fn gelu(bencher: Bencher, shape: &GeluShape) {
-        let GeluShape(rows, cols, _) = *shape;
-        let x = candle_2d(rows, cols);
+    fn gelu(bencher: Bencher, shape: &Shape2D) {
+        let x = candle_2d(shape.rows, shape.cols);
         bencher.bench(|| x.gelu().unwrap());
     }
 }
 
 // ============================================================================
-// softmax: attention scores, applied over the last dim of [batch*heads, seq, seq]
+// softmax: attention scores, applied over the last dim of [heads, seq, seq].
+// Shape2D.rows = heads, Shape2D.cols = seq; the 3D tensor is built as
+// [heads, seq, seq] so softmax(dim=2) normalizes the last axis.
 // ============================================================================
 
-#[derive(Copy, Clone)]
-struct SoftmaxShape(usize, usize, &'static str);
-
-impl std::fmt::Display for SoftmaxShape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.2)
-    }
-}
-
-const SOFTMAX_SHAPES: &[SoftmaxShape] = &[
-    // [batch*heads, seq, seq] = [16, seq, seq], softmax over last dim
-    SoftmaxShape(16, 50, "attn_1s"),
-    SoftmaxShape(16, 150, "attn_3s"),
+const SOFTMAX_SHAPES: &[Shape2D] = &[
+    Shape2D { rows: 16, cols: 50,  label: "attn_1s" },
+    Shape2D { rows: 16, cols: 150, label: "attn_3s" },
 ];
 
 /// Old path: burn_tensor::activation::softmax, which decomposes into 5
@@ -164,9 +160,8 @@ mod flex_softmax_decomposed {
     use super::*;
 
     #[divan::bench(args = SOFTMAX_SHAPES)]
-    fn softmax(bencher: Bencher, shape: &SoftmaxShape) {
-        let SoftmaxShape(heads, seq, _) = *shape;
-        let x = flex_3d(heads, seq, seq);
+    fn softmax(bencher: Bencher, shape: &Shape2D) {
+        let x = flex_3d(shape.rows, shape.cols, shape.cols);
         bencher.bench(|| activation::softmax(x.clone(), 2));
     }
 }
@@ -179,9 +174,8 @@ mod flex_softmax_fused {
     use super::*;
 
     #[divan::bench(args = SOFTMAX_SHAPES)]
-    fn softmax(bencher: Bencher, shape: &SoftmaxShape) {
-        let SoftmaxShape(heads, seq, _) = *shape;
-        let x = flex_3d(heads, seq, seq);
+    fn softmax(bencher: Bencher, shape: &Shape2D) {
+        let x = flex_3d(shape.rows, shape.cols, shape.cols);
         bencher.bench(|| flex_fused_softmax(x.clone(), 2));
     }
 }
@@ -191,9 +185,8 @@ mod candle_softmax {
     use super::*;
 
     #[divan::bench(args = SOFTMAX_SHAPES)]
-    fn softmax(bencher: Bencher, shape: &SoftmaxShape) {
-        let SoftmaxShape(heads, seq, _) = *shape;
-        let x = candle_3d(heads, seq, seq);
+    fn softmax(bencher: Bencher, shape: &Shape2D) {
+        let x = candle_3d(shape.rows, shape.cols, shape.cols);
         bencher.bench(|| candle_nn::ops::softmax_last_dim(&x).unwrap());
     }
 }
@@ -202,18 +195,9 @@ mod candle_softmax {
 // layer_norm: [seq, 1024], one call before attention, one before FFN, per layer
 // ============================================================================
 
-#[derive(Copy, Clone)]
-struct LayerNormShape(usize, usize, &'static str);
-
-impl std::fmt::Display for LayerNormShape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.2)
-    }
-}
-
-const LN_SHAPES: &[LayerNormShape] = &[
-    LayerNormShape(50, 1024, "hidden_1s"),
-    LayerNormShape(150, 1024, "hidden_3s"),
+const LN_SHAPES: &[Shape2D] = &[
+    Shape2D { rows: 50,  cols: 1024, label: "hidden_1s" },
+    Shape2D { rows: 150, cols: 1024, label: "hidden_3s" },
 ];
 
 /// Manual layer_norm for burn-flex using primitive tensor ops.
@@ -242,8 +226,8 @@ mod flex_layer_norm_decomposed {
     use super::*;
 
     #[divan::bench(args = LN_SHAPES)]
-    fn layer_norm(bencher: Bencher, shape: &LayerNormShape) {
-        let LayerNormShape(rows, hidden, _) = *shape;
+    fn layer_norm(bencher: Bencher, shape: &Shape2D) {
+        let (rows, hidden) = (shape.rows, shape.cols);
         let x = flex_2d(rows, hidden);
         let gamma = flex_1d(hidden);
         let beta = flex_1d(hidden);
@@ -259,8 +243,8 @@ mod flex_layer_norm_fused {
     use super::*;
 
     #[divan::bench(args = LN_SHAPES)]
-    fn layer_norm(bencher: Bencher, shape: &LayerNormShape) {
-        let LayerNormShape(rows, hidden, _) = *shape;
+    fn layer_norm(bencher: Bencher, shape: &Shape2D) {
+        let (rows, hidden) = (shape.rows, shape.cols);
         let x = flex_2d(rows, hidden);
         let gamma = flex_1d(hidden);
         let beta = flex_1d(hidden);
@@ -273,8 +257,8 @@ mod candle_layer_norm_bench {
     use super::*;
 
     #[divan::bench(args = LN_SHAPES)]
-    fn layer_norm(bencher: Bencher, shape: &LayerNormShape) {
-        let LayerNormShape(rows, hidden, _) = *shape;
+    fn layer_norm(bencher: Bencher, shape: &Shape2D) {
+        let (rows, hidden) = (shape.rows, shape.cols);
         let x = candle_2d(rows, hidden);
         let gamma = candle_1d(hidden);
         let beta = candle_1d(hidden);
