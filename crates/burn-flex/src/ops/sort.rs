@@ -299,8 +299,12 @@ fn sort_along_dim_with_indices<E: Copy + Send>(
         // silently drops remainders, so lock both invariants.
         debug_assert_eq!(data.len(), indices.len());
         debug_assert_eq!(data.len() % dim_size, 0);
-        let sort_row = |(row, idx_row): (&mut [E], &mut [isize])| {
-            let mut pairs: Vec<(usize, E)> = (0..dim_size).map(|i| (i, row[i])).collect();
+        // Buffer is reused across rows (one per thread under rayon via
+        // `for_each_init`) to avoid a heap alloc per row.
+        let sort_row = |pairs: &mut Vec<(usize, E)>,
+                        (row, idx_row): (&mut [E], &mut [isize])| {
+            pairs.clear();
+            pairs.extend((0..dim_size).map(|i| (i, row[i])));
             if descending {
                 pairs.sort_unstable_by(|a, b| cmp(&b.1, &a.1));
             } else {
@@ -316,13 +320,14 @@ fn sort_along_dim_with_indices<E: Copy + Send>(
         if data.len() >= PARALLEL_THRESHOLD {
             data.par_chunks_exact_mut(dim_size)
                 .zip(indices.par_chunks_exact_mut(dim_size))
-                .for_each(sort_row);
+                .for_each_init(|| Vec::with_capacity(dim_size), sort_row);
             return;
         }
 
+        let mut pairs: Vec<(usize, E)> = Vec::with_capacity(dim_size);
         data.chunks_exact_mut(dim_size)
             .zip(indices.chunks_exact_mut(dim_size))
-            .for_each(sort_row);
+            .for_each(|row_and_idx| sort_row(&mut pairs, row_and_idx));
         return;
     }
 
@@ -371,8 +376,12 @@ fn argsort_along_dim<E: Copy + Sync>(
         // silently drops remainders, so lock both invariants.
         debug_assert_eq!(data.len(), indices.len());
         debug_assert_eq!(data.len() % dim_size, 0);
-        let sort_row = |(row, idx_row): (&[E], &mut [isize])| {
-            let mut idx_buf: Vec<usize> = (0..dim_size).collect();
+        // Buffer is reused across rows (one per thread under rayon via
+        // `for_each_init`) to avoid a heap alloc per row.
+        let sort_row = |idx_buf: &mut Vec<usize>,
+                        (row, idx_row): (&[E], &mut [isize])| {
+            idx_buf.clear();
+            idx_buf.extend(0..dim_size);
             if descending {
                 idx_buf.sort_unstable_by(|&a, &b| cmp(&row[b], &row[a]));
             } else {
@@ -387,13 +396,14 @@ fn argsort_along_dim<E: Copy + Sync>(
         if data.len() >= PARALLEL_THRESHOLD {
             data.par_chunks_exact(dim_size)
                 .zip(indices.par_chunks_exact_mut(dim_size))
-                .for_each(sort_row);
+                .for_each_init(|| Vec::with_capacity(dim_size), sort_row);
             return;
         }
 
+        let mut idx_buf: Vec<usize> = Vec::with_capacity(dim_size);
         data.chunks_exact(dim_size)
             .zip(indices.chunks_exact_mut(dim_size))
-            .for_each(sort_row);
+            .for_each(|row_and_idx| sort_row(&mut idx_buf, row_and_idx));
         return;
     }
 
@@ -588,10 +598,14 @@ mod tests {
         check_sort_last_dim(64, 64);
     }
 
+    #[cfg(feature = "rayon")]
     #[test]
     fn sort_along_last_dim_large_parallel() {
-        // 1024*1024 = 1M elements, above PARALLEL_THRESHOLD when rayon is on.
-        check_sort_last_dim(1024, 1024);
+        // Just above PARALLEL_THRESHOLD so the rayon path is exercised
+        // without paying for a much larger input under debug test builds.
+        let cols = 1024;
+        let rows = (PARALLEL_THRESHOLD / cols) + 1;
+        check_sort_last_dim(rows, cols);
     }
 
     #[test]
