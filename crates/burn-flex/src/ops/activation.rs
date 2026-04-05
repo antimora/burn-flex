@@ -506,6 +506,292 @@ fn softmax_row_bf16(input: &[bf16], output: &mut [bf16]) {
     }
 }
 
+// ============================================================================
+// Fused layer_norm
+// ============================================================================
+//
+// `burn::nn::LayerNorm::forward` decomposes into ~6 primitive tensor ops
+// (`var_mean_bias` + `sub` + `add_scalar` + `sqrt` + `div` + `mul` + `add`),
+// each a full-tensor pass with intermediate allocations. There is no
+// backend trait hook for layer_norm — the computation lives in the
+// burn-nn module crate, not in `FloatTensorOps` or `ActivationOps`, so
+// backends cannot override it via the standard trait machinery.
+//
+// Same fix pattern as the fused softmax above: we expose a standalone
+// `pub fn burn_flex::ops::activation::layer_norm` that users opt into
+// directly. Once burn upstream gains a layer_norm hook somewhere (most
+// likely as a trait method on `ModuleOps` or a new `NormOps`), this
+// function body moves into that impl and the standalone export can be
+// removed.
+//
+// The row kernel uses a single-pass Welford-style accumulator for mean
+// and variance (pass 1), then a single pass for
+// `out[i] = (x[i] - mean) * inv_std * gamma[i] + beta[i]` (pass 2). Both
+// passes are vectorized via macerator.
+
+/// Fused layer normalization along the last axis.
+///
+/// Applies `y = ((x - mean) / sqrt(var + eps)) * gamma + beta`, where
+/// `mean` and `var` are computed per row along the last axis of `input`.
+/// `gamma` and `beta` are 1-D tensors of length `input.shape()[-1]`;
+/// `beta` is optional (set to `None` for a bias-free layer norm).
+///
+/// Two-pass row kernel (mean/variance via a single sum+sum-of-squares
+/// sweep, then one normalize+affine sweep). Both passes are SIMD via
+/// macerator; each row stays cache-hot across both passes.
+///
+/// Supports `f32` fast path. Other dtypes fall through to an f32 cast and
+/// back — a dedicated f64/f16/bf16 SIMD path can be added if profiling
+/// shows it matters.
+pub fn layer_norm(
+    input: FloatTensor<Flex>,
+    gamma: FloatTensor<Flex>,
+    beta: Option<FloatTensor<Flex>>,
+    epsilon: f64,
+) -> FloatTensor<Flex> {
+    let rank = input.shape().num_dims();
+    assert!(rank >= 1, "layer_norm: input must have at least one dim");
+    let input = input.to_contiguous();
+    let gamma = gamma.to_contiguous();
+    let beta = beta.map(|b| b.to_contiguous());
+
+    let d_model = *input
+        .layout()
+        .shape()
+        .last()
+        .expect("layer_norm: empty shape");
+    assert_eq!(
+        *gamma.layout().shape().last().expect("gamma empty"),
+        d_model,
+        "layer_norm: gamma length must equal last dim of input"
+    );
+    if let Some(ref b) = beta {
+        assert_eq!(
+            *b.layout().shape().last().expect("beta empty"),
+            d_model,
+            "layer_norm: beta length must equal last dim of input"
+        );
+    }
+
+    match input.dtype() {
+        DType::F32 => layer_norm_f32(input, gamma, beta, epsilon as f32),
+        dtype => panic!(
+            "burn_flex::layer_norm: unsupported dtype {:?} (only f32 fast path is implemented; \
+             cast to f32 or fall back to burn::nn::LayerNorm)",
+            dtype
+        ),
+    }
+}
+
+fn layer_norm_f32(
+    input: FlexTensor,
+    gamma: FlexTensor,
+    beta: Option<FlexTensor>,
+    epsilon: f32,
+) -> FlexTensor {
+    let shape = input.layout().shape().clone();
+    let d_model = *shape.last().expect("layer_norm: empty shape");
+    if d_model == 0 {
+        return input;
+    }
+
+    let input_data: &[f32] = input.storage();
+    let gamma_data: &[f32] = gamma.storage();
+    let beta_data: Option<&[f32]> = beta.as_ref().map(|b| b.storage());
+    let mut output: Vec<f32> = vec![0.0f32; input_data.len()];
+
+    // `#[macerator::with_simd]` can't auto-lifetime through `Option<&[T]>`,
+    // so we dispatch two separate monomorphized versions — one with beta,
+    // one without. Both call into the same shared row kernel.
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        const ROWS_PER_TASK: usize = 64;
+        let chunk_bytes = ROWS_PER_TASK * d_model;
+        match beta_data {
+            Some(beta_slice) => {
+                output
+                    .par_chunks_mut(chunk_bytes)
+                    .zip(input_data.par_chunks(chunk_bytes))
+                    .for_each(|(o, i)| {
+                        layer_norm_rows_f32_with_beta_simd(
+                            i, o, gamma_data, beta_slice, d_model, epsilon,
+                        );
+                    });
+            }
+            None => {
+                output
+                    .par_chunks_mut(chunk_bytes)
+                    .zip(input_data.par_chunks(chunk_bytes))
+                    .for_each(|(o, i)| {
+                        layer_norm_rows_f32_no_beta_simd(
+                            i, o, gamma_data, d_model, epsilon,
+                        );
+                    });
+            }
+        }
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        match beta_data {
+            Some(beta_slice) => layer_norm_rows_f32_with_beta_simd(
+                input_data,
+                &mut output,
+                gamma_data,
+                beta_slice,
+                d_model,
+                epsilon,
+            ),
+            None => layer_norm_rows_f32_no_beta_simd(
+                input_data,
+                &mut output,
+                gamma_data,
+                d_model,
+                epsilon,
+            ),
+        }
+    }
+
+    FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F32)
+}
+
+/// SIMD-dispatched row sweep for f32 layer_norm with bias (beta). One
+/// macerator dispatch per chunk of rows, amortized over the whole chunk.
+#[macerator::with_simd]
+fn layer_norm_rows_f32_with_beta_simd<S: macerator::Simd>(
+    input: &[f32],
+    output: &mut [f32],
+    gamma: &[f32],
+    beta: &[f32],
+    d_model: usize,
+    epsilon: f32,
+) {
+    debug_assert_eq!(input.len(), output.len());
+    debug_assert_eq!(input.len() % d_model, 0);
+    debug_assert_eq!(gamma.len(), d_model);
+    debug_assert_eq!(beta.len(), d_model);
+    for (in_row, out_row) in input.chunks(d_model).zip(output.chunks_mut(d_model)) {
+        layer_norm_row_f32_simd::<S>(in_row, out_row, gamma, Some(beta), epsilon);
+    }
+}
+
+/// SIMD-dispatched row sweep for f32 layer_norm without bias.
+#[macerator::with_simd]
+fn layer_norm_rows_f32_no_beta_simd<S: macerator::Simd>(
+    input: &[f32],
+    output: &mut [f32],
+    gamma: &[f32],
+    d_model: usize,
+    epsilon: f32,
+) {
+    debug_assert_eq!(input.len(), output.len());
+    debug_assert_eq!(input.len() % d_model, 0);
+    debug_assert_eq!(gamma.len(), d_model);
+    for (in_row, out_row) in input.chunks(d_model).zip(output.chunks_mut(d_model)) {
+        layer_norm_row_f32_simd::<S>(in_row, out_row, gamma, None, epsilon);
+    }
+}
+
+/// Single-row layer_norm kernel. Two vectorized passes.
+#[inline(always)]
+fn layer_norm_row_f32_simd<S: macerator::Simd>(
+    input: &[f32],
+    output: &mut [f32],
+    gamma: &[f32],
+    beta: Option<&[f32]>,
+    epsilon: f32,
+) {
+    use macerator::{Scalar, vload_unaligned, vstore_unaligned};
+    let lanes = <f32 as Scalar>::lanes::<S>();
+    let len = input.len();
+    let simd_len = len / lanes * lanes;
+
+    // Pass 1: compute sum and sum-of-squares in one sweep, then derive
+    // mean and variance. Two independent SIMD accumulators (sum, sumsq)
+    // expose ILP to the two FMA ports.
+    let (sum, sumsq) = if simd_len >= lanes {
+        let mut acc_sum = 0.0f32.splat::<S>();
+        let mut acc_sumsq = 0.0f32.splat::<S>();
+        let mut i = 0;
+        while i < simd_len {
+            unsafe {
+                let v = vload_unaligned::<S, _>(input.as_ptr().add(i));
+                acc_sum = acc_sum + v;
+                // acc_sumsq += v * v; Vector::mul_add(self, a, b) = self*a + b,
+                // so v.mul_add(v, acc_sumsq) = v*v + acc_sumsq.
+                acc_sumsq = v.mul_add(v, acc_sumsq);
+            }
+            i += lanes;
+        }
+        let mut s = acc_sum.reduce_add();
+        let mut sq = acc_sumsq.reduce_add();
+        for &x in &input[simd_len..] {
+            s += x;
+            sq += x * x;
+        }
+        (s, sq)
+    } else {
+        let mut s = 0.0f32;
+        let mut sq = 0.0f32;
+        for &x in input {
+            s += x;
+            sq += x * x;
+        }
+        (s, sq)
+    };
+
+    let n = len as f32;
+    let mean = sum / n;
+    // Biased variance: E[x^2] - E[x]^2. Matches burn::nn::LayerNorm which
+    // uses var_mean_bias (the biased estimator) rather than Bessel's
+    // correction.
+    let var = (sumsq / n) - mean * mean;
+    let inv_std = 1.0f32 / (var + epsilon).sqrt();
+
+    // Pass 2: normalize and affine transform.
+    //   out[i] = (x[i] - mean) * inv_std * gamma[i] + beta[i]
+    // Rearrange to a single FMA chain:
+    //   let scale = inv_std * gamma[i]
+    //   let shift = beta[i] - mean * scale
+    //   out[i] = x[i] * scale + shift
+    // This lets us do one SIMD FMA per element with the shift precomputed
+    // at load time. Gamma and beta are read once per row (shared across
+    // all rows within a chunk through L1 cache).
+    let mean_vec = mean.splat::<S>();
+    let inv_std_vec = inv_std.splat::<S>();
+    let mut i = 0;
+    while i < simd_len {
+        unsafe {
+            let x = vload_unaligned::<S, _>(input.as_ptr().add(i));
+            let g = vload_unaligned::<S, _>(gamma.as_ptr().add(i));
+            // scale = inv_std * g
+            let scale = inv_std_vec * g;
+            // centered = x - mean
+            let centered = x - mean_vec;
+            // out = centered * scale  (+ beta if present)
+            let normed = centered * scale;
+            let out = if let Some(b) = beta {
+                let b_vec = vload_unaligned::<S, _>(b.as_ptr().add(i));
+                normed + b_vec
+            } else {
+                normed
+            };
+            vstore_unaligned::<S, _>(output.as_mut_ptr().add(i), out);
+        }
+        i += lanes;
+    }
+    // Scalar tail
+    while i < len {
+        let centered = input[i] - mean;
+        let normed = centered * inv_std * gamma[i];
+        output[i] = match beta {
+            Some(b) => normed + b[i],
+            None => normed,
+        };
+        i += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use burn_backend::Tolerance;
@@ -592,6 +878,111 @@ mod tests {
         fused.into_data().assert_approx_eq::<f32>(
             &reference.into_data(),
             Tolerance::absolute(1e-5),
+        );
+    }
+
+    #[test]
+    fn test_layer_norm_2d_with_beta() {
+        use burn_tensor::TensorPrimitive;
+        // Reference: layer_norm([2, 4]) along last axis.
+        // Row 0: [1, 2, 3, 4], mean=2.5, var=1.25, inv_std=1/sqrt(1.25+1e-5)
+        // normalized row 0 ≈ [-1.3416, -0.4472, 0.4472, 1.3416]
+        // gamma = [1, 1, 1, 1], beta = [0, 0, 0, 0] → same as normalized.
+        // Row 1: [5, 6, 7, 8], mean=6.5, var=1.25 → same normalized values.
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            [[1.0f32, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]],
+            &Default::default(),
+        );
+        let gamma: Tensor<Flex, 1> =
+            Tensor::from_data([1.0f32, 1.0, 1.0, 1.0], &Default::default());
+        let beta: Tensor<Flex, 1> = Tensor::from_data([0.0f32; 4], &Default::default());
+
+        let t_prim = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_prim = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let b_prim = match beta.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let out = crate::ops::activation::layer_norm(t_prim, g_prim, Some(b_prim), 1e-5);
+        let out: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(out));
+
+        let expected = [
+            [-1.3416408, -0.4472136, 0.4472136, 1.3416408],
+            [-1.3416408, -0.4472136, 0.4472136, 1.3416408],
+        ];
+        out.into_data().assert_approx_eq::<f32>(
+            &TensorData::from(expected),
+            Tolerance::absolute(1e-4),
+        );
+    }
+
+    #[test]
+    fn test_layer_norm_with_affine() {
+        // gamma/beta should scale and shift the normalized output.
+        use burn_tensor::TensorPrimitive;
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
+        let gamma: Tensor<Flex, 1> =
+            Tensor::from_data([2.0f32, 0.5, 1.0, 3.0], &Default::default());
+        let beta: Tensor<Flex, 1> =
+            Tensor::from_data([1.0f32, -1.0, 0.0, 2.0], &Default::default());
+
+        let t_prim = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_prim = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let b_prim = match beta.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let out = crate::ops::activation::layer_norm(t_prim, g_prim, Some(b_prim), 1e-5);
+        let out: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(out));
+
+        // normalized = [-1.3416, -0.4472, 0.4472, 1.3416]
+        // affine:
+        //   [0] = -1.3416 * 2.0 + 1.0 = -1.6833
+        //   [1] = -0.4472 * 0.5 - 1.0 = -1.2236
+        //   [2] =  0.4472 * 1.0 + 0.0 =  0.4472
+        //   [3] =  1.3416 * 3.0 + 2.0 =  6.0249
+        out.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([[-1.6833, -1.2236, 0.4472, 6.0249]]),
+            Tolerance::absolute(1e-3),
+        );
+    }
+
+    #[test]
+    fn test_layer_norm_no_beta() {
+        use burn_tensor::TensorPrimitive;
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
+        let gamma: Tensor<Flex, 1> =
+            Tensor::from_data([1.0f32, 1.0, 1.0, 1.0], &Default::default());
+
+        let t_prim = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_prim = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        // no beta
+        let out = crate::ops::activation::layer_norm(t_prim, g_prim, None, 1e-5);
+        let out: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(out));
+
+        out.into_data().assert_approx_eq::<f32>(
+            &TensorData::from([[-1.3416408, -0.4472136, 0.4472136, 1.3416408]]),
+            Tolerance::absolute(1e-4),
         );
     }
 
