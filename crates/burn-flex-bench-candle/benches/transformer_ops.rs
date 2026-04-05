@@ -17,10 +17,7 @@ use divan::{AllocProfiler, Bencher};
 /// Wrapper that extracts the Flex primitive, calls burn-flex's fused
 /// softmax, and wraps the result back. This is the fast path until
 /// burn-backend's `ActivationOps` gains a `softmax` trait method.
-fn flex_fused_softmax<const D: usize>(
-    tensor: Tensor<Flex, D>,
-    dim: usize,
-) -> Tensor<Flex, D> {
+fn flex_fused_softmax<const D: usize>(tensor: Tensor<Flex, D>, dim: usize) -> Tensor<Flex, D> {
     let primitive = match tensor.into_primitive() {
         TensorPrimitive::Float(inner) => inner,
         TensorPrimitive::QFloat(_) => unimplemented!("softmax on quantized"),
@@ -110,10 +107,10 @@ impl std::fmt::Display for GeluShape {
 }
 
 const GELU_SHAPES: &[GeluShape] = &[
-    GeluShape(50, 4096, "ffn_inter_1s"),  // FFN intermediate after up-proj, 1s
+    GeluShape(50, 4096, "ffn_inter_1s"), // FFN intermediate after up-proj, 1s
     GeluShape(150, 4096, "ffn_inter_3s"), // FFN intermediate after up-proj, 3s
-    GeluShape(50, 1024, "hidden_1s"),     // hidden state, 1s
-    GeluShape(150, 1024, "hidden_3s"),    // hidden state, 3s
+    GeluShape(50, 1024, "hidden_1s"),    // hidden state, 1s
+    GeluShape(150, 1024, "hidden_3s"),   // hidden state, 3s
 ];
 
 #[divan::bench_group(name = "flex/gelu")]
@@ -224,7 +221,11 @@ const LN_SHAPES: &[LayerNormShape] = &[
 /// Matches the computation done by `nn::LayerNorm`: normalize across the last
 /// axis with per-row mean and variance, then affine transform by gamma/beta.
 /// Using primitives on both sides keeps the comparison apples-to-apples.
-fn flex_layer_norm(x: Tensor<Flex, 2>, gamma: Tensor<Flex, 1>, beta: Tensor<Flex, 1>) -> Tensor<Flex, 2> {
+fn flex_layer_norm(
+    x: Tensor<Flex, 2>,
+    gamma: Tensor<Flex, 1>,
+    beta: Tensor<Flex, 1>,
+) -> Tensor<Flex, 2> {
     let mean = x.clone().mean_dim(1);
     let centered = x - mean;
     let var = centered.clone().powi_scalar(2).mean_dim(1);
@@ -278,8 +279,6 @@ mod candle_layer_norm_bench {
         let gamma = candle_1d(hidden);
         let beta = candle_1d(hidden);
         // candle_nn::ops::layer_norm is the fused path candle uses.
-        bencher.bench(|| {
-            candle_nn::ops::layer_norm(&x, &gamma, &beta, 1e-5).unwrap()
-        });
+        bencher.bench(|| candle_nn::ops::layer_norm(&x, &gamma, &beta, 1e-5).unwrap());
     }
 }

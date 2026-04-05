@@ -53,21 +53,67 @@ struct Layer {
 // Input lengths are computed assuming 1s = 16000 samples, no padding (as in
 // wav2vec2's `no_padding` feature extractor), then floor((L - k)/s) + 1.
 const LAYERS_1S: &[Layer] = &[
-    Layer { name: "L0_k10s5", in_ch: 1,   out_ch: 512, kernel: 10, stride: 5, input_len: 16000 },
-    Layer { name: "L1_k3s2",  in_ch: 512, out_ch: 512, kernel: 3,  stride: 2, input_len: 3199  },
-    Layer { name: "L2_k3s2",  in_ch: 512, out_ch: 512, kernel: 3,  stride: 2, input_len: 1599  },
-    Layer { name: "L3_k3s2",  in_ch: 512, out_ch: 512, kernel: 3,  stride: 2, input_len: 799   },
-    Layer { name: "L4_k3s2",  in_ch: 512, out_ch: 512, kernel: 3,  stride: 2, input_len: 399   },
-    Layer { name: "L5_k2s2",  in_ch: 512, out_ch: 512, kernel: 2,  stride: 2, input_len: 199   },
-    Layer { name: "L6_k2s2",  in_ch: 512, out_ch: 512, kernel: 2,  stride: 2, input_len: 99    },
+    Layer {
+        name: "L0_k10s5",
+        in_ch: 1,
+        out_ch: 512,
+        kernel: 10,
+        stride: 5,
+        input_len: 16000,
+    },
+    Layer {
+        name: "L1_k3s2",
+        in_ch: 512,
+        out_ch: 512,
+        kernel: 3,
+        stride: 2,
+        input_len: 3199,
+    },
+    Layer {
+        name: "L2_k3s2",
+        in_ch: 512,
+        out_ch: 512,
+        kernel: 3,
+        stride: 2,
+        input_len: 1599,
+    },
+    Layer {
+        name: "L3_k3s2",
+        in_ch: 512,
+        out_ch: 512,
+        kernel: 3,
+        stride: 2,
+        input_len: 799,
+    },
+    Layer {
+        name: "L4_k3s2",
+        in_ch: 512,
+        out_ch: 512,
+        kernel: 3,
+        stride: 2,
+        input_len: 399,
+    },
+    Layer {
+        name: "L5_k2s2",
+        in_ch: 512,
+        out_ch: 512,
+        kernel: 2,
+        stride: 2,
+        input_len: 199,
+    },
+    Layer {
+        name: "L6_k2s2",
+        in_ch: 512,
+        out_ch: 512,
+        kernel: 2,
+        stride: 2,
+        input_len: 99,
+    },
 ];
 
 fn flex_input(batch: usize, ch: usize, len: usize) -> Tensor<Flex, 3> {
     let data = fill(batch * ch * len);
-    Tensor::from_data(
-        TensorData::new(data, [batch, ch, len]),
-        &Default::default(),
-    )
+    Tensor::from_data(TensorData::new(data, [batch, ch, len]), &Default::default())
 }
 
 fn flex_kernel(out_ch: usize, in_ch: usize, k: usize) -> Tensor<Flex, 3> {
