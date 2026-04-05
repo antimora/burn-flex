@@ -975,8 +975,22 @@ fn expand_transpose_2d_to_3d(
 // Conv Transpose 3d - core implementation
 // ============================================================================
 
-conv_transpose3d_typed!(conv_transpose3d_f32, f32, DType::F32, 0.0f32, conv_transpose_gemm_f32, |a, b| a + b);
-conv_transpose3d_typed!(conv_transpose3d_f64, f64, DType::F64, 0.0f64, conv_transpose_gemm_f64, |a, b| a + b);
+conv_transpose3d_typed!(
+    conv_transpose3d_f32,
+    f32,
+    DType::F32,
+    0.0f32,
+    conv_transpose_gemm_f32,
+    |a, b| a + b
+);
+conv_transpose3d_typed!(
+    conv_transpose3d_f64,
+    f64,
+    DType::F64,
+    0.0f64,
+    conv_transpose_gemm_f64,
+    |a, b| a + b
+);
 conv_transpose3d_typed!(
     conv_transpose3d_f16,
     f16,
@@ -997,6 +1011,9 @@ bf16_via_f32!(
 /// For each (batch, group), computes: columns = W_g^T @ X_g, then scatters
 /// the columns matrix into the output via col2im. The GEMM handles the heavy
 /// channel-reduction multiply-adds; col2im is a lightweight spatial scatter.
+/// GEMM for conv_transpose: writes `c = a^T @ b` where a is [k,m] and b is [k,n].
+type ConvTransposeGemmFn<T> = fn(&mut [T], &[T], &[T], usize, usize, usize);
+
 #[allow(clippy::too_many_arguments)]
 fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_backend::Element>(
     x: FlexTensor,
@@ -1005,7 +1022,7 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
     options: &ConvTransposeOptions<3>,
     dtype: DType,
     zero: T,
-    gemm_fn: fn(&mut [T], &[T], &[T], usize, usize, usize),
+    gemm_fn: ConvTransposeGemmFn<T>,
     add_fn: fn(T, T) -> T,
 ) -> FlexTensor {
     let x = x.to_contiguous();
@@ -1263,15 +1280,15 @@ macro_rules! conv_transpose_gemm_typed {
                     n,
                     k,
                     c.as_mut_ptr(),
-                    1,              // dst_cs
-                    n as isize,     // dst_rs
+                    1,          // dst_cs
+                    n as isize, // dst_rs
                     false,
                     a.as_ptr(),
-                    m as isize,     // lhs_cs: A^T column stride = row length of A
-                    1,              // lhs_rs: A^T row stride = 1
+                    m as isize, // lhs_cs: A^T column stride = row length of A
+                    1,          // lhs_rs: A^T row stride = 1
                     b.as_ptr(),
-                    1,              // rhs_cs
-                    n as isize,     // rhs_rs
+                    1,          // rhs_cs
+                    n as isize, // rhs_rs
                     $zero,
                     $one,
                     false,
@@ -1478,8 +1495,14 @@ mod tests {
     fn test_conv_transpose2d_simple() {
         // Input: [1, 1, 2, 2], Weight: [1, 1, 2, 2], stride=1, padding=0
         // This should produce a 3x3 output via "full" convolution.
-        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
-        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32, 1.0, 1.0, 1.0], vec![1, 1, 2, 2]));
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0],
+            vec![1, 1, 2, 2],
+        ));
+        let w = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 1.0, 1.0, 1.0],
+            vec![1, 1, 2, 2],
+        ));
         let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 1);
         let result = conv_transpose2d_f32(x, w, None, &opts);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 3, 3]);
@@ -1492,8 +1515,14 @@ mod tests {
     #[test]
     fn test_conv_transpose2d_stride2() {
         // Input: [1, 1, 2, 2], Weight: [1, 1, 2, 2], stride=2, padding=0
-        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
-        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0], vec![1, 1, 2, 2]));
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0],
+            vec![1, 1, 2, 2],
+        ));
+        let w = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 0.0, 0.0, 1.0],
+            vec![1, 1, 2, 2],
+        ));
         let opts = ConvTransposeOptions::new([2, 2], [0, 0], [0, 0], [1, 1], 1);
         let result = conv_transpose2d_f32(x, w, None, &opts);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 4, 4]);
@@ -1543,7 +1572,10 @@ mod tests {
 
     #[test]
     fn test_conv_transpose2d_f64() {
-        let x = FlexTensor::from_data(TensorData::new(vec![1.0f64, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f64, 2.0, 3.0, 4.0],
+            vec![1, 1, 2, 2],
+        ));
         let w = FlexTensor::from_data(TensorData::new(vec![1.0f64; 4], vec![1, 1, 2, 2]));
         let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 1);
         let result = conv_transpose2d_f64(x, w, None, &opts);
@@ -1553,7 +1585,10 @@ mod tests {
 
     #[test]
     fn test_conv_transpose2d_f16() {
-        let x_data: Vec<f16> = [1.0f32, 2.0, 3.0, 4.0].iter().map(|&v| f16::from_f32(v)).collect();
+        let x_data: Vec<f16> = [1.0f32, 2.0, 3.0, 4.0]
+            .iter()
+            .map(|&v| f16::from_f32(v))
+            .collect();
         let w_data: Vec<f16> = [1.0f32; 4].iter().map(|&v| f16::from_f32(v)).collect();
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 2, 2]));
         let w = FlexTensor::from_data(TensorData::new(w_data, vec![1, 1, 2, 2]));
@@ -1570,7 +1605,10 @@ mod tests {
     fn test_conv_transpose2d_with_padding() {
         // Input: [1, 1, 2, 2], Weight: [1, 1, 3, 3], stride=2, padding=1
         // Output size: (2-1)*2 - 2*1 + 1*(3-1) + 0 + 1 = 3
-        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0],
+            vec![1, 1, 2, 2],
+        ));
         let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 9], vec![1, 1, 3, 3]));
         let opts = ConvTransposeOptions::new([2, 2], [1, 1], [0, 0], [1, 1], 1);
         let result = conv_transpose2d_f32(x, w, None, &opts);
@@ -1586,7 +1624,10 @@ mod tests {
         // Input: [1, 4, 1, 1], Weight: [4, 1, 1, 1], groups=2
         // out_ch = out_ch_per_group(1) * groups(2) = 2
         // Group 0: ic=[0,1] -> oc=[0]; Group 1: ic=[2,3] -> oc=[1]
-        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 4, 1, 1]));
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0],
+            vec![1, 4, 1, 1],
+        ));
         let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 4], vec![4, 1, 1, 1]));
         let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 2);
         let result = conv_transpose2d_f32(x, w, None, &opts);
@@ -1600,8 +1641,14 @@ mod tests {
     fn test_conv_transpose2d_dilation() {
         // Input: [1, 1, 2, 2], Weight: [1, 1, 2, 2], stride=1, dilation=2
         // Output size: (2-1)*1 - 0 + 2*(2-1) + 0 + 1 = 4
-        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
-        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0], vec![1, 1, 2, 2]));
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0],
+            vec![1, 1, 2, 2],
+        ));
+        let w = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 0.0, 0.0, 1.0],
+            vec![1, 1, 2, 2],
+        ));
         let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [2, 2], 1);
         let result = conv_transpose2d_f32(x, w, None, &opts);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 4, 4]);
