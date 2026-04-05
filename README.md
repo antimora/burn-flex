@@ -101,6 +101,36 @@ and separated storage layouts.
 
 See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 
+### Performance vs candle-core (Apple M3 Max, pure-Rust, no BLAS)
+
+Direct per-op comparison against [candle-core](https://github.com/huggingface/candle)
+on CPU, pure-Rust on both sides. Numbers are median of 100 samples via divan
+on wav2vec2-large shapes.
+
+| Op | Shape | Flex | Candle | Flex vs Candle |
+|---|---|---|---|---|
+| softmax (fused)    | `[16, 150, 150]` attn | **134 µs** | 194 µs | **1.45×** |
+| layer_norm (fused) | `[50, 1024]` hidden   | **19 µs**  | 68 µs  | **3.59×** |
+| layer_norm (fused) | `[150, 1024]` hidden  | **55 µs**  | 88 µs  | **1.60×** |
+| matmul (square)    | 128×128               | **44 µs**  | 103 µs | **2.35×** |
+| matmul (square)    | 1024×1024             | 2.56 ms    | 2.69 ms | 1.05× |
+| matmul (qkv_proj)  | `[150, 1024]×[1024, 3072]` | 660 µs | 678 µs | tied |
+| gelu               | `[150, 4096]` ffn     | 1.14 ms    | 1.13 ms | tied |
+| conv1d (L0)        | wav2vec2 k=10 s=5     | **511 µs** | 3.60 ms | **7.04×** |
+| conv1d (total 7 layers) | wav2vec2 feature extractor | **16.55 ms** | 18.27 ms | **1.10×** |
+
+Aggregated across softmax + layer_norm + conv, flex saves ~4.7 ms per
+wav2vec2-large forward pass at 3s audio compared to candle on this hardware.
+The softmax and layer_norm wins come from fused row kernels in
+[`burn-flex/src/ops/activation.rs`](crates/burn-flex/src/ops/activation.rs)
+that bypass the decomposed 5-6-op default path in burn-tensor / burn-nn;
+there is an [upstream proposal](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md)
+to add fused `softmax` and `layer_norm` hooks to burn-backend so any CPU
+backend can plug in.
+
+See [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md) for the full breakdown
+including conv1d L1-L6, all transformer shapes, and per-forward-pass estimates.
+
 ### Status
 
 - All `burn-backend-tests` pass across all feature flag combinations:
