@@ -94,14 +94,14 @@ macro_rules! conv3d_typed {
 
 /// Generates a conv_transpose3d typed function.
 macro_rules! conv_transpose3d_typed {
-    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $add_fn:expr) => {
+    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr) => {
         pub fn $fn_name(
             x: FlexTensor,
             weight: FlexTensor,
             bias: Option<FlexTensor>,
             options: &ConvTransposeOptions<3>,
         ) -> FlexTensor {
-            conv_transpose3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $add_fn)
+            conv_transpose3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
         }
     };
 }
@@ -975,13 +975,14 @@ fn expand_transpose_2d_to_3d(
 // Conv Transpose 3d - core implementation
 // ============================================================================
 
-conv_transpose3d_typed!(conv_transpose3d_f32, f32, DType::F32, 0.0f32, |a, b| a + b);
-conv_transpose3d_typed!(conv_transpose3d_f64, f64, DType::F64, 0.0f64, |a, b| a + b);
+conv_transpose3d_typed!(conv_transpose3d_f32, f32, DType::F32, 0.0f32, conv_transpose_gemm_f32, |a, b| a + b);
+conv_transpose3d_typed!(conv_transpose3d_f64, f64, DType::F64, 0.0f64, conv_transpose_gemm_f64, |a, b| a + b);
 conv_transpose3d_typed!(
     conv_transpose3d_f16,
     f16,
     DType::F16,
     f16::from_f32(0.0),
+    conv_transpose_gemm_f16,
     |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32())
 );
 bf16_via_f32!(
@@ -991,115 +992,11 @@ bf16_via_f32!(
     ConvTransposeOptions
 );
 
-/// Sequential scatter loop for transposed convolution.
+/// 3D transposed convolution via GEMM + col2im.
 ///
-/// Iterates over (batch, output_channel) pairs and accumulates each input*weight
-/// product into the output at the appropriate scattered position.
-#[allow(clippy::too_many_arguments)]
-fn conv_transpose3d_scatter<T: bytemuck::Pod + Copy>(
-    output: &mut [T],
-    x_data: &[T],
-    w_data: &[T],
-    batch_size: usize,
-    in_channels: usize,
-    in_d: usize,
-    in_h: usize,
-    in_w: usize,
-    out_channels: usize,
-    out_channels_per_group: usize,
-    in_channels_per_group: usize,
-    kernel_d: usize,
-    kernel_h: usize,
-    kernel_w: usize,
-    stride_d: usize,
-    stride_h: usize,
-    stride_w: usize,
-    pad_d: usize,
-    pad_h: usize,
-    pad_w: usize,
-    dilation_d: usize,
-    dilation_h: usize,
-    dilation_w: usize,
-    out_d: usize,
-    out_h: usize,
-    out_w: usize,
-    add_fn: fn(T, T) -> T,
-) {
-    for b in 0..batch_size {
-        for oc in 0..out_channels {
-            let g = oc / out_channels_per_group;
-            let oc_local = oc % out_channels_per_group;
-
-            let ic_start = g * in_channels_per_group;
-            let ic_end = ic_start + in_channels_per_group;
-
-            for ic in ic_start..ic_end {
-                for id in 0..in_d {
-                    for ih in 0..in_h {
-                        for iw in 0..in_w {
-                            let x_val = x_data[b * in_channels * in_d * in_h * in_w
-                                + ic * in_d * in_h * in_w
-                                + id * in_h * in_w
-                                + ih * in_w
-                                + iw];
-
-                            for kd in 0..kernel_d {
-                                for kh in 0..kernel_h {
-                                    for kw in 0..kernel_w {
-                                        let od_raw = id * stride_d + kd * dilation_d;
-                                        let oh_raw = ih * stride_h + kh * dilation_h;
-                                        let ow_raw = iw * stride_w + kw * dilation_w;
-
-                                        if od_raw < pad_d || oh_raw < pad_h || ow_raw < pad_w {
-                                            continue;
-                                        }
-
-                                        let od = od_raw - pad_d;
-                                        let oh = oh_raw - pad_h;
-                                        let ow = ow_raw - pad_w;
-
-                                        if od >= out_d || oh >= out_h || ow >= out_w {
-                                            continue;
-                                        }
-
-                                        let w_idx = ic
-                                            * out_channels_per_group
-                                            * kernel_d
-                                            * kernel_h
-                                            * kernel_w
-                                            + oc_local * kernel_d * kernel_h * kernel_w
-                                            + kd * kernel_h * kernel_w
-                                            + kh * kernel_w
-                                            + kw;
-
-                                        let w_val = w_data[w_idx];
-
-                                        let out_idx = b * out_channels * out_d * out_h * out_w
-                                            + oc * out_d * out_h * out_w
-                                            + od * out_h * out_w
-                                            + oh * out_w
-                                            + ow;
-
-                                        output[out_idx] =
-                                            add_fn(output[out_idx], mul_generic(x_val, w_val));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Generic 3D transposed convolution implementation.
-///
-/// Transposed convolution "scatters" input values to output positions:
-/// For each input position (id, ih, iw), write to output at:
-///   od = id * stride_d + kd * dilation_d - padding_d
-///   oh = ih * stride_h + kh * dilation_h - padding_h
-///   ow = iw * stride_w + kw * dilation_w - padding_w
+/// For each (batch, group), computes: columns = W_g^T @ X_g, then scatters
+/// the columns matrix into the output via col2im. The GEMM handles the heavy
+/// channel-reduction multiply-adds; col2im is a lightweight spatial scatter.
 #[allow(clippy::too_many_arguments)]
 fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_backend::Element>(
     x: FlexTensor,
@@ -1108,6 +1005,7 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
     options: &ConvTransposeOptions<3>,
     dtype: DType,
     zero: T,
+    gemm_fn: fn(&mut [T], &[T], &[T], usize, usize, usize),
     add_fn: fn(T, T) -> T,
 ) -> FlexTensor {
     let x = x.to_contiguous();
@@ -1150,217 +1048,107 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
     let x_data: &[T] = x.storage();
     let w_data: &[T] = weight.storage();
 
-    let output_size = batch_size * out_channels * out_d * out_h * out_w;
+    let k_spatial = kernel_d * kernel_h * kernel_w;
+    let in_spatial = in_d * in_h * in_w;
+    let out_spatial = out_d * out_h * out_w;
+    let col_ch = out_channels_per_group * k_spatial;
 
-    let output = {
-        #[cfg(feature = "rayon")]
-        {
-            use rayon::prelude::*;
-            use std::sync::atomic::{AtomicU32, Ordering};
+    let output_size = batch_size * out_channels * out_spatial;
+    let mut output = vec![zero; output_size];
 
-            // For f32, we can use atomic adds for thread-safe accumulation
-            // For other types, we fall back to per-(batch, out_channel) parallelism
-            if dtype == DType::F32 {
-                // Atomic approach for f32: each thread can write to any output position
-                let atomic_output: Vec<AtomicU32> =
-                    (0..output_size).map(|_| AtomicU32::new(0)).collect();
+    // For each (batch, group) pair:
+    //   W_g: [in_ch_per_group, out_ch_per_group * k_spatial]  (contiguous in weight)
+    //   X_g: [in_ch_per_group, in_spatial]                    (contiguous in input)
+    //   columns = W_g^T @ X_g: [col_ch, in_spatial]
+    //   col2im scatters columns into output
+    for b in 0..batch_size {
+        for g in 0..groups {
+            let ic_start = g * in_channels_per_group;
+            let oc_start = g * out_channels_per_group;
 
-                (0..batch_size * out_channels)
-                    .into_par_iter()
-                    .for_each(|k| {
-                        let b = k / out_channels;
-                        let oc = k % out_channels;
-                        let g = oc / out_channels_per_group;
-                        let oc_local = oc % out_channels_per_group;
+            let x_offset = b * in_channels * in_spatial + ic_start * in_spatial;
+            let w_offset = ic_start * out_channels_per_group * k_spatial;
 
-                        let ic_start = g * in_channels_per_group;
-                        let ic_end = ic_start + in_channels_per_group;
+            let x_group = &x_data[x_offset..x_offset + in_channels_per_group * in_spatial];
+            let w_group = &w_data[w_offset..w_offset + in_channels_per_group * col_ch];
 
-                        for ic in ic_start..ic_end {
-                            for id in 0..in_d {
-                                for ih in 0..in_h {
-                                    for iw in 0..in_w {
-                                        let x_val = x_data[b * in_channels * in_d * in_h * in_w
-                                            + ic * in_d * in_h * in_w
-                                            + id * in_h * in_w
-                                            + ih * in_w
-                                            + iw];
+            // GEMM: columns[col_ch, in_spatial] = W_g[in_ch/g, col_ch]^T @ X_g[in_ch/g, in_spatial]
+            let mut columns = vec![zero; col_ch * in_spatial];
+            gemm_fn(
+                &mut columns,
+                w_group,
+                x_group,
+                col_ch,
+                in_channels_per_group,
+                in_spatial,
+            );
 
-                                        for kd in 0..kernel_d {
-                                            for kh in 0..kernel_h {
-                                                for kw in 0..kernel_w {
-                                                    let od_raw = id * stride_d + kd * dilation_d;
-                                                    let oh_raw = ih * stride_h + kh * dilation_h;
-                                                    let ow_raw = iw * stride_w + kw * dilation_w;
+            // col2im: scatter columns into output for this (batch, group)
+            let out_base = b * out_channels * out_spatial;
+            for oc in 0..out_channels_per_group {
+                let out_ch_base = out_base + (oc_start + oc) * out_spatial;
+                for k_idx in 0..k_spatial {
+                    let kd = k_idx / (kernel_h * kernel_w);
+                    let kh = (k_idx / kernel_w) % kernel_h;
+                    let kw = k_idx % kernel_w;
 
-                                                    // Check bounds with padding
-                                                    if od_raw < pad_d
-                                                        || oh_raw < pad_h
-                                                        || ow_raw < pad_w
-                                                    {
-                                                        continue;
-                                                    }
+                    let col_base = (oc * k_spatial + k_idx) * in_spatial;
 
-                                                    let od = od_raw - pad_d;
-                                                    let oh = oh_raw - pad_h;
-                                                    let ow = ow_raw - pad_w;
+                    for id in 0..in_d {
+                        let od_raw = id * stride_d + kd * dilation_d;
+                        if od_raw < pad_d {
+                            continue;
+                        }
+                        let od = od_raw - pad_d;
+                        if od >= out_d {
+                            continue;
+                        }
 
-                                                    if od >= out_d || oh >= out_h || ow >= out_w {
-                                                        continue;
-                                                    }
+                        for ih in 0..in_h {
+                            let oh_raw = ih * stride_h + kh * dilation_h;
+                            if oh_raw < pad_h {
+                                continue;
+                            }
+                            let oh = oh_raw - pad_h;
+                            if oh >= out_h {
+                                continue;
+                            }
 
-                                                    let w_idx = ic
-                                                        * out_channels_per_group
-                                                        * kernel_d
-                                                        * kernel_h
-                                                        * kernel_w
-                                                        + oc_local * kernel_d * kernel_h * kernel_w
-                                                        + kd * kernel_h * kernel_w
-                                                        + kh * kernel_w
-                                                        + kw;
-
-                                                    let w_val = w_data[w_idx];
-
-                                                    // Multiply and accumulate
-                                                    let x_f32: f32 = bytemuck::cast(x_val);
-                                                    let w_f32: f32 = bytemuck::cast(w_val);
-                                                    let prod = x_f32 * w_f32;
-
-                                                    let out_idx =
-                                                        b * out_channels * out_d * out_h * out_w
-                                                            + oc * out_d * out_h * out_w
-                                                            + od * out_h * out_w
-                                                            + oh * out_w
-                                                            + ow;
-
-                                                    // Atomic add using compare-exchange
-                                                    let atomic = &atomic_output[out_idx];
-                                                    loop {
-                                                        let old_bits =
-                                                            atomic.load(Ordering::Relaxed);
-                                                        let old_f32 = f32::from_bits(old_bits);
-                                                        let new_f32 = old_f32 + prod;
-                                                        let new_bits = new_f32.to_bits();
-                                                        if atomic
-                                                            .compare_exchange_weak(
-                                                                old_bits,
-                                                                new_bits,
-                                                                Ordering::Relaxed,
-                                                                Ordering::Relaxed,
-                                                            )
-                                                            .is_ok()
-                                                        {
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                            for iw in 0..in_w {
+                                let ow_raw = iw * stride_w + kw * dilation_w;
+                                if ow_raw < pad_w {
+                                    continue;
                                 }
+                                let ow = ow_raw - pad_w;
+                                if ow >= out_w {
+                                    continue;
+                                }
+
+                                let s = id * in_h * in_w + ih * in_w + iw;
+                                let val = columns[col_base + s];
+                                let out_idx = out_ch_base + od * out_h * out_w + oh * out_w + ow;
+                                output[out_idx] = add_fn(output[out_idx], val);
                             }
                         }
-                    });
-
-                // Convert atomics back to f32
-                atomic_output
-                    .into_iter()
-                    .map(|a| {
-                        let bits = a.load(Ordering::Relaxed);
-                        let f = f32::from_bits(bits);
-                        bytemuck::cast::<f32, T>(f)
-                    })
-                    .collect::<Vec<T>>()
-            } else {
-                // Non-f32: sequential scatter (no atomics needed)
-                let mut output = vec![zero; output_size];
-                conv_transpose3d_scatter(
-                    &mut output,
-                    x_data,
-                    w_data,
-                    batch_size,
-                    in_channels,
-                    in_d,
-                    in_h,
-                    in_w,
-                    out_channels,
-                    out_channels_per_group,
-                    in_channels_per_group,
-                    kernel_d,
-                    kernel_h,
-                    kernel_w,
-                    stride_d,
-                    stride_h,
-                    stride_w,
-                    pad_d,
-                    pad_h,
-                    pad_w,
-                    dilation_d,
-                    dilation_h,
-                    dilation_w,
-                    out_d,
-                    out_h,
-                    out_w,
-                    add_fn,
-                );
-                output
+                    }
+                }
             }
         }
-
-        #[cfg(not(feature = "rayon"))]
-        {
-            let mut output = vec![zero; output_size];
-            conv_transpose3d_scatter(
-                &mut output,
-                x_data,
-                w_data,
-                batch_size,
-                in_channels,
-                in_d,
-                in_h,
-                in_w,
-                out_channels,
-                out_channels_per_group,
-                in_channels_per_group,
-                kernel_d,
-                kernel_h,
-                kernel_w,
-                stride_d,
-                stride_h,
-                stride_w,
-                pad_d,
-                pad_h,
-                pad_w,
-                dilation_d,
-                dilation_h,
-                dilation_w,
-                out_d,
-                out_h,
-                out_w,
-                add_fn,
-            );
-            output
-        }
-    };
+    }
 
     // Add bias if present
-    let output = if let Some(bias) = bias {
-        let mut output = output;
+    if let Some(bias) = bias {
         let bias = bias.to_contiguous();
         let bias_data: &[T] = bias.storage();
-        let spatial = out_d * out_h * out_w;
         add_bias(
             &mut output,
             bias_data,
             batch_size,
             out_channels,
-            spatial,
+            out_spatial,
             add_fn,
         );
-        output
-    } else {
-        output
-    };
+    }
 
     let out_shape = Shape::from(vec![batch_size, out_channels, out_d, out_h, out_w]);
     FlexTensor::new(
@@ -1368,40 +1156,6 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
         Layout::contiguous(out_shape),
         dtype,
     )
-}
-
-/// Generic multiplication for Pod types (used for non-f32 types).
-fn mul_generic<T: bytemuck::Pod + Copy>(a: T, b: T) -> T {
-    // This is a workaround since we can't require T: Mul<Output=T>
-    // We rely on the fact that for f64, f16 we're only using this
-    // and the caller passes in the appropriate add_fn
-    let a_bytes = bytemuck::bytes_of(&a);
-    let b_bytes = bytemuck::bytes_of(&b);
-
-    match a_bytes.len() {
-        4 => {
-            // f32
-            let a_f32 = f32::from_ne_bytes(a_bytes.try_into().unwrap());
-            let b_f32 = f32::from_ne_bytes(b_bytes.try_into().unwrap());
-            let result = a_f32 * b_f32;
-            bytemuck::cast(result)
-        }
-        8 => {
-            // f64
-            let a_f64 = f64::from_ne_bytes(a_bytes.try_into().unwrap());
-            let b_f64 = f64::from_ne_bytes(b_bytes.try_into().unwrap());
-            let result = a_f64 * b_f64;
-            bytemuck::cast(result)
-        }
-        2 => {
-            // f16
-            let a_f16 = f16::from_ne_bytes(a_bytes.try_into().unwrap());
-            let b_f16 = f16::from_ne_bytes(b_bytes.try_into().unwrap());
-            let result = f16::from_f32(a_f16.to_f32() * b_f16.to_f32());
-            bytemuck::cast(result)
-        }
-        _ => panic!("unsupported type size for mul_generic"),
-    }
 }
 
 // ============================================================================
@@ -1481,6 +1235,57 @@ macro_rules! gemm_typed {
 gemm_typed!(gemm_f32, f32, 0.0f32, 1.0f32);
 gemm_typed!(gemm_f64, f64, 0.0f64, 1.0f64);
 gemm_typed!(gemm_f16, f16, f16::from_f32(0.0), f16::from_f32(1.0));
+
+// ============================================================================
+// gemm for conv_transpose: C[m,n] = A[k,m]^T @ B[k,n]
+// ============================================================================
+
+macro_rules! conv_transpose_gemm_typed {
+    ($fn_name:ident, $T:ty, $zero:expr, $one:expr) => {
+        fn $fn_name(c: &mut [$T], a: &[$T], b: &[$T], m: usize, k: usize, n: usize) {
+            #[cfg(feature = "rayon")]
+            let parallelism = if m * n * k >= 192 * 192 * 192 {
+                gemm::Parallelism::Rayon(0)
+            } else {
+                gemm::Parallelism::None
+            };
+            #[cfg(not(feature = "rayon"))]
+            let parallelism = gemm::Parallelism::None;
+            unsafe {
+                gemm::gemm(
+                    m,
+                    n,
+                    k,
+                    c.as_mut_ptr(),
+                    1,              // dst_cs
+                    n as isize,     // dst_rs
+                    false,
+                    a.as_ptr(),
+                    m as isize,     // lhs_cs: A^T column stride = row length of A
+                    1,              // lhs_rs: A^T row stride = 1
+                    b.as_ptr(),
+                    1,              // rhs_cs
+                    n as isize,     // rhs_rs
+                    $zero,
+                    $one,
+                    false,
+                    false,
+                    false,
+                    parallelism,
+                );
+            }
+        }
+    };
+}
+
+conv_transpose_gemm_typed!(conv_transpose_gemm_f32, f32, 0.0f32, 1.0f32);
+conv_transpose_gemm_typed!(conv_transpose_gemm_f64, f64, 0.0f64, 1.0f64);
+conv_transpose_gemm_typed!(
+    conv_transpose_gemm_f16,
+    f16,
+    f16::from_f32(0.0),
+    f16::from_f32(1.0)
+);
 
 // ============================================================================
 // Tests
@@ -1660,6 +1465,98 @@ mod tests {
         let expected = vec![14.0, 18.0, 22.0, 30.0, 34.0, 38.0, 46.0, 50.0, 54.0];
         for (a, e) in out.iter().zip(expected.iter()) {
             assert!((a.to_f32() - e).abs() < 0.5);
+        }
+    }
+
+    #[test]
+    fn test_conv_transpose2d_simple() {
+        // Input: [1, 1, 2, 2], Weight: [1, 1, 2, 2], stride=1, padding=0
+        // This should produce a 3x3 output via "full" convolution.
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32, 1.0, 1.0, 1.0], vec![1, 1, 2, 2]));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 3, 3]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Expected (scatter each input*kernel to output):
+        // [1, 3, 2, 4, 10, 6, 3, 7, 4]
+        assert_eq!(out, vec![1.0, 3.0, 2.0, 4.0, 10.0, 6.0, 3.0, 7.0, 4.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_stride2() {
+        // Input: [1, 1, 2, 2], Weight: [1, 1, 2, 2], stride=2, padding=0
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0], vec![1, 1, 2, 2]));
+        let opts = ConvTransposeOptions::new([2, 2], [0, 0], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 4, 4]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Weight is identity-like: [[1,0],[0,1]]. Each input value appears at
+        // its position and one step diagonally.
+        #[rustfmt::skip]
+        let expected = vec![
+            1.0, 0.0, 2.0, 0.0,
+            0.0, 1.0, 0.0, 2.0,
+            3.0, 0.0, 4.0, 0.0,
+            0.0, 3.0, 0.0, 4.0,
+        ];
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_with_bias() {
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32; 4], vec![1, 1, 2, 2]));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 4], vec![1, 1, 2, 2]));
+        let bias = FlexTensor::from_data(TensorData::new(vec![5.0f32], vec![1]));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f32(x, w, Some(bias), &opts);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Without bias: [1, 2, 1, 2, 4, 2, 1, 2, 1], with bias +5 each
+        assert_eq!(out, vec![6.0, 7.0, 6.0, 7.0, 9.0, 7.0, 6.0, 7.0, 6.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_multichannel() {
+        // Input: [1, 2, 1, 1], Weight: [2, 3, 1, 1], groups=1
+        // Each of 2 input channels contributes to each of 3 output channels.
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0], vec![1, 2, 1, 1]));
+        // Weight: [in_ch=2, out_ch=3, kh=1, kw=1]
+        // ic=0: [1, 2, 3], ic=1: [4, 5, 6]
+        let w = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0],
+            vec![2, 3, 1, 1],
+        ));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 3, 1, 1]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // oc=0: 1*1 + 2*4 = 9, oc=1: 1*2 + 2*5 = 12, oc=2: 1*3 + 2*6 = 15
+        assert_eq!(out, vec![9.0, 12.0, 15.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_f64() {
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f64, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f64; 4], vec![1, 1, 2, 2]));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f64(x, w, None, &opts);
+        let out: Vec<f64> = result.into_data().to_vec().unwrap();
+        assert_eq!(out, vec![1.0, 3.0, 2.0, 4.0, 10.0, 6.0, 3.0, 7.0, 4.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_f16() {
+        let x_data: Vec<f16> = [1.0f32, 2.0, 3.0, 4.0].iter().map(|&v| f16::from_f32(v)).collect();
+        let w_data: Vec<f16> = [1.0f32; 4].iter().map(|&v| f16::from_f32(v)).collect();
+        let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 2, 2]));
+        let w = FlexTensor::from_data(TensorData::new(w_data, vec![1, 1, 2, 2]));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f16(x, w, None, &opts);
+        let out: Vec<f16> = result.into_data().to_vec().unwrap();
+        let expected = [1.0f32, 3.0, 2.0, 4.0, 10.0, 6.0, 3.0, 7.0, 4.0];
+        for (a, e) in out.iter().zip(expected.iter()) {
+            assert!((a.to_f32() - e).abs() < 0.1);
         }
     }
 }
