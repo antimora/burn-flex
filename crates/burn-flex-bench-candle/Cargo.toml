@@ -33,3 +33,35 @@ harness = false
 [[bench]]
 name = "transformer_ops"
 harness = false
+
+[[bench]]
+name = "elementwise"
+harness = false
+
+[[bench]]
+name = "reduce"
+harness = false
+
+[[bench]]
+name = "shape_ops"
+harness = false
+
+[[bench]]
+name = "matmul_batched"
+harness = false
+
+[[bench]]
+name = "conv2d"
+harness = false
+
+[[bench]]
+name = "pool2d"
+harness = false
+
+[[bench]]
+name = "indexing"
+harness = false
+
+[[bench]]
+name = "misc_ops"
+harness = false
