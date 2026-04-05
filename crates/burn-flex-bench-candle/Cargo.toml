@@ -1,0 +1,35 @@
+[package]
+name = "burn-flex-bench-candle"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+description = "Direct comparison benchmarks: burn-flex vs candle (pure Rust, no BLAS)"
+publish = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+burn-flex = { path = "../burn-flex", default-features = true }
+burn-tensor = { workspace = true }
+# Pure-Rust candle only. default-features stays off so we never accidentally
+# pull in accelerate/mkl/cuda/metal. The kernel-vs-kernel comparison is the
+# interesting signal; Accelerate wins via Apple's hand-tuned BLAS and is not a
+# target we can match without wiring BLAS into burn-flex.
+candle-core = { version = "0.9", default-features = false }
+# candle-nn for layer_norm/softmax/gelu equivalents to burn's module-level
+# ops. Using the same 0.9 line as candle-core to avoid dep duplication.
+candle-nn = { version = "0.9", default-features = false }
+divan = { workspace = true }
+
+[[bench]]
+name = "matmul"
+harness = false
+
+[[bench]]
+name = "conv1d"
+harness = false
+
+[[bench]]
+name = "transformer_ops"
+harness = false
