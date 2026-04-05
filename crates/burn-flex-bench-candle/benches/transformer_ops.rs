@@ -10,9 +10,24 @@
 //! ```
 
 use burn_flex::Flex;
-use burn_tensor::{Tensor, TensorData, activation};
+use burn_tensor::{Tensor, TensorData, TensorPrimitive, activation};
 use candle_core::{Device as CandleDevice, Tensor as CandleTensor};
 use divan::{AllocProfiler, Bencher};
+
+/// Wrapper that extracts the Flex primitive, calls burn-flex's fused
+/// softmax, and wraps the result back. This is the fast path until
+/// burn-backend's `ActivationOps` gains a `softmax` trait method.
+fn flex_fused_softmax<const D: usize>(
+    tensor: Tensor<Flex, D>,
+    dim: usize,
+) -> Tensor<Flex, D> {
+    let primitive = match tensor.into_primitive() {
+        TensorPrimitive::Float(inner) => inner,
+        TensorPrimitive::QFloat(_) => unimplemented!("softmax on quantized"),
+    };
+    let result = burn_flex::ops::activation::softmax(primitive, dim);
+    Tensor::from_primitive(TensorPrimitive::Float(result))
+}
 
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
@@ -120,16 +135,33 @@ const SOFTMAX_SHAPES: &[SoftmaxShape] = &[
     SoftmaxShape(16, 150, "attn_3s"),
 ];
 
-#[divan::bench_group(name = "flex/softmax")]
-mod flex_softmax {
+/// Old path: burn_tensor::activation::softmax, which decomposes into 5
+/// primitive ops (max_dim, sub, exp, sum_dim, div). This is what every
+/// burn-flex user gets today by calling the standard import.
+#[divan::bench_group(name = "flex/softmax_decomposed")]
+mod flex_softmax_decomposed {
     use super::*;
 
     #[divan::bench(args = SOFTMAX_SHAPES)]
     fn softmax(bencher: Bencher, shape: &SoftmaxShape) {
         let SoftmaxShape(heads, seq, _) = *shape;
         let x = flex_3d(heads, seq, seq);
-        // softmax over the last dim (axis 2) — attention score normalization
         bencher.bench(|| activation::softmax(x.clone(), 2));
+    }
+}
+
+/// New path: burn_flex::ops::activation::softmax, fused single-pass
+/// per row. Until the upstream `ActivationOps` trait has a softmax hook,
+/// users call this directly via the `flex_fused_softmax` wrapper above.
+#[divan::bench_group(name = "flex/softmax_fused")]
+mod flex_softmax_fused {
+    use super::*;
+
+    #[divan::bench(args = SOFTMAX_SHAPES)]
+    fn softmax(bencher: Bencher, shape: &SoftmaxShape) {
+        let SoftmaxShape(heads, seq, _) = *shape;
+        let x = flex_3d(heads, seq, seq);
+        bencher.bench(|| flex_fused_softmax(x.clone(), 2));
     }
 }
 
