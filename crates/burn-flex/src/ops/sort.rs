@@ -234,6 +234,10 @@ fn sort_along_dim<E: Copy + Send>(
     // offsets `slice_idx * dim_size`, so `chunks_exact_mut(dim_size)`
     // walks them directly. Parallelized with rayon above the threshold.
     if dim_stride == 1 {
+        // chunks_exact silently drops any remainder, so lock the
+        // "length is a multiple of dim_size" invariant that holds for
+        // contiguous tensors by construction.
+        debug_assert_eq!(data.len() % dim_size, 0);
         let sort_row = |row: &mut [E]| {
             if descending {
                 row.sort_unstable_by(|a, b| cmp(b, a));
@@ -291,6 +295,10 @@ fn sort_along_dim_with_indices<E: Copy + Send>(
     // are both contiguous at `slice_idx * dim_size`, so we can zip
     // matching chunks and avoid the per-row stride arithmetic.
     if dim_stride == 1 {
+        // zip silently truncates to the shorter iterator and chunks_exact
+        // silently drops remainders, so lock both invariants.
+        debug_assert_eq!(data.len(), indices.len());
+        debug_assert_eq!(data.len() % dim_size, 0);
         let sort_row = |(row, idx_row): (&mut [E], &mut [isize])| {
             let mut pairs: Vec<(usize, E)> = (0..dim_size).map(|i| (i, row[i])).collect();
             if descending {
@@ -359,6 +367,10 @@ fn argsort_along_dim<E: Copy + Sync>(
     // Fast path: last dimension (stride==1). Both input rows and
     // output index rows are contiguous at `slice_idx * dim_size`.
     if dim_stride == 1 {
+        // zip silently truncates to the shorter iterator and chunks_exact
+        // silently drops remainders, so lock both invariants.
+        debug_assert_eq!(data.len(), indices.len());
+        debug_assert_eq!(data.len() % dim_size, 0);
         let sort_row = |(row, idx_row): (&[E], &mut [isize])| {
             let mut idx_buf: Vec<usize> = (0..dim_size).collect();
             if descending {
@@ -595,46 +607,84 @@ mod tests {
         }
     }
 
-    #[test]
-    fn sort_with_indices_last_dim_roundtrip() {
-        let rows = 512;
-        let cols = 512; // 256K — straddles threshold equal-case
+    fn check_sort_with_indices_last_dim(rows: usize, cols: usize, descending: bool) {
         let src: Vec<f32> = (0..rows * cols).map(|i| (i as f32 * 0.37).sin()).collect();
         let mut values = src.clone();
         let mut indices = vec![0isize; rows * cols];
         let shape = Shape::new([rows, cols]);
-        sort_along_dim_with_indices(&mut values, &mut indices, &shape, 1, false, f32::total_cmp);
+        sort_along_dim_with_indices(&mut values, &mut indices, &shape, 1, descending, f32::total_cmp);
         for r in 0..rows {
             let vs = &values[r * cols..(r + 1) * cols];
             let idx_row = &indices[r * cols..(r + 1) * cols];
             let orig = &src[r * cols..(r + 1) * cols];
+            let want_order = if descending {
+                core::cmp::Ordering::Less
+            } else {
+                core::cmp::Ordering::Greater
+            };
             for w in vs.windows(2) {
-                assert!(f32::total_cmp(&w[0], &w[1]) != core::cmp::Ordering::Greater);
+                assert_ne!(f32::total_cmp(&w[0], &w[1]), want_order);
             }
-            // Indices must reconstruct the sorted values from the original row.
+            // Indices must reconstruct the sorted values from the original row
+            // and must be a valid permutation of 0..cols (each index appears once).
+            let mut seen = vec![false; cols];
             for (i, &orig_idx) in idx_row.iter().enumerate() {
-                assert_eq!(vs[i], orig[orig_idx as usize]);
+                let j = orig_idx as usize;
+                assert_eq!(vs[i], orig[j]);
+                assert!(!seen[j], "row {r}: index {j} repeated");
+                seen[j] = true;
             }
         }
     }
 
     #[test]
-    fn argsort_last_dim_matches_permutation() {
-        let rows = 200;
-        let cols = 1500; // 300K, over threshold with rayon on
+    fn sort_with_indices_last_dim_ascending() {
+        // 512*512 = 256K, exactly PARALLEL_THRESHOLD (hits parallel branch).
+        check_sort_with_indices_last_dim(512, 512, false);
+    }
+
+    #[test]
+    fn sort_with_indices_last_dim_descending() {
+        check_sort_with_indices_last_dim(512, 512, true);
+    }
+
+    fn check_argsort_last_dim(rows: usize, cols: usize, descending: bool) {
         let src: Vec<f32> = (0..rows * cols)
             .map(|i| ((i * 7919) % 997) as f32)
             .collect();
         let mut indices = vec![0isize; rows * cols];
         let shape = Shape::new([rows, cols]);
-        argsort_along_dim(&src, &mut indices, &shape, 1, false, f32::total_cmp);
+        argsort_along_dim(&src, &mut indices, &shape, 1, descending, f32::total_cmp);
         for r in 0..rows {
             let idx_row = &indices[r * cols..(r + 1) * cols];
             let orig = &src[r * cols..(r + 1) * cols];
             let sorted: Vec<f32> = idx_row.iter().map(|&i| orig[i as usize]).collect();
             for w in sorted.windows(2) {
-                assert!(w[0] <= w[1]);
+                if descending {
+                    assert!(w[0] >= w[1]);
+                } else {
+                    assert!(w[0] <= w[1]);
+                }
+            }
+            // idx_row must be a permutation of 0..cols; with heavy duplicates
+            // in src this catches parallel bugs that emit the same index twice.
+            let mut seen = vec![false; cols];
+            for &i in idx_row {
+                let j = i as usize;
+                assert!(!seen[j], "row {r}: index {j} repeated");
+                seen[j] = true;
             }
         }
+    }
+
+    #[test]
+    fn argsort_last_dim_ascending() {
+        // 200*1500 = 300K, above PARALLEL_THRESHOLD.
+        check_argsort_last_dim(200, 1500, false);
+    }
+
+    #[test]
+    fn argsort_last_dim_descending() {
+        check_argsort_last_dim(200, 1500, true);
     }
 }

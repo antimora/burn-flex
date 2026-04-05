@@ -320,7 +320,7 @@ Surfaced by the broader coverage pass. Ordered by impact on real workloads.
    pointwise; flex's im2col adds overhead.
 
 Fixed since the first pass:
-- sort_last at 1024² (was 7.8× slower; now 1.3× faster) —
+- sort_last at 1024² (was 7.8× slower; now 1.3× faster), fixed in
   [antimora/burn-flex#45](https://github.com/antimora/burn-flex/pull/45).
 
 Items 1–3 together cover decoder models, classifiers, and any attention not written in the
