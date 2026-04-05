@@ -277,12 +277,18 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
 /// row kernel.
 #[inline]
 fn softmax_rows_f32(input: &[f32], output: &mut [f32], row_len: usize) {
+    // Release-mode invariant checks. These run once per chunk of rows
+    // (dozens of times per call, not per-element), so the overhead is
+    // unmeasurable against the kernel work. A debug-only check would
+    // silently pass a short final chunk to the row kernel on release
+    // builds if a future refactor broke the row alignment at the call
+    // site, yielding wrong softmax output with no panic.
+    assert_eq!(input.len(), output.len());
+    assert_eq!(input.len() % row_len, 0);
     #[cfg(feature = "simd")]
     softmax_rows_f32_simd(input, output, row_len);
     #[cfg(not(feature = "simd"))]
     {
-        debug_assert_eq!(input.len(), output.len());
-        debug_assert_eq!(input.len() % row_len, 0);
         for (in_row, out_row) in input.chunks(row_len).zip(output.chunks_mut(row_len)) {
             softmax_row_f32_scalar(in_row, out_row);
         }
@@ -646,14 +652,15 @@ fn layer_norm_rows_f32_with_beta(
     d_model: usize,
     epsilon: f32,
 ) {
+    // Release-mode invariant checks; see softmax_rows_f32 for rationale.
+    assert_eq!(input.len(), output.len());
+    assert_eq!(input.len() % d_model, 0);
+    assert_eq!(gamma.len(), d_model);
+    assert_eq!(beta.len(), d_model);
     #[cfg(feature = "simd")]
     layer_norm_rows_f32_with_beta_simd(input, output, gamma, beta, d_model, epsilon);
     #[cfg(not(feature = "simd"))]
     {
-        debug_assert_eq!(input.len(), output.len());
-        debug_assert_eq!(input.len() % d_model, 0);
-        debug_assert_eq!(gamma.len(), d_model);
-        debug_assert_eq!(beta.len(), d_model);
         for (in_row, out_row) in input.chunks(d_model).zip(output.chunks_mut(d_model)) {
             layer_norm_row_f32_scalar(in_row, out_row, gamma, Some(beta), epsilon);
         }
@@ -669,13 +676,14 @@ fn layer_norm_rows_f32_no_beta(
     d_model: usize,
     epsilon: f32,
 ) {
+    // Release-mode invariant checks; see softmax_rows_f32 for rationale.
+    assert_eq!(input.len(), output.len());
+    assert_eq!(input.len() % d_model, 0);
+    assert_eq!(gamma.len(), d_model);
     #[cfg(feature = "simd")]
     layer_norm_rows_f32_no_beta_simd(input, output, gamma, d_model, epsilon);
     #[cfg(not(feature = "simd"))]
     {
-        debug_assert_eq!(input.len(), output.len());
-        debug_assert_eq!(input.len() % d_model, 0);
-        debug_assert_eq!(gamma.len(), d_model);
         for (in_row, out_row) in input.chunks(d_model).zip(output.chunks_mut(d_model)) {
             layer_norm_row_f32_scalar(in_row, out_row, gamma, None, epsilon);
         }
@@ -694,16 +702,25 @@ fn layer_norm_row_f32_scalar(
     beta: Option<&[f32]>,
     epsilon: f32,
 ) {
+    // Welford's online algorithm for mean and variance, rather than the
+    // `sumsq / n - mean * mean` identity the SIMD path uses. The identity
+    // is vulnerable to catastrophic cancellation when the two terms are
+    // close in magnitude (large mean relative to variance). Welford's
+    // single-pass formulation avoids that by tracking the running mean
+    // and accumulating squared deviations from it. The scalar path is
+    // the contract used when `simd` is disabled, so we prefer numerical
+    // stability over bit-for-bit match with the SIMD tree reduction.
     let len = input.len();
-    let mut sum = 0.0f32;
-    let mut sumsq = 0.0f32;
-    for &x in input {
-        sum += x;
-        sumsq += x * x;
+    let mut mean = 0.0f32;
+    let mut m2 = 0.0f32;
+    for (k, &x) in input.iter().enumerate() {
+        let n_k = (k + 1) as f32;
+        let delta = x - mean;
+        mean += delta / n_k;
+        let delta2 = x - mean;
+        m2 += delta * delta2;
     }
-    let n = len as f32;
-    let mean = sum / n;
-    let var = (sumsq / n) - mean * mean;
+    let var = m2 / len as f32;
     let inv_std = 1.0f32 / (var + epsilon).sqrt();
     for (i, &x) in input.iter().enumerate() {
         let scale = inv_std * gamma[i];
@@ -813,13 +830,9 @@ fn layer_norm_row_f32_simd<S: macerator::Simd>(
 
     // Pass 2: normalize and affine transform.
     //   out[i] = (x[i] - mean) * inv_std * gamma[i] + beta[i]
-    // Rearrange to a single FMA chain:
-    //   let scale = inv_std * gamma[i]
-    //   let shift = beta[i] - mean * scale
-    //   out[i] = x[i] * scale + shift
-    // This lets us do one SIMD FMA per element with the shift precomputed
-    // at load time. Gamma and beta are read once per row (shared across
-    // all rows within a chunk through L1 cache).
+    // mean_vec and inv_std_vec are hoisted outside the loop (one splat
+    // each per row). gamma and beta are read once per element; both
+    // fit in L1 and are shared across all rows within a rayon chunk.
     let mean_vec = mean.splat::<S>();
     let inv_std_vec = inv_std.splat::<S>();
     let mut i = 0;
@@ -1385,6 +1398,77 @@ mod tests {
         };
         // dim=0 is not the last axis (rank 2, last = 1)
         let _ = crate::ops::activation::softmax(primitive, 0);
+    }
+
+    // Row length 17 is deliberately chosen: it exercises the "SIMD body ran N
+    // elements, then scalar tail processes M > 0" combination on every common
+    // SIMD width (NEON/SSE f32x4: body=16, tail=1; AVX2 f32x8: body=16, tail=1;
+    // AVX-512 f32x16: body=16, tail=1). Row lengths that are exact multiples
+    // of the SIMD width never hit the tail branch, so without a test like this
+    // a bug in the scalar tail kernel would pass CI silently.
+    #[test]
+    fn test_softmax_simd_body_plus_scalar_tail() {
+        use burn_tensor::TensorPrimitive;
+        // 2 rows of length 17 with varied values so the max/exp/sum path is
+        // meaningful per row.
+        let data: Vec<f32> = (0..34).map(|i| (i as f32 * 0.137) - 2.3).collect();
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data(TensorData::new(data, [2, 17]), &Default::default());
+        let reference = activation::softmax(t.clone(), 1);
+
+        let primitive = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::softmax(primitive, 1);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused
+            .into_data()
+            .assert_approx_eq::<f32>(&reference.into_data(), Tolerance::absolute(1e-5));
+    }
+
+    #[test]
+    fn test_layer_norm_simd_body_plus_scalar_tail() {
+        use burn_tensor::TensorPrimitive;
+        // Same rationale as test_softmax_simd_body_plus_scalar_tail: row length
+        // 17 leaves exactly one scalar-tail element after any common SIMD body.
+        let data: Vec<f32> = (0..34).map(|i| (i as f32 * 0.137) - 2.3).collect();
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data(TensorData::new(data, [2, 17]), &Default::default());
+        let gamma_data: Vec<f32> = (0..17).map(|i| 1.0 + i as f32 * 0.05).collect();
+        let beta_data: Vec<f32> = (0..17).map(|i| i as f32 * 0.01).collect();
+        let gamma: Tensor<Flex, 1> =
+            Tensor::from_data(TensorData::new(gamma_data, [17]), &Default::default());
+        let beta: Tensor<Flex, 1> =
+            Tensor::from_data(TensorData::new(beta_data, [17]), &Default::default());
+
+        // Reference: manual layer_norm via primitive tensor ops.
+        let mean = t.clone().mean_dim(1);
+        let centered = t.clone() - mean;
+        let var = centered.clone().powi_scalar(2).mean_dim(1);
+        let eps = 1e-5f32;
+        let normed = centered / (var + eps).sqrt();
+        let reference = normed * gamma.clone().unsqueeze::<2>() + beta.clone().unsqueeze::<2>();
+
+        let t_prim = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_prim = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let b_prim = match beta.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let fused = crate::ops::activation::layer_norm(t_prim, g_prim, Some(b_prim), 1e-5);
+        let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
+
+        fused
+            .into_data()
+            .assert_approx_eq::<f32>(&reference.into_data(), Tolerance::absolute(1e-5));
     }
 
     #[test]
