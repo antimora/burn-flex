@@ -29,6 +29,30 @@ fn flex_fused_softmax<const D: usize>(
     Tensor::from_primitive(TensorPrimitive::Float(result))
 }
 
+/// Wrapper for burn-flex's fused layer_norm. Same pattern as softmax —
+/// users opt into the fast path via this function until burn upstream
+/// grows a layer_norm backend hook.
+fn flex_fused_layer_norm(
+    x: Tensor<Flex, 2>,
+    gamma: Tensor<Flex, 1>,
+    beta: Tensor<Flex, 1>,
+) -> Tensor<Flex, 2> {
+    let x_p = match x.into_primitive() {
+        TensorPrimitive::Float(inner) => inner,
+        _ => unimplemented!(),
+    };
+    let g_p = match gamma.into_primitive() {
+        TensorPrimitive::Float(inner) => inner,
+        _ => unimplemented!(),
+    };
+    let b_p = match beta.into_primitive() {
+        TensorPrimitive::Float(inner) => inner,
+        _ => unimplemented!(),
+    };
+    let result = burn_flex::ops::activation::layer_norm(x_p, g_p, Some(b_p), 1e-5);
+    Tensor::from_primitive(TensorPrimitive::Float(result))
+}
+
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
 
@@ -210,8 +234,10 @@ fn flex_layer_norm(x: Tensor<Flex, 2>, gamma: Tensor<Flex, 1>, beta: Tensor<Flex
     normed * gamma.unsqueeze::<2>() + beta.unsqueeze::<2>()
 }
 
-#[divan::bench_group(name = "flex/layer_norm")]
-mod flex_layer_norm_bench {
+/// Decomposed path: primitive tensor ops (mean, sub, var, sqrt, mul, add)
+/// — what burn::nn::LayerNorm::forward produces today.
+#[divan::bench_group(name = "flex/layer_norm_decomposed")]
+mod flex_layer_norm_decomposed {
     use super::*;
 
     #[divan::bench(args = LN_SHAPES)]
@@ -221,6 +247,23 @@ mod flex_layer_norm_bench {
         let gamma = flex_1d(hidden);
         let beta = flex_1d(hidden);
         bencher.bench(|| flex_layer_norm(x.clone(), gamma.clone(), beta.clone()));
+    }
+}
+
+/// Fused path: burn_flex::ops::activation::layer_norm — two SIMD passes
+/// per row (sum+sumsq, then normalize+affine), one macerator dispatch per
+/// chunk of rows.
+#[divan::bench_group(name = "flex/layer_norm_fused")]
+mod flex_layer_norm_fused {
+    use super::*;
+
+    #[divan::bench(args = LN_SHAPES)]
+    fn layer_norm(bencher: Bencher, shape: &LayerNormShape) {
+        let LayerNormShape(rows, hidden, _) = *shape;
+        let x = flex_2d(rows, hidden);
+        let gamma = flex_1d(hidden);
+        let beta = flex_1d(hidden);
+        bencher.bench(|| flex_fused_layer_norm(x.clone(), gamma.clone(), beta.clone()));
     }
 }
 
