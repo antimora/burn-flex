@@ -344,24 +344,11 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
     const TILE_SIZE: usize = 512;
     let num_tiles = spatial_out.div_ceil(TILE_SIZE);
 
-    // Flatten kernel to [c_out, k_d * k_h * k_w * c_in] for GEMM.
-    //
-    // This is a 2D transpose of shape (channels_per_group, k_spatial) per
-    // c_out slice: the source weight is [c_out, c_in, kd, kh, kw] row-major
-    // and the target col layout is [c_out, kd, kh, kw, c_in] row-major. The
-    // inner (c_in, k_spatial) submatrix needs to be transposed.
-    //
-    // The old formulation used five nested loops with a 10-term index
-    // expression in the inner body, which LLVM cannot autovectorize. This
-    // form exposes a simple per-slice 2D transpose with a small k_spatial
-    // inner loop that the compiler can unroll and vectorize. For small
-    // kernels (which are typical: k=2, k=3, k=1 on non-spatial dims in
-    // conv1d/2d), the k_spatial loop gets fully unrolled.
-    //
-    // For small shapes (e.g. wav2vec2 conv1d late layers) this transpose
-    // was previously the dominant cost in conv3d_impl, larger than the
-    // actual GEMM compute. See crates/burn-flex-bench-candle for baseline
-    // numbers.
+    // Flatten kernel [c_out, c_in, kd, kh, kw] -> [c_out, kd, kh, kw, c_in]
+    // for GEMM. Expressed as a 2D transpose of (c_in, k_spatial) per c_out
+    // so the compiler can unroll the k_spatial inner loop; the older 5-
+    // nested formulation had a 10-term index expression LLVM wouldn't
+    // autovectorize.
     let k_spatial = kernel_d * kernel_h * kernel_w;
     let mut w_flat = vec![zero; channels_out * col_len];
     for c_out in 0..channels_out {
@@ -376,13 +363,9 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
     }
 
     // Convert input to NHWC layout for cache-friendly access in im2col.
-    //
-    // NOTE: the inner-loop structure here (c innermost, spatial outer)
-    // looks non-obvious but is empirically the fastest on aarch64 M3 Max.
-    // An alternative formulation with w innermost (contiguous load, strided
-    // store) was benchmarked on wav2vec2 shapes and ran 10-35% slower at
-    // every layer — modern ARM cores have better load prefetchers than
-    // store write-buffers, so strided *loads* + contiguous *stores* wins.
+    // Loop order (c innermost, spatial outer) is intentional: on aarch64
+    // M3 Max, strided loads + contiguous stores beat the inverse by
+    // 10-35% per layer. Load prefetchers outrun the store write buffer.
     let nhwc_stride = (
         in_d * in_h * in_w * channels_in,
         in_h * in_w * channels_in,
@@ -608,24 +591,12 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
 
 /// Decide whether to use the direct (no-im2col) path or the tiled+gemm path.
 ///
-/// Currently returns `false` unconditionally — the direct path
-/// (`conv3d_direct_impl` + `ConvElement::conv_direct_sweep`) is fully
-/// implemented and produces correct results on every conv test, but on
-/// M3 Max it loses to the tiled+gemm path by 1.2-2x at small shapes where
-/// it was intended to win (wav2vec2 feature extractor L3-L6).
-///
-/// Root cause of the gap: gemm's microkernel uses register blocking across
-/// multiple output columns, reusing loaded weight vectors across several
-/// dot products before advancing. Our direct sweep computes one output at
-/// a time, reloading weights into registers for each. Closing the gap
-/// requires writing a similar register-blocked microkernel in the sweep
-/// helper (e.g. compute 4 or 8 outputs in parallel per iteration of the
-/// c_in loop). That is substantial work and is tracked separately.
-///
-/// The infrastructure (trait `ConvElement`, `#[macerator::with_simd]`
-/// sweep helpers, dispatcher hook) is all in place so that future work is
-/// a localized change to `conv_direct_sweep_{f32,f64}_simd` and flipping
-/// this function's return value once the microkernel matches gemm.
+/// Currently returns `false` unconditionally: the direct path is
+/// implemented and correct, but loses to tiled+gemm at the small shapes
+/// it was intended to win (gemm's microkernel uses register blocking
+/// across multiple outputs; our sweep computes one output per vec_dot).
+/// Enabling it is gated on a register-blocked microkernel rewrite of
+/// `conv_direct_sweep_{f32,f64}_simd`.
 fn should_use_direct_conv3d(
     _channels_per_group: usize,
     _kernel_d: usize,
@@ -639,16 +610,10 @@ fn should_use_direct_conv3d(
 
 /// Direct convolution path: no im2col materialization, no gemm call.
 ///
-/// For each output element we sum `k_spatial` `vec_dot`s between a
-/// `c_in`-contiguous weight slice and a `c_in`-contiguous input patch slice
-/// from the NHWC-laid-out input. Parallelism is over the flattened
-/// `(batch, c_out)` index — much finer-grained than the tiled path, which
-/// matters at small `spatial_out` where gemm's internal parallelism cannot
-/// saturate multiple cores.
-///
-/// This path is unified across conv1d/conv2d/conv3d via the same 5D shape
-/// convention (conv1d and conv2d expand to singleton dims) — every
-/// improvement here benefits all three.
+/// Parallelized over `(batch, c_out)` — finer granularity than the tiled
+/// path, which matters at small `spatial_out` where gemm's internal
+/// parallelism cannot saturate multiple cores. Unified across
+/// conv1d/conv2d/conv3d via the 5D shape convention.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn conv3d_direct_impl<T: ConvElement>(
     x: FlexTensor,
@@ -732,21 +697,14 @@ fn conv3d_direct_impl<T: ConvElement>(
         }
     }
 
-    // Any padding? If not, the sweep's bounds check branches are never
-    // taken and the compiler can elide them via branch prediction.
     let has_padding = pad_d != 0 || pad_h != 0 || pad_w != 0;
 
-    // Loop order: k_spatial OUTER SERIAL, c_out PARALLEL INNER.
-    //
-    //   * Per outer k iteration, all c_out threads read the *same* slice of
-    //     input (the positions for that k). L2/L3 serves these reads once
-    //     and the data is reused across the c_out parallel sweep.
-    //   * The output buffer is accumulated in place across k iterations, so
-    //     each output cell stays warm in cache across its k_spatial updates.
-    //
-    // Inside each (b, kd, kh, kw, c_out) sweep, `T::conv_direct_sweep` is
-    // called once and processes all `spatial_out` output positions. That is
-    // where macerator's SIMD dispatch happens — amortized over a full sweep.
+    // Loop order: k_spatial outer serial, c_out parallel inner. Each k
+    // iteration lets all c_out threads reuse the same input slice through
+    // L2/L3, and the output accumulates in place across k iterations so
+    // each cell stays warm. `T::conv_direct_sweep` runs once per
+    // (c_out, k) pair and amortizes macerator's dispatch over the whole
+    // spatial sweep.
     let mut dst = vec![zero; batch_size * channels_out * spatial_out];
 
     #[cfg(feature = "rayon")]
@@ -1869,22 +1827,12 @@ fn gemm_f16(a: &[f16], b: &[f16], m: usize, k: usize, n: usize) -> Vec<f16> {
 // These are the core SIMD primitives used by `conv3d_direct_impl` via the
 // `ConvElement` trait.
 //
-// Key design decision: dispatch granularity. The naive approach of making
-// `vec_dot` a `#[with_simd]` function and calling it per output element
-// incurs macerator's dispatch shim on every call — tens of thousands of
-// times per conv, dominating runtime. Instead we make the entire *sweep*
-// over all output positions for one `(c_out, k_offset)` pair a single
-// `#[with_simd]` call. One dispatch per sweep, amortized over
-// `spatial_out * c_in` FMAs.
-//
-// This mirrors the pattern used in `crates/burn-flex/src/simd/portable.rs`
-// for element-wise ops: the SIMD-specialized function contains the slice
-// loop, not just the inner op.
+// Dispatch granularity: a `#[with_simd]` helper processes one entire
+// (c_out, k_offset) sweep, not one vec_dot, so macerator's dispatch is
+// amortized over `spatial_out * c_in` FMAs. Same pattern as
+// `simd/portable.rs` — the SIMD-specialized function owns the loop.
 
-/// Parameters describing one (c_out, k_offset) sweep for the direct conv.
-///
-/// Grouped so the `conv_direct_sweep` trait method and its `#[with_simd]`
-/// helpers don't drown in positional arguments.
+/// Parameters describing one (c_out, k_offset) sweep.
 #[derive(Clone, Copy)]
 struct SweepParams {
     out_h: usize,
@@ -1907,20 +1855,10 @@ struct SweepParams {
     has_padding: bool,
 }
 
-/// The dtype-specialization surface for the direct conv path.
-///
-/// `conv3d_direct_impl` is generic over `T: ConvElement`, so each impl gets
-/// monomorphized per dtype. Inside the impl, the SIMD work lives in a
-/// `#[macerator::with_simd]` helper that's called once per sweep (one
-/// (c_out, k_offset) pair), amortizing macerator's dispatch over
-/// `spatial_out * c_in` FMAs.
-///
-/// This structure intentionally avoids `Fn` closure generics for the inner
-/// hot path — in an earlier revision, a `VD: Fn(&[T], &[T]) -> T` parameter
-/// prevented LLVM from inlining through the Fn::call boundary and the code
-/// ran at scalar FMA speed despite the intrinsics being correct. Trait
-/// methods with concrete monomorphized impls inline cleanly where Fn
-/// closures do not.
+/// Dtype-specialization surface for the direct conv path. `conv3d_direct_impl`
+/// is generic over `T: ConvElement` so each dtype gets monomorphized; the
+/// trait method avoids a `Fn` closure bound, which is load-bearing for
+/// inlining through to the `#[with_simd]` sweep helper.
 trait ConvElement: bytemuck::Pod + Copy + Send + Sync + burn_backend::Element + 'static {
     fn zero() -> Self;
 
@@ -1978,17 +1916,12 @@ fn conv_direct_sweep_f32_simd<S: macerator::Simd>(
         ..
     } = *params;
 
-    // Derive out_d from dst_row.len() and the other spatial dims. dst_row
-    // has exactly `out_d * out_h * out_w` elements for this (c_out, k).
     let out_d = dst_row.len() / (out_h * out_w);
 
-    // Nested loops over (od, oh_, ow_) with a running `oidx` counter. This
-    // avoids per-output integer divisions — a previous revision flattened
-    // the output into a single `for oidx in 0..spatial_out` loop with
-    // `oidx / (out_h * out_w)` and friends inside, and LLVM could not
-    // strength-reduce the runtime divisions, burning ~4 udiv instructions
-    // per output position. At L3 that was milliseconds of pure division
-    // cost per conv.
+    // Nested (od, oh_, ow_) loops with a running `oidx` counter avoid
+    // per-output integer divisions on (out_h * out_w) — LLVM cannot
+    // strength-reduce division by a runtime value, so a flat
+    // `for oidx in 0..spatial_out` form burns ~4 udiv per iteration.
     let mut oidx: usize = 0;
     for od in 0..out_d {
         let base_id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
@@ -2035,21 +1968,23 @@ fn conv_direct_sweep_f32_simd<S: macerator::Simd>(
                 let mut acc1 = (0.0f32).splat::<S>();
                 let mut acc2 = (0.0f32).splat::<S>();
                 let mut acc3 = (0.0f32).splat::<S>();
+                // Vector::mul_add(self, b, c) = self*b + c, so
+                //   w.mul_add(x, acc) = w*x + acc.
                 let mut i = 0;
                 while i < unroll_len {
                     unsafe {
                         let w0 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
                         let x0 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
-                        acc0 = acc0.mul_add(w0, x0);
+                        acc0 = w0.mul_add(x0, acc0);
                         let w1 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + lanes));
                         let x1 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + lanes));
-                        acc1 = acc1.mul_add(w1, x1);
+                        acc1 = w1.mul_add(x1, acc1);
                         let w2 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 2 * lanes));
                         let x2 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 2 * lanes));
-                        acc2 = acc2.mul_add(w2, x2);
+                        acc2 = w2.mul_add(x2, acc2);
                         let w3 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 3 * lanes));
                         let x3 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 3 * lanes));
-                        acc3 = acc3.mul_add(w3, x3);
+                        acc3 = w3.mul_add(x3, acc3);
                     }
                     i += unroll;
                 }
@@ -2057,7 +1992,7 @@ fn conv_direct_sweep_f32_simd<S: macerator::Simd>(
                     unsafe {
                         let wv = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
                         let xv = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
-                        acc0 = acc0.mul_add(wv, xv);
+                        acc0 = wv.mul_add(xv, acc0);
                     }
                     i += lanes;
                 }
@@ -2245,21 +2180,23 @@ fn conv_direct_sweep_f64_simd<S: macerator::Simd>(
         let mut acc1 = (0.0f64).splat::<S>();
         let mut acc2 = (0.0f64).splat::<S>();
         let mut acc3 = (0.0f64).splat::<S>();
+        // Vector::mul_add(self, b, c) = self*b + c, so
+        //   w.mul_add(x, acc) = w*x + acc.
         let mut i = 0;
         while i < unroll_len {
             unsafe {
                 let w0 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
                 let x0 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
-                acc0 = acc0.mul_add(w0, x0);
+                acc0 = w0.mul_add(x0, acc0);
                 let w1 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + lanes));
                 let x1 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + lanes));
-                acc1 = acc1.mul_add(w1, x1);
+                acc1 = w1.mul_add(x1, acc1);
                 let w2 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 2 * lanes));
                 let x2 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 2 * lanes));
-                acc2 = acc2.mul_add(w2, x2);
+                acc2 = w2.mul_add(x2, acc2);
                 let w3 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 3 * lanes));
                 let x3 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 3 * lanes));
-                acc3 = acc3.mul_add(w3, x3);
+                acc3 = w3.mul_add(x3, acc3);
             }
             i += unroll;
         }
@@ -2267,7 +2204,7 @@ fn conv_direct_sweep_f64_simd<S: macerator::Simd>(
             unsafe {
                 let wv = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
                 let xv = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
-                acc0 = acc0.mul_add(wv, xv);
+                acc0 = wv.mul_add(xv, acc0);
             }
             i += lanes;
         }

@@ -179,31 +179,15 @@ fn sigmoid_f64(x: f64) -> f64 {
 // Fused softmax
 // ============================================================================
 //
-// `burn-backend::ActivationOps` does not expose a `softmax` trait method (as
-// of burn 0.21), so `burn_tensor::activation::softmax` decomposes into 5
-// primitive tensor ops: `max_dim`, `sub` (broadcast), `exp`, `sum_dim`,
-// `div` (broadcast). Each is a separate full-tensor pass with intermediate
-// allocations — for attention scores ([heads, seq, seq]) this runs ~30x
-// slower than candle's fused `softmax_last_dim`.
-//
-// Until the upstream burn API grows a `softmax` hook in `ActivationOps`,
-// we expose this as a standalone `pub fn` on burn-flex. Users who want the
-// fast path call `burn_flex::softmax(...)` directly; the upstream
-// `activation::softmax` path still works (slowly).
-//
-// The implementation uses the standard 3-pass row-wise algorithm (max,
-// exp+sum, normalize) which keeps each row cache-hot across the three
-// passes. Parallelized over rows with rayon. Currently supports softmax
-// along the last dim only; other axes panic (wav2vec2 attention only needs
-// last-axis softmax, and permute+softmax+permute is a straightforward
-// extension for the future).
+// `ActivationOps` does not currently expose a `softmax` hook, so
+// `burn_tensor::activation::softmax` falls back to a 5-op decomposition
+// (`max_dim`/`sub`/`exp`/`sum_dim`/`div`). This module provides a fused
+// alternative users can opt into directly.
 
-/// Fused softmax along `dim`, avoiding the 5-op decomposition used by
-/// `burn_tensor::activation::softmax`.
+/// Fused softmax along `dim`.
 ///
-/// Single pass per row (reduce max, then exp+sum in one sweep, then
-/// normalize in one sweep), with each row staying cache-hot. Rows are
-/// processed in parallel via rayon.
+/// Three-pass row-wise algorithm (max, exp+sum, normalize) keeping each row
+/// cache-hot. Rows are processed in parallel via rayon. Last axis only.
 ///
 /// Currently optimized only for the last axis of the tensor. Softmax along
 /// other axes panics; callers should permute first or fall back to
@@ -237,27 +221,34 @@ pub fn softmax(tensor: FloatTensor<Flex>, dim: usize) -> FloatTensor<Flex> {
 
 fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
     let shape = tensor.layout().shape().clone();
-    // Shape derefs to &[usize], so we can use slice methods directly.
     let last = *shape.last().expect("softmax: empty shape");
     if last == 0 {
         return tensor;
     }
     let input: &[f32] = tensor.storage();
-    let mut output: Vec<f32> = vec![0.0f32; input.len()];
+    let n = input.len();
 
-    // Row-parallel via rayon. Each task owns a contiguous range of rows
-    // and calls the SIMD-specialized sweep once, so macerator's dispatch
-    // is amortized over the whole range rather than paid per row.
+    // Allocate without zero-init: the row kernel writes every element of
+    // `output` via its three passes (max/exp+sum/normalize), all fully
+    // covered by a SIMD body plus scalar tail. Skipping `vec![0.0; n]`
+    // saves a full memset on a bandwidth-bound kernel. Matches the
+    // pattern used in FlexTensor::copy_contiguous.
+    let mut output: Vec<f32> = Vec::with_capacity(n);
+    // SAFETY: capacity is n, and softmax_rows_f32_simd writes every
+    // element of the resulting slice before this Vec is read (either
+    // by the caller via FlexTensor::new below, or by drop).
+    unsafe { output.set_len(n) };
+
+    // Row-parallel via rayon: one macerator dispatch per chunk of rows,
+    // amortized over all rows in the chunk.
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
-        // Keep chunks coarse enough (~64 rows) so each rayon task does
-        // real work and the dispatch shim runs once per task.
         const ROWS_PER_TASK: usize = 64;
-        let chunk_bytes = ROWS_PER_TASK * last;
+        let chunk_elems = ROWS_PER_TASK * last;
         output
-            .par_chunks_mut(chunk_bytes)
-            .zip(input.par_chunks(chunk_bytes))
+            .par_chunks_mut(chunk_elems)
+            .zip(input.par_chunks(chunk_elems))
             .for_each(|(o, i)| softmax_rows_f32_simd(i, o, last));
     }
     #[cfg(not(feature = "rayon"))]
@@ -268,15 +259,10 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
     FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F32)
 }
 
-/// SIMD-dispatched row sweep for f32 softmax.
-///
-/// Macerator picks the best backend (NEON on aarch64, AVX/AVX-512 on x86_64,
-/// SIMD128 on wasm32, scalar fallback elsewhere) once per call. The inner
-/// row kernel runs fully in the selected ISA for the max-reduce and
-/// normalize passes; the exp pass stays scalar because macerator does not
-/// (yet) expose a vectorized `exp`. The exp pass is memory-bandwidth bound
-/// anyway — every element still has to be read, exp'd, and written — so
-/// the SIMD wins come from the other two passes.
+/// One macerator dispatch per chunk of rows, amortized over all rows in
+/// the chunk. Max-reduce and normalize passes are vectorized; the exp
+/// pass stays scalar (no SIMD exp in macerator) but is memory-bandwidth
+/// bound anyway.
 #[macerator::with_simd]
 fn softmax_rows_f32_simd<S: macerator::Simd>(
     input: &[f32],
@@ -436,12 +422,11 @@ fn softmax_row_f16(input: &[f16], output: &mut [f16]) {
             max_val = xf;
         }
     }
+    // f16 intermediates double-round: pass 2 stores `from_f32(e)`, pass 3
+    // re-reads it and rounds again after the multiply-by-inv. Acceptable
+    // for f16 precision; an f32 scratch buffer would remove the double
+    // rounding at the cost of a per-row allocation.
     let mut sum = 0.0f32;
-    let mut scratch: [f32; 0] = [];
-    let _ = &mut scratch; // silence unused var if we later add a real scratch buffer
-    // First compute exps into output (as f32 via storage manipulation via
-    // Vec<f32>? too much ceremony — write as f16 directly, we'll reload on
-    // normalize).
     for (i, &x) in input.iter().enumerate() {
         let e = (x.to_f32() - max_val).exp();
         output[i] = f16::from_f32(e);
@@ -511,23 +496,10 @@ fn softmax_row_bf16(input: &[bf16], output: &mut [bf16]) {
 // ============================================================================
 //
 // `burn::nn::LayerNorm::forward` decomposes into ~6 primitive tensor ops
-// (`var_mean_bias` + `sub` + `add_scalar` + `sqrt` + `div` + `mul` + `add`),
-// each a full-tensor pass with intermediate allocations. There is no
-// backend trait hook for layer_norm — the computation lives in the
-// burn-nn module crate, not in `FloatTensorOps` or `ActivationOps`, so
-// backends cannot override it via the standard trait machinery.
-//
-// Same fix pattern as the fused softmax above: we expose a standalone
-// `pub fn burn_flex::ops::activation::layer_norm` that users opt into
-// directly. Once burn upstream gains a layer_norm hook somewhere (most
-// likely as a trait method on `ModuleOps` or a new `NormOps`), this
-// function body moves into that impl and the standalone export can be
-// removed.
-//
-// The row kernel uses a single-pass Welford-style accumulator for mean
-// and variance (pass 1), then a single pass for
-// `out[i] = (x[i] - mean) * inv_std * gamma[i] + beta[i]` (pass 2). Both
-// passes are vectorized via macerator.
+// with intermediate allocations, and there is no backend trait hook for
+// layer_norm. This module provides a fused alternative users can opt into
+// directly. Two-pass row kernel (sum+sumsq sweep, then normalize+affine
+// sweep), both vectorized via macerator.
 
 /// Fused layer normalization along the last axis.
 ///
@@ -598,7 +570,14 @@ fn layer_norm_f32(
     let input_data: &[f32] = input.storage();
     let gamma_data: &[f32] = gamma.storage();
     let beta_data: Option<&[f32]> = beta.as_ref().map(|b| b.storage());
-    let mut output: Vec<f32> = vec![0.0f32; input_data.len()];
+
+    let n = input_data.len();
+    let mut output: Vec<f32> = Vec::with_capacity(n);
+    // SAFETY: capacity is n, and the row kernel (both the with_beta and
+    // no_beta SIMD helpers below) writes every element via its two passes
+    // (sum+sumsq, then normalize+affine with SIMD body + scalar tail)
+    // before this Vec is read by FlexTensor::new.
+    unsafe { output.set_len(n) };
 
     // `#[macerator::with_simd]` can't auto-lifetime through `Option<&[T]>`,
     // so we dispatch two separate monomorphized versions — one with beta,
@@ -607,12 +586,12 @@ fn layer_norm_f32(
     {
         use rayon::prelude::*;
         const ROWS_PER_TASK: usize = 64;
-        let chunk_bytes = ROWS_PER_TASK * d_model;
+        let chunk_elems = ROWS_PER_TASK * d_model;
         match beta_data {
             Some(beta_slice) => {
                 output
-                    .par_chunks_mut(chunk_bytes)
-                    .zip(input_data.par_chunks(chunk_bytes))
+                    .par_chunks_mut(chunk_elems)
+                    .zip(input_data.par_chunks(chunk_elems))
                     .for_each(|(o, i)| {
                         layer_norm_rows_f32_with_beta_simd(
                             i, o, gamma_data, beta_slice, d_model, epsilon,
@@ -621,8 +600,8 @@ fn layer_norm_f32(
             }
             None => {
                 output
-                    .par_chunks_mut(chunk_bytes)
-                    .zip(input_data.par_chunks(chunk_bytes))
+                    .par_chunks_mut(chunk_elems)
+                    .zip(input_data.par_chunks(chunk_elems))
                     .for_each(|(o, i)| {
                         layer_norm_rows_f32_no_beta_simd(
                             i, o, gamma_data, d_model, epsilon,
