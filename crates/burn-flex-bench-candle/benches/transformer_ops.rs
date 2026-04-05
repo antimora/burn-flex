@@ -113,10 +113,26 @@ impl std::fmt::Display for Shape2D {
 // ============================================================================
 
 const GELU_SHAPES: &[Shape2D] = &[
-    Shape2D { rows: 50,  cols: 4096, label: "ffn_inter_1s" },
-    Shape2D { rows: 150, cols: 4096, label: "ffn_inter_3s" },
-    Shape2D { rows: 50,  cols: 1024, label: "hidden_1s" },
-    Shape2D { rows: 150, cols: 1024, label: "hidden_3s" },
+    Shape2D {
+        rows: 50,
+        cols: 4096,
+        label: "ffn_inter_1s",
+    },
+    Shape2D {
+        rows: 150,
+        cols: 4096,
+        label: "ffn_inter_3s",
+    },
+    Shape2D {
+        rows: 50,
+        cols: 1024,
+        label: "hidden_1s",
+    },
+    Shape2D {
+        rows: 150,
+        cols: 1024,
+        label: "hidden_3s",
+    },
 ];
 
 #[divan::bench_group(name = "flex/gelu")]
@@ -148,8 +164,16 @@ mod candle_gelu {
 // ============================================================================
 
 const SOFTMAX_SHAPES: &[Shape2D] = &[
-    Shape2D { rows: 16, cols: 50,  label: "attn_1s" },
-    Shape2D { rows: 16, cols: 150, label: "attn_3s" },
+    Shape2D {
+        rows: 16,
+        cols: 50,
+        label: "attn_1s",
+    },
+    Shape2D {
+        rows: 16,
+        cols: 150,
+        label: "attn_3s",
+    },
 ];
 
 /// Old path: burn_tensor::activation::softmax, which decomposes into 5
@@ -196,8 +220,16 @@ mod candle_softmax {
 // ============================================================================
 
 const LN_SHAPES: &[Shape2D] = &[
-    Shape2D { rows: 50,  cols: 1024, label: "hidden_1s" },
-    Shape2D { rows: 150, cols: 1024, label: "hidden_3s" },
+    Shape2D {
+        rows: 50,
+        cols: 1024,
+        label: "hidden_1s",
+    },
+    Shape2D {
+        rows: 150,
+        cols: 1024,
+        label: "hidden_3s",
+    },
 ];
 
 /// Manual layer_norm for burn-flex using primitive tensor ops.

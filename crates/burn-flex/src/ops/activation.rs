@@ -1285,8 +1285,10 @@ mod tests {
         // NaN via 0/0. Locks that behavior so a future refactor that
         // removes the early-return check gets caught.
         use burn_tensor::TensorPrimitive;
-        let t: Tensor<Flex, 2> =
-            Tensor::from_data(TensorData::new(Vec::<f32>::new(), [2, 0]), &Default::default());
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(Vec::<f32>::new(), [2, 0]),
+            &Default::default(),
+        );
         let shape_before = t.shape();
         let primitive = match t.into_primitive() {
             TensorPrimitive::Float(x) => x,
@@ -1300,8 +1302,10 @@ mod tests {
     #[test]
     fn test_layer_norm_empty_last_dim_returns_input() {
         use burn_tensor::TensorPrimitive;
-        let t: Tensor<Flex, 2> =
-            Tensor::from_data(TensorData::new(Vec::<f32>::new(), [3, 0]), &Default::default());
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(Vec::<f32>::new(), [3, 0]),
+            &Default::default(),
+        );
         let gamma: Tensor<Flex, 1> =
             Tensor::from_data(TensorData::new(Vec::<f32>::new(), [0]), &Default::default());
         let beta: Tensor<Flex, 1> =
@@ -1331,10 +1335,8 @@ mod tests {
         use burn_tensor::TensorPrimitive;
         // input last dim is 4, but gamma length is 3 — the assert_eq on
         // gamma.last == d_model should fire.
-        let t: Tensor<Flex, 2> =
-            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
-        let gamma: Tensor<Flex, 1> =
-            Tensor::from_data([1.0f32, 1.0, 1.0], &Default::default());
+        let t: Tensor<Flex, 2> = Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
+        let gamma: Tensor<Flex, 1> = Tensor::from_data([1.0f32, 1.0, 1.0], &Default::default());
 
         let t_p = match t.into_primitive() {
             TensorPrimitive::Float(x) => x,
@@ -1351,8 +1353,7 @@ mod tests {
     #[should_panic(expected = "beta length must equal last dim of input")]
     fn test_layer_norm_beta_length_mismatch_panics() {
         use burn_tensor::TensorPrimitive;
-        let t: Tensor<Flex, 2> =
-            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
+        let t: Tensor<Flex, 2> = Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
         let gamma: Tensor<Flex, 1> =
             Tensor::from_data([1.0f32, 1.0, 1.0, 1.0], &Default::default());
         let beta: Tensor<Flex, 1> = Tensor::from_data([0.0f32, 0.0, 0.0], &Default::default());
