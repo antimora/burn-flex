@@ -1053,7 +1053,10 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
     let out_spatial = out_d * out_h * out_w;
     let col_ch = out_channels_per_group * k_spatial;
 
-    let output_size = batch_size * out_channels * out_spatial;
+    let output_size = [batch_size, out_channels, out_d, out_h, out_w]
+        .iter()
+        .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+        .expect("conv_transpose: output dimensions would overflow index calculations");
     let mut output = vec![zero; output_size];
 
     // Reuse columns buffer across (batch, group) iterations; GEMM overwrites it fully.
@@ -1243,6 +1246,9 @@ gemm_typed!(gemm_f16, f16, f16::from_f32(0.0), f16::from_f32(1.0));
 macro_rules! conv_transpose_gemm_typed {
     ($fn_name:ident, $T:ty, $zero:expr, $one:expr) => {
         fn $fn_name(c: &mut [$T], a: &[$T], b: &[$T], m: usize, k: usize, n: usize) {
+            debug_assert_eq!(c.len(), m * n);
+            debug_assert_eq!(a.len(), k * m);
+            debug_assert_eq!(b.len(), k * n);
             #[cfg(feature = "rayon")]
             let parallelism = if m * n * k >= 192 * 192 * 192 {
                 gemm::Parallelism::Rayon(0)
@@ -1570,16 +1576,15 @@ mod tests {
         let result = conv_transpose2d_f32(x, w, None, &opts);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 3, 3]);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
-        // Verify center element gets all 4 input contributions
-        assert_eq!(out[4], 10.0); // 1+2+3+4 = 10
+        // All-ones kernel with stride=2, padding=1 clips boundary positions.
+        // Center gets all 4 inputs, edges get fewer.
+        assert_eq!(out, vec![1.0, 3.0, 2.0, 4.0, 10.0, 6.0, 3.0, 7.0, 4.0]);
     }
 
     #[test]
     fn test_conv_transpose2d_groups() {
         // Input: [1, 4, 1, 1], Weight: [4, 1, 1, 1], groups=2
-        // Group 0: ic=[0,1], oc=[0,1]; Group 1: ic=[2,3], oc=[2,3] (wait, no)
-        // Weight [in_ch=4, out_ch_per_group=1, 1, 1], groups=2
-        // out_ch = out_ch_per_group * groups = 1 * 2 = 2
+        // out_ch = out_ch_per_group(1) * groups(2) = 2
         // Group 0: ic=[0,1] -> oc=[0]; Group 1: ic=[2,3] -> oc=[1]
         let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 4, 1, 1]));
         let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 4], vec![4, 1, 1, 1]));
@@ -1602,8 +1607,8 @@ mod tests {
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 4, 4]);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         // Weight [[1,0],[0,1]] with dilation=2: kernel position (0,0) with weight=1
-        // places inputs at (id,ih,iw), kernel position (1,1) with weight=1
-        // places inputs at (id+2,ih+2).
+        // places inputs at (ih,iw), kernel position (1,1) with weight=1
+        // places inputs at (ih+2,iw+2).
         #[rustfmt::skip]
         let expected = vec![
             1.0, 2.0, 0.0, 0.0,
@@ -1630,5 +1635,50 @@ mod tests {
         assert_eq!(&out[..9], &[1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
         // Batch 1: only bottom-right is 1, so output = kernel at bottom-right
         assert_eq!(&out[9..], &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_multichannel_stride() {
+        // Exercises the full GEMM + col2im path: multiple channels AND spatial kernel with stride.
+        // Input: [1, 2, 2, 2], Weight: [2, 2, 2, 2], stride=2, padding=0
+        // out_ch = 2, out_size = (2-1)*2 + 2 = 4
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0],
+            vec![1, 2, 2, 2],
+        ));
+        // Weight all ones: each output position sums all contributing input*weight products
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 16], vec![2, 2, 2, 2]));
+        let opts = ConvTransposeOptions::new([2, 2], [0, 0], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 2, 4, 4]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // With all-ones weight and in_ch=2, x_ic0=1, x_ic1=2, each kernel tap contributes 1*1+2*1=3.
+        // Stride=2 with 2x2 kernel tiles the 4x4 output into non-overlapping 2x2 quadrants,
+        // so every position gets exactly one contribution = 3.
+        // Both output channels should be identical.
+        assert_eq!(out.len(), 32);
+        assert_eq!(&out[..16], &out[16..]);
+        assert_eq!(&out[..16], &[3.0f32; 16]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_groups_spatial() {
+        // Groups with spatial kernel > 1x1 to verify weight offset slicing per group.
+        // Input: [1, 2, 1, 1], Weight: [2, 1, 2, 2], groups=2
+        // Group 0: ic=0 -> oc=0; Group 1: ic=1 -> oc=1
+        // Output: (1-1)*1 + 2 = 2, so [1, 2, 2, 2]
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 3.0], vec![1, 2, 1, 1]));
+        // Weight: ic=0 kernel=[[1,2],[3,4]], ic=1 kernel=[[5,6],[7,8]]
+        let w = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            vec![2, 1, 2, 2],
+        ));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 2);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 2, 2, 2]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // oc=0: 1 * [[1,2],[3,4]] = [1,2,3,4]
+        // oc=1: 3 * [[5,6],[7,8]] = [15,18,21,24]
+        assert_eq!(out, vec![1.0, 2.0, 3.0, 4.0, 15.0, 18.0, 21.0, 24.0]);
     }
 }
