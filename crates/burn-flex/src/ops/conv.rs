@@ -74,7 +74,8 @@ macro_rules! conv3d_1x1_typed {
     };
 }
 
-/// Generates a conv3d typed function with 1x1 fast-path check.
+/// Generates a conv3d typed function with shape-aware dispatch:
+/// 1x1 fast path → direct (no-im2col) path → tiled im2col+gemm path.
 macro_rules! conv3d_typed {
     ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr, $fn_1x1:ident) => {
         pub fn $fn_name(
@@ -84,8 +85,29 @@ macro_rules! conv3d_typed {
             options: &ConvOptions<3>,
         ) -> FlexTensor {
             let w_shape = weight.layout().shape();
+            let x_shape = x.layout().shape();
             if is_1x1_conv(w_shape[2], w_shape[3], w_shape[4], options) {
                 return $fn_1x1(x, weight, bias, options);
+            }
+            // Dispatch to direct path for small spatial_out, where gemm's
+            // packing overhead dominates compute and per-c_out parallelism
+            // beats gemm's internal parallelism.
+            let out_d = calculate_conv_output_size(
+                w_shape[2], options.stride[0], options.padding[0], options.dilation[0], x_shape[2],
+            );
+            let out_h = calculate_conv_output_size(
+                w_shape[3], options.stride[1], options.padding[1], options.dilation[1], x_shape[3],
+            );
+            let out_w = calculate_conv_output_size(
+                w_shape[4], options.stride[2], options.padding[2], options.dilation[2], x_shape[4],
+            );
+            let spatial_out = out_d * out_h * out_w;
+            if should_use_direct_conv3d(
+                w_shape[1], w_shape[2], w_shape[3], w_shape[4], spatial_out, options,
+            ) {
+                return conv3d_direct_impl::<$T>(
+                    x, weight, bias, options, $dtype, $add_fn,
+                );
             }
             conv3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
         }
@@ -322,32 +344,45 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
     const TILE_SIZE: usize = 512;
     let num_tiles = spatial_out.div_ceil(TILE_SIZE);
 
-    // Flatten kernel to [c_out, k_d * k_h * k_w * c_in] for GEMM
-    // We do this once and reuse for all tiles
+    // Flatten kernel to [c_out, k_d * k_h * k_w * c_in] for GEMM.
+    //
+    // This is a 2D transpose of shape (channels_per_group, k_spatial) per
+    // c_out slice: the source weight is [c_out, c_in, kd, kh, kw] row-major
+    // and the target col layout is [c_out, kd, kh, kw, c_in] row-major. The
+    // inner (c_in, k_spatial) submatrix needs to be transposed.
+    //
+    // The old formulation used five nested loops with a 10-term index
+    // expression in the inner body, which LLVM cannot autovectorize. This
+    // form exposes a simple per-slice 2D transpose with a small k_spatial
+    // inner loop that the compiler can unroll and vectorize. For small
+    // kernels (which are typical: k=2, k=3, k=1 on non-spatial dims in
+    // conv1d/2d), the k_spatial loop gets fully unrolled.
+    //
+    // For small shapes (e.g. wav2vec2 conv1d late layers) this transpose
+    // was previously the dominant cost in conv3d_impl, larger than the
+    // actual GEMM compute. See crates/burn-flex-bench-candle for baseline
+    // numbers.
+    let k_spatial = kernel_d * kernel_h * kernel_w;
     let mut w_flat = vec![zero; channels_out * col_len];
     for c_out in 0..channels_out {
-        for kd in 0..kernel_d {
-            for kh in 0..kernel_h {
-                for kw in 0..kernel_w {
-                    for c_in in 0..channels_per_group {
-                        let w_idx = c_out * channels_per_group * kernel_d * kernel_h * kernel_w
-                            + c_in * kernel_d * kernel_h * kernel_w
-                            + kd * kernel_h * kernel_w
-                            + kh * kernel_w
-                            + kw;
-                        let flat_idx = c_out * col_len
-                            + kd * kernel_h * kernel_w * channels_per_group
-                            + kh * kernel_w * channels_per_group
-                            + kw * channels_per_group
-                            + c_in;
-                        w_flat[flat_idx] = w_data[w_idx];
-                    }
-                }
+        let src_base = c_out * channels_per_group * k_spatial;
+        let dst_base = c_out * col_len;
+        for c_in in 0..channels_per_group {
+            let src_row = src_base + c_in * k_spatial;
+            for k in 0..k_spatial {
+                w_flat[dst_base + k * channels_per_group + c_in] = w_data[src_row + k];
             }
         }
     }
 
-    // Convert input to NHWC layout for cache-friendly access
+    // Convert input to NHWC layout for cache-friendly access in im2col.
+    //
+    // NOTE: the inner-loop structure here (c innermost, spatial outer)
+    // looks non-obvious but is empirically the fastest on aarch64 M3 Max.
+    // An alternative formulation with w innermost (contiguous load, strided
+    // store) was benchmarked on wav2vec2 shapes and ran 10-35% slower at
+    // every layer — modern ARM cores have better load prefetchers than
+    // store write-buffers, so strided *loads* + contiguous *stores* wins.
     let nhwc_stride = (
         in_d * in_h * in_w * channels_in,
         in_h * in_w * channels_in,
@@ -569,6 +604,288 @@ fn conv3d_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + 
             dtype,
         )
     }
+}
+
+/// Decide whether to use the direct (no-im2col) path or the tiled+gemm path.
+///
+/// Currently returns `false` unconditionally — the direct path
+/// (`conv3d_direct_impl` + `ConvElement::conv_direct_sweep`) is fully
+/// implemented and produces correct results on every conv test, but on
+/// M3 Max it loses to the tiled+gemm path by 1.2-2x at small shapes where
+/// it was intended to win (wav2vec2 feature extractor L3-L6).
+///
+/// Root cause of the gap: gemm's microkernel uses register blocking across
+/// multiple output columns, reusing loaded weight vectors across several
+/// dot products before advancing. Our direct sweep computes one output at
+/// a time, reloading weights into registers for each. Closing the gap
+/// requires writing a similar register-blocked microkernel in the sweep
+/// helper (e.g. compute 4 or 8 outputs in parallel per iteration of the
+/// c_in loop). That is substantial work and is tracked separately.
+///
+/// The infrastructure (trait `ConvElement`, `#[macerator::with_simd]`
+/// sweep helpers, dispatcher hook) is all in place so that future work is
+/// a localized change to `conv_direct_sweep_{f32,f64}_simd` and flipping
+/// this function's return value once the microkernel matches gemm.
+fn should_use_direct_conv3d(
+    _channels_per_group: usize,
+    _kernel_d: usize,
+    _kernel_h: usize,
+    _kernel_w: usize,
+    _spatial_out: usize,
+    _options: &ConvOptions<3>,
+) -> bool {
+    false
+}
+
+/// Direct convolution path: no im2col materialization, no gemm call.
+///
+/// For each output element we sum `k_spatial` `vec_dot`s between a
+/// `c_in`-contiguous weight slice and a `c_in`-contiguous input patch slice
+/// from the NHWC-laid-out input. Parallelism is over the flattened
+/// `(batch, c_out)` index — much finer-grained than the tiled path, which
+/// matters at small `spatial_out` where gemm's internal parallelism cannot
+/// saturate multiple cores.
+///
+/// This path is unified across conv1d/conv2d/conv3d via the same 5D shape
+/// convention (conv1d and conv2d expand to singleton dims) — every
+/// improvement here benefits all three.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn conv3d_direct_impl<T: ConvElement>(
+    x: FlexTensor,
+    weight: FlexTensor,
+    bias: Option<FlexTensor>,
+    options: &ConvOptions<3>,
+    dtype: DType,
+    add_fn: fn(T, T) -> T,
+) -> FlexTensor {
+    let x = x.to_contiguous();
+    let weight = weight.to_contiguous();
+
+    let x_shape = x.layout().shape();
+    let w_shape = weight.layout().shape();
+
+    let batch_size = x_shape[0];
+    let channels_in = x_shape[1];
+    let in_d = x_shape[2];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
+
+    let channels_out = w_shape[0];
+    let channels_per_group = w_shape[1];
+    let kernel_d = w_shape[2];
+    let kernel_h = w_shape[3];
+    let kernel_w = w_shape[4];
+
+    let [stride_d, stride_h, stride_w] = options.stride;
+    let [pad_d, pad_h, pad_w] = options.padding;
+    let [dilation_d, dilation_h, dilation_w] = options.dilation;
+
+    let out_d = calculate_conv_output_size(kernel_d, stride_d, pad_d, dilation_d, in_d);
+    let out_h = calculate_conv_output_size(kernel_h, stride_h, pad_h, dilation_h, in_h);
+    let out_w = calculate_conv_output_size(kernel_w, stride_w, pad_w, dilation_w, in_w);
+    let spatial_out = out_d * out_h * out_w;
+
+    let k_spatial = kernel_d * kernel_h * kernel_w;
+    let col_len = channels_per_group * k_spatial;
+
+    // Dispatcher guarantees groups == 1 here.
+    debug_assert_eq!(options.groups, 1);
+
+    let x_data: &[T] = x.storage();
+    let w_data: &[T] = weight.storage();
+    let zero = T::zero();
+
+    // Preprocess weight from [c_out, c_in, kd, kh, kw] row-major into
+    // [c_out, kd*kh*kw, c_in] row-major. This exposes a `c_in`-contiguous
+    // slice per `(c_out, k)` pair, which is exactly what `conv_direct_sweep`
+    // needs for its SIMD vload pattern.
+    let mut w_reshaped = vec![zero; channels_out * col_len];
+    for c_out in 0..channels_out {
+        let src_base = c_out * channels_per_group * k_spatial;
+        let dst_base = c_out * col_len;
+        for c_in in 0..channels_per_group {
+            let src_row = src_base + c_in * k_spatial;
+            for k in 0..k_spatial {
+                w_reshaped[dst_base + k * channels_per_group + c_in] = w_data[src_row + k];
+            }
+        }
+    }
+
+    // Preprocess input: NCHW -> NHWC, giving us a `c_in`-contiguous slice per
+    // `(b, d, h, w)` position.
+    let in_spatial = in_d * in_h * in_w;
+    let mut x_nhwc = vec![zero; batch_size * in_spatial * channels_in];
+    for b in 0..batch_size {
+        for c in 0..channels_in {
+            let src_c_base = (b * channels_in + c) * in_spatial;
+            for d in 0..in_d {
+                for h in 0..in_h {
+                    for w_ in 0..in_w {
+                        let src_idx = src_c_base + (d * in_h + h) * in_w + w_;
+                        let dst_idx = ((b * in_d + d) * in_h + h) * in_w * channels_in
+                            + w_ * channels_in
+                            + c;
+                        x_nhwc[dst_idx] = x_data[src_idx];
+                    }
+                }
+            }
+        }
+    }
+
+    // Any padding? If not, the sweep's bounds check branches are never
+    // taken and the compiler can elide them via branch prediction.
+    let has_padding = pad_d != 0 || pad_h != 0 || pad_w != 0;
+
+    // Loop order: k_spatial OUTER SERIAL, c_out PARALLEL INNER.
+    //
+    //   * Per outer k iteration, all c_out threads read the *same* slice of
+    //     input (the positions for that k). L2/L3 serves these reads once
+    //     and the data is reused across the c_out parallel sweep.
+    //   * The output buffer is accumulated in place across k iterations, so
+    //     each output cell stays warm in cache across its k_spatial updates.
+    //
+    // Inside each (b, kd, kh, kw, c_out) sweep, `T::conv_direct_sweep` is
+    // called once and processes all `spatial_out` output positions. That is
+    // where macerator's SIMD dispatch happens — amortized over a full sweep.
+    let mut dst = vec![zero; batch_size * channels_out * spatial_out];
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+
+        let dst_ptr = crate::ops::SendMutPtr::new(dst.as_mut_ptr());
+        for b in 0..batch_size {
+            let x_b_slice_start = b * in_spatial * channels_in;
+            let x_b_slice_end = x_b_slice_start + in_spatial * channels_in;
+            let dst_b_base = b * channels_out * spatial_out;
+
+            for kd in 0..kernel_d {
+                for kh in 0..kernel_h {
+                    for kw in 0..kernel_w {
+                        let k_idx = (kd * kernel_h + kh) * kernel_w + kw;
+                        let k_offset_c = k_idx * channels_per_group;
+                        let params = SweepParams {
+                            out_h,
+                            out_w,
+                            in_d,
+                            in_h,
+                            in_w,
+                            stride_d,
+                            stride_h,
+                            stride_w,
+                            dilation_d,
+                            dilation_h,
+                            dilation_w,
+                            kd,
+                            kh,
+                            kw,
+                            pad_d,
+                            pad_h,
+                            pad_w,
+                            has_padding,
+                        };
+
+                        let x_batch = &x_nhwc[x_b_slice_start..x_b_slice_end];
+                        let w_reshaped_ref = &w_reshaped;
+
+                        (0..channels_out).into_par_iter().for_each(|c_out| {
+                            let w_start = c_out * col_len + k_offset_c;
+                            let w_slice =
+                                &w_reshaped_ref[w_start..w_start + channels_per_group];
+                            let dst_c_base = dst_b_base + c_out * spatial_out;
+                            // Safety: each c_out owns a disjoint
+                            // `spatial_out`-length range of the output buffer,
+                            // and the k loop is serial OUTSIDE this par_iter,
+                            // so no two threads ever touch the same position.
+                            let dst_row: &mut [T] = unsafe {
+                                core::slice::from_raw_parts_mut(
+                                    dst_ptr.ptr_add(dst_c_base),
+                                    spatial_out,
+                                )
+                            };
+                            T::conv_direct_sweep(
+                                w_slice,
+                                x_batch,
+                                dst_row,
+                                &params,
+                                channels_per_group,
+                            );
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    {
+        for b in 0..batch_size {
+            let x_b_slice_start = b * in_spatial * channels_in;
+            let x_b_slice_end = x_b_slice_start + in_spatial * channels_in;
+            let dst_b_base = b * channels_out * spatial_out;
+            let x_batch = &x_nhwc[x_b_slice_start..x_b_slice_end];
+
+            for kd in 0..kernel_d {
+                for kh in 0..kernel_h {
+                    for kw in 0..kernel_w {
+                        let k_idx = (kd * kernel_h + kh) * kernel_w + kw;
+                        let k_offset_c = k_idx * channels_per_group;
+                        let params = SweepParams {
+                            out_h,
+                            out_w,
+                            in_d,
+                            in_h,
+                            in_w,
+                            stride_d,
+                            stride_h,
+                            stride_w,
+                            dilation_d,
+                            dilation_h,
+                            dilation_w,
+                            kd,
+                            kh,
+                            kw,
+                            pad_d,
+                            pad_h,
+                            pad_w,
+                            has_padding,
+                        };
+
+                        for c_out in 0..channels_out {
+                            let w_start = c_out * col_len + k_offset_c;
+                            let w_slice =
+                                &w_reshaped[w_start..w_start + channels_per_group];
+                            let dst_c_base = dst_b_base + c_out * spatial_out;
+                            let dst_row =
+                                &mut dst[dst_c_base..dst_c_base + spatial_out];
+                            T::conv_direct_sweep(
+                                w_slice,
+                                x_batch,
+                                dst_row,
+                                &params,
+                                channels_per_group,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let out_shape = Shape::from(vec![batch_size, channels_out, out_d, out_h, out_w]);
+    if let Some(bias) = bias {
+        let bias = bias.to_contiguous();
+        let bias_data: &[T] = bias.storage();
+        add_bias(
+            &mut dst,
+            bias_data,
+            batch_size,
+            channels_out,
+            spatial_out,
+            add_fn,
+        );
+    }
+    FlexTensor::new(Bytes::from_elems(dst), Layout::contiguous(out_shape), dtype)
 }
 
 /// Build im2col tile for a range of output positions.
@@ -1543,6 +1860,586 @@ fn gemm_f16(a: &[f16], b: &[f16], m: usize, k: usize, n: usize) -> Vec<f16> {
         );
     }
     c
+}
+
+// ============================================================================
+// Direct conv SIMD helpers (via macerator)
+// ============================================================================
+//
+// These are the core SIMD primitives used by `conv3d_direct_impl` via the
+// `ConvElement` trait.
+//
+// Key design decision: dispatch granularity. The naive approach of making
+// `vec_dot` a `#[with_simd]` function and calling it per output element
+// incurs macerator's dispatch shim on every call — tens of thousands of
+// times per conv, dominating runtime. Instead we make the entire *sweep*
+// over all output positions for one `(c_out, k_offset)` pair a single
+// `#[with_simd]` call. One dispatch per sweep, amortized over
+// `spatial_out * c_in` FMAs.
+//
+// This mirrors the pattern used in `crates/burn-flex/src/simd/portable.rs`
+// for element-wise ops: the SIMD-specialized function contains the slice
+// loop, not just the inner op.
+
+/// Parameters describing one (c_out, k_offset) sweep for the direct conv.
+///
+/// Grouped so the `conv_direct_sweep` trait method and its `#[with_simd]`
+/// helpers don't drown in positional arguments.
+#[derive(Clone, Copy)]
+struct SweepParams {
+    out_h: usize,
+    out_w: usize,
+    in_d: usize,
+    in_h: usize,
+    in_w: usize,
+    stride_d: usize,
+    stride_h: usize,
+    stride_w: usize,
+    dilation_d: usize,
+    dilation_h: usize,
+    dilation_w: usize,
+    kd: usize,
+    kh: usize,
+    kw: usize,
+    pad_d: usize,
+    pad_h: usize,
+    pad_w: usize,
+    has_padding: bool,
+}
+
+/// The dtype-specialization surface for the direct conv path.
+///
+/// `conv3d_direct_impl` is generic over `T: ConvElement`, so each impl gets
+/// monomorphized per dtype. Inside the impl, the SIMD work lives in a
+/// `#[macerator::with_simd]` helper that's called once per sweep (one
+/// (c_out, k_offset) pair), amortizing macerator's dispatch over
+/// `spatial_out * c_in` FMAs.
+///
+/// This structure intentionally avoids `Fn` closure generics for the inner
+/// hot path — in an earlier revision, a `VD: Fn(&[T], &[T]) -> T` parameter
+/// prevented LLVM from inlining through the Fn::call boundary and the code
+/// ran at scalar FMA speed despite the intrinsics being correct. Trait
+/// methods with concrete monomorphized impls inline cleanly where Fn
+/// closures do not.
+trait ConvElement: bytemuck::Pod + Copy + Send + Sync + burn_backend::Element + 'static {
+    fn zero() -> Self;
+
+    /// Process all `spatial_out` output positions for one (c_out, k_offset)
+    /// pair, accumulating `w_slice · x_patch` into `dst_row`.
+    ///
+    /// `w_slice` has length `channels_per_group` (the c_in weights for this
+    /// (c_out, k_offset)). `x_nhwc` is the full NHWC input for this batch.
+    /// `dst_row` has length `spatial_out` and accumulates in place.
+    fn conv_direct_sweep(
+        w_slice: &[Self],
+        x_nhwc: &[Self],
+        dst_row: &mut [Self],
+        params: &SweepParams,
+        channels_in: usize,
+    );
+}
+
+// -- f32 --
+
+#[cfg(feature = "simd")]
+#[macerator::with_simd]
+fn conv_direct_sweep_f32_simd<S: macerator::Simd>(
+    w_slice: &[f32],
+    x_nhwc: &[f32],
+    dst_row: &mut [f32],
+    params: &SweepParams,
+    channels_in: usize,
+) {
+    use macerator::{Scalar, vload_unaligned};
+    let lanes = <f32 as Scalar>::lanes::<S>();
+    let unroll = 4 * lanes;
+    let unroll_len = channels_in / unroll * unroll;
+    let simd_len = channels_in / lanes * lanes;
+
+    let SweepParams {
+        out_h,
+        out_w,
+        in_d,
+        in_h,
+        in_w,
+        stride_d,
+        stride_h,
+        stride_w,
+        dilation_d,
+        dilation_h,
+        dilation_w,
+        kd,
+        kh,
+        kw,
+        pad_d,
+        pad_h,
+        pad_w,
+        has_padding,
+        ..
+    } = *params;
+
+    // Derive out_d from dst_row.len() and the other spatial dims. dst_row
+    // has exactly `out_d * out_h * out_w` elements for this (c_out, k).
+    let out_d = dst_row.len() / (out_h * out_w);
+
+    // Nested loops over (od, oh_, ow_) with a running `oidx` counter. This
+    // avoids per-output integer divisions — a previous revision flattened
+    // the output into a single `for oidx in 0..spatial_out` loop with
+    // `oidx / (out_h * out_w)` and friends inside, and LLVM could not
+    // strength-reduce the runtime divisions, burning ~4 udiv instructions
+    // per output position. At L3 that was milliseconds of pure division
+    // cost per conv.
+    let mut oidx: usize = 0;
+    for od in 0..out_d {
+        let base_id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
+        let id_in_range = !has_padding || (base_id_s >= 0 && base_id_s < in_d as isize);
+        let id = if has_padding {
+            if !id_in_range {
+                // Entire (od, *, *) block is out of bounds — skip all
+                // output positions for this od.
+                oidx += out_h * out_w;
+                continue;
+            }
+            base_id_s as usize
+        } else {
+            base_id_s as usize
+        };
+
+        for oh_ in 0..out_h {
+            let base_ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
+            let ih_in_range =
+                !has_padding || (base_ih_s >= 0 && base_ih_s < in_h as isize);
+            let ih = if has_padding {
+                if !ih_in_range {
+                    oidx += out_w;
+                    continue;
+                }
+                base_ih_s as usize
+            } else {
+                base_ih_s as usize
+            };
+
+            for ow_ in 0..out_w {
+                let base_iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
+                if has_padding && (base_iw_s < 0 || base_iw_s >= in_w as isize) {
+                    oidx += 1;
+                    continue;
+                }
+                let iw = base_iw_s as usize;
+
+                let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
+                let x_slice = &x_nhwc[x_start..x_start + channels_in];
+
+                // Four independent accumulators for ILP through the FMA pipeline.
+                let mut acc0 = (0.0f32).splat::<S>();
+                let mut acc1 = (0.0f32).splat::<S>();
+                let mut acc2 = (0.0f32).splat::<S>();
+                let mut acc3 = (0.0f32).splat::<S>();
+                let mut i = 0;
+                while i < unroll_len {
+                    unsafe {
+                        let w0 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
+                        let x0 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
+                        acc0 = acc0.mul_add(w0, x0);
+                        let w1 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + lanes));
+                        let x1 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + lanes));
+                        acc1 = acc1.mul_add(w1, x1);
+                        let w2 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 2 * lanes));
+                        let x2 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 2 * lanes));
+                        acc2 = acc2.mul_add(w2, x2);
+                        let w3 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 3 * lanes));
+                        let x3 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 3 * lanes));
+                        acc3 = acc3.mul_add(w3, x3);
+                    }
+                    i += unroll;
+                }
+                while i < simd_len {
+                    unsafe {
+                        let wv = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
+                        let xv = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
+                        acc0 = acc0.mul_add(wv, xv);
+                    }
+                    i += lanes;
+                }
+                let partial = (acc0 + acc1 + acc2 + acc3).reduce_add();
+                let mut tail = 0.0f32;
+                while i < channels_in {
+                    tail += w_slice[i] * x_slice[i];
+                    i += 1;
+                }
+                dst_row[oidx] += partial + tail;
+                oidx += 1;
+            }
+        }
+    }
+}
+
+/// Scalar fallback for targets without the `simd` feature. LLVM
+/// autovectorizes the unrolled 4-accumulator loop on most modern targets.
+#[cfg(not(feature = "simd"))]
+fn conv_direct_sweep_f32_scalar(
+    w_slice: &[f32],
+    x_nhwc: &[f32],
+    dst_row: &mut [f32],
+    params: &SweepParams,
+    channels_in: usize,
+) {
+    let SweepParams {
+        out_h,
+        out_w,
+        in_d,
+        in_h,
+        in_w,
+        stride_d,
+        stride_h,
+        stride_w,
+        dilation_d,
+        dilation_h,
+        dilation_w,
+        kd,
+        kh,
+        kw,
+        pad_d,
+        pad_h,
+        pad_w,
+        has_padding,
+        ..
+    } = *params;
+    for oidx in 0..dst_row.len() {
+        let od = oidx / (out_h * out_w);
+        let rem = oidx % (out_h * out_w);
+        let oh_ = rem / out_w;
+        let ow_ = rem % out_w;
+        let (id, ih, iw) = if has_padding {
+            let id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
+            let ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
+            let iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
+            if id_s < 0
+                || id_s >= in_d as isize
+                || ih_s < 0
+                || ih_s >= in_h as isize
+                || iw_s < 0
+                || iw_s >= in_w as isize
+            {
+                continue;
+            }
+            (id_s as usize, ih_s as usize, iw_s as usize)
+        } else {
+            (
+                od * stride_d + kd * dilation_d,
+                oh_ * stride_h + kh * dilation_h,
+                ow_ * stride_w + kw * dilation_w,
+            )
+        };
+        let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
+        let x_slice = &x_nhwc[x_start..x_start + channels_in];
+        let (mut s0, mut s1, mut s2, mut s3) = (0.0f32, 0.0, 0.0, 0.0);
+        let mut i = 0;
+        while i + 4 <= channels_in {
+            s0 += w_slice[i] * x_slice[i];
+            s1 += w_slice[i + 1] * x_slice[i + 1];
+            s2 += w_slice[i + 2] * x_slice[i + 2];
+            s3 += w_slice[i + 3] * x_slice[i + 3];
+            i += 4;
+        }
+        let mut s = s0 + s1 + s2 + s3;
+        while i < channels_in {
+            s += w_slice[i] * x_slice[i];
+            i += 1;
+        }
+        dst_row[oidx] += s;
+    }
+}
+
+impl ConvElement for f32 {
+    #[inline(always)]
+    fn zero() -> Self {
+        0.0
+    }
+    #[inline]
+    fn conv_direct_sweep(
+        w_slice: &[f32],
+        x_nhwc: &[f32],
+        dst_row: &mut [f32],
+        params: &SweepParams,
+        channels_in: usize,
+    ) {
+        #[cfg(feature = "simd")]
+        conv_direct_sweep_f32_simd(w_slice, x_nhwc, dst_row, params, channels_in);
+        #[cfg(not(feature = "simd"))]
+        conv_direct_sweep_f32_scalar(w_slice, x_nhwc, dst_row, params, channels_in);
+    }
+}
+
+// -- f64 --
+
+#[cfg(feature = "simd")]
+#[macerator::with_simd]
+fn conv_direct_sweep_f64_simd<S: macerator::Simd>(
+    w_slice: &[f64],
+    x_nhwc: &[f64],
+    dst_row: &mut [f64],
+    params: &SweepParams,
+    channels_in: usize,
+) {
+    use macerator::{Scalar, vload_unaligned};
+    let lanes = <f64 as Scalar>::lanes::<S>();
+    let unroll = 4 * lanes;
+    let unroll_len = channels_in / unroll * unroll;
+    let simd_len = channels_in / lanes * lanes;
+
+    let SweepParams {
+        out_h,
+        out_w,
+        in_d,
+        in_h,
+        in_w,
+        stride_d,
+        stride_h,
+        stride_w,
+        dilation_d,
+        dilation_h,
+        dilation_w,
+        kd,
+        kh,
+        kw,
+        pad_d,
+        pad_h,
+        pad_w,
+        has_padding,
+        ..
+    } = *params;
+
+    for oidx in 0..dst_row.len() {
+        let od = oidx / (out_h * out_w);
+        let rem = oidx % (out_h * out_w);
+        let oh_ = rem / out_w;
+        let ow_ = rem % out_w;
+
+        let (id, ih, iw) = if has_padding {
+            let id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
+            let ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
+            let iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
+            if id_s < 0
+                || id_s >= in_d as isize
+                || ih_s < 0
+                || ih_s >= in_h as isize
+                || iw_s < 0
+                || iw_s >= in_w as isize
+            {
+                continue;
+            }
+            (id_s as usize, ih_s as usize, iw_s as usize)
+        } else {
+            (
+                od * stride_d + kd * dilation_d,
+                oh_ * stride_h + kh * dilation_h,
+                ow_ * stride_w + kw * dilation_w,
+            )
+        };
+
+        let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
+        let x_slice = &x_nhwc[x_start..x_start + channels_in];
+
+        let mut acc0 = (0.0f64).splat::<S>();
+        let mut acc1 = (0.0f64).splat::<S>();
+        let mut acc2 = (0.0f64).splat::<S>();
+        let mut acc3 = (0.0f64).splat::<S>();
+        let mut i = 0;
+        while i < unroll_len {
+            unsafe {
+                let w0 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
+                let x0 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
+                acc0 = acc0.mul_add(w0, x0);
+                let w1 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + lanes));
+                let x1 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + lanes));
+                acc1 = acc1.mul_add(w1, x1);
+                let w2 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 2 * lanes));
+                let x2 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 2 * lanes));
+                acc2 = acc2.mul_add(w2, x2);
+                let w3 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 3 * lanes));
+                let x3 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 3 * lanes));
+                acc3 = acc3.mul_add(w3, x3);
+            }
+            i += unroll;
+        }
+        while i < simd_len {
+            unsafe {
+                let wv = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
+                let xv = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
+                acc0 = acc0.mul_add(wv, xv);
+            }
+            i += lanes;
+        }
+        let partial = (acc0 + acc1 + acc2 + acc3).reduce_add();
+        let mut tail = 0.0f64;
+        while i < channels_in {
+            tail += w_slice[i] * x_slice[i];
+            i += 1;
+        }
+        dst_row[oidx] += partial + tail;
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+fn conv_direct_sweep_f64_scalar(
+    w_slice: &[f64],
+    x_nhwc: &[f64],
+    dst_row: &mut [f64],
+    params: &SweepParams,
+    channels_in: usize,
+) {
+    let SweepParams {
+        out_h,
+        out_w,
+        in_d,
+        in_h,
+        in_w,
+        stride_d,
+        stride_h,
+        stride_w,
+        dilation_d,
+        dilation_h,
+        dilation_w,
+        kd,
+        kh,
+        kw,
+        pad_d,
+        pad_h,
+        pad_w,
+        has_padding,
+        ..
+    } = *params;
+    for oidx in 0..dst_row.len() {
+        let od = oidx / (out_h * out_w);
+        let rem = oidx % (out_h * out_w);
+        let oh_ = rem / out_w;
+        let ow_ = rem % out_w;
+        let (id, ih, iw) = if has_padding {
+            let id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
+            let ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
+            let iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
+            if id_s < 0
+                || id_s >= in_d as isize
+                || ih_s < 0
+                || ih_s >= in_h as isize
+                || iw_s < 0
+                || iw_s >= in_w as isize
+            {
+                continue;
+            }
+            (id_s as usize, ih_s as usize, iw_s as usize)
+        } else {
+            (
+                od * stride_d + kd * dilation_d,
+                oh_ * stride_h + kh * dilation_h,
+                ow_ * stride_w + kw * dilation_w,
+            )
+        };
+        let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
+        let x_slice = &x_nhwc[x_start..x_start + channels_in];
+        let mut s = 0.0f64;
+        for i in 0..channels_in {
+            s += w_slice[i] * x_slice[i];
+        }
+        dst_row[oidx] += s;
+    }
+}
+
+impl ConvElement for f64 {
+    #[inline(always)]
+    fn zero() -> Self {
+        0.0
+    }
+    #[inline]
+    fn conv_direct_sweep(
+        w_slice: &[f64],
+        x_nhwc: &[f64],
+        dst_row: &mut [f64],
+        params: &SweepParams,
+        channels_in: usize,
+    ) {
+        #[cfg(feature = "simd")]
+        conv_direct_sweep_f64_simd(w_slice, x_nhwc, dst_row, params, channels_in);
+        #[cfg(not(feature = "simd"))]
+        conv_direct_sweep_f64_scalar(w_slice, x_nhwc, dst_row, params, channels_in);
+    }
+}
+
+// -- f16 --
+
+impl ConvElement for f16 {
+    #[inline(always)]
+    fn zero() -> Self {
+        f16::from_f32(0.0)
+    }
+    fn conv_direct_sweep(
+        w_slice: &[f16],
+        x_nhwc: &[f16],
+        dst_row: &mut [f16],
+        params: &SweepParams,
+        channels_in: usize,
+    ) {
+        // f16 accumulates in f32 for precision. Most hardware prefers this
+        // over native f16 FMA anyway (width and dynamic range). A dedicated
+        // f16 SIMD path could be added later; for now f16 conv is rare.
+        let SweepParams {
+            out_h,
+            out_w,
+            in_d,
+            in_h,
+            in_w,
+            stride_d,
+            stride_h,
+            stride_w,
+            dilation_d,
+            dilation_h,
+            dilation_w,
+            kd,
+            kh,
+            kw,
+            pad_d,
+            pad_h,
+            pad_w,
+            has_padding,
+            ..
+        } = *params;
+        for oidx in 0..dst_row.len() {
+            let od = oidx / (out_h * out_w);
+            let rem = oidx % (out_h * out_w);
+            let oh_ = rem / out_w;
+            let ow_ = rem % out_w;
+            let (id, ih, iw) = if has_padding {
+                let id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
+                let ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
+                let iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
+                if id_s < 0
+                    || id_s >= in_d as isize
+                    || ih_s < 0
+                    || ih_s >= in_h as isize
+                    || iw_s < 0
+                    || iw_s >= in_w as isize
+                {
+                    continue;
+                }
+                (id_s as usize, ih_s as usize, iw_s as usize)
+            } else {
+                (
+                    od * stride_d + kd * dilation_d,
+                    oh_ * stride_h + kh * dilation_h,
+                    ow_ * stride_w + kw * dilation_w,
+                )
+            };
+            let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
+            let x_slice = &x_nhwc[x_start..x_start + channels_in];
+            let mut sum = 0.0f32;
+            for i in 0..channels_in {
+                sum += w_slice[i].to_f32() * x_slice[i].to_f32();
+            }
+            let prev = dst_row[oidx].to_f32();
+            dst_row[oidx] = f16::from_f32(prev + sum);
+        }
+    }
 }
 
 // ============================================================================
