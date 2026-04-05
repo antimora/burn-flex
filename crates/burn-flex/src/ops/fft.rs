@@ -1630,7 +1630,7 @@ mod tests {
         // 4 rows, 2 cols: impulse in each column
         let data = vec![1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         let signal = make_f32(data, vec![4, 2]);
-        let (re, im) = rfft_f32(signal, 0);
+        let (re, _im) = rfft_f32(signal, 0);
         // Shape should be [3, 2]
         let re_data = re.into_data();
         let re_vals = re_data.as_slice::<f32>().unwrap();
