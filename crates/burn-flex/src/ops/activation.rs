@@ -231,38 +231,36 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
     let input: &[f32] = tensor.storage();
     let n = input.len();
 
-    // Allocate without zero-init: the row kernel writes every element of
-    // `output` via its three passes (max, exp+sum, normalize), all fully
-    // covered by a SIMD body plus scalar tail. Skipping `vec![0.0; n]`
-    // saves a full memset on a bandwidth-bound kernel.
-    let mut output: Vec<f32> = Vec::with_capacity(n);
-    {
-        let spare = output.spare_capacity_mut();
-        // SAFETY: every element of `out_slice` is written by
-        // softmax_rows_f32_simd below before we call set_len.
-        let out_slice: &mut [f32] =
-            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<f32>(), n) };
+    // Zero-initialize the output. The previous implementation used
+    // `Vec::with_capacity` + `spare_capacity_mut` + a raw-pointer cast to
+    // `&mut [f32]` to skip the memset, but forming a `&mut [f32]` over
+    // uninitialized memory violates Rust's validity invariant (references
+    // must point to initialized values of the correct type) even if every
+    // element is written before it is read. The sound zero-memset
+    // alternative would require threading `&mut [MaybeUninit<f32>]` through
+    // the row kernel, which does not compose with macerator's `#[with_simd]`
+    // signature. The memset is a streaming write on a bandwidth-bound
+    // kernel, so the overhead is small (~10% at the largest bench shape)
+    // and the fused path remains well ahead of decomposed and candle.
+    let mut output: Vec<f32> = vec![0.0; n];
+    let out_slice = output.as_mut_slice();
 
-        // Row-parallel via rayon: one macerator dispatch per chunk of rows,
-        // amortized over all rows in the chunk.
-        #[cfg(feature = "rayon")]
-        {
-            use rayon::prelude::*;
-            const ROWS_PER_TASK: usize = 64;
-            let chunk_elems = ROWS_PER_TASK * last;
-            out_slice
-                .par_chunks_mut(chunk_elems)
-                .zip(input.par_chunks(chunk_elems))
-                .for_each(|(o, i)| softmax_rows_f32(i, o, last));
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            softmax_rows_f32(input, out_slice, last);
-        }
+    // Row-parallel via rayon: one macerator dispatch per chunk of rows,
+    // amortized over all rows in the chunk.
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        const ROWS_PER_TASK: usize = 64;
+        let chunk_elems = ROWS_PER_TASK * last;
+        out_slice
+            .par_chunks_mut(chunk_elems)
+            .zip(input.par_chunks(chunk_elems))
+            .for_each(|(o, i)| softmax_rows_f32(i, o, last));
     }
-    // SAFETY: every element in the first `n` slots of the backing buffer
-    // was written by softmax_rows_f32 above.
-    unsafe { output.set_len(n) };
+    #[cfg(not(feature = "rayon"))]
+    {
+        softmax_rows_f32(input, out_slice, last);
+    }
 
     FlexTensor::new(
         Bytes::from_elems(output),
@@ -522,7 +520,8 @@ softmax_last_dtype!(
 ///
 /// * If `input`'s dtype is not `f32`.
 /// * If `input` has rank 0.
-/// * If `gamma.len()` or `beta.len()` does not equal `input.shape()[-1]`.
+/// * If `gamma` (or `beta`, when present) is not a 1-D tensor of length
+///   equal to the last dim of `input`.
 pub fn layer_norm(
     input: FloatTensor<Flex>,
     gamma: FloatTensor<Flex>,
@@ -540,16 +539,26 @@ pub fn layer_norm(
         .shape()
         .last()
         .expect("layer_norm: empty shape");
-    assert_eq!(
-        *gamma.layout().shape().last().expect("gamma empty"),
+    // Validate rank + length explicitly rather than just last-dim == d_model.
+    // A gamma shaped like `[2, d_model]` would pass a last-dim check but
+    // has 2*d_model elements, which would index the wrong data in the row
+    // kernel (caught by an inner assert, but with a confusing message).
+    let gamma_shape = gamma.layout().shape();
+    assert!(
+        gamma_shape.len() == 1 && gamma_shape[0] == d_model,
+        "layer_norm: gamma must be a 1-D tensor of length equal to last dim of input \
+         (got shape {:?}, expected [{}])",
+        gamma_shape,
         d_model,
-        "layer_norm: gamma length must equal last dim of input"
     );
     if let Some(ref b) = beta {
-        assert_eq!(
-            *b.layout().shape().last().expect("beta empty"),
+        let beta_shape = b.layout().shape();
+        assert!(
+            beta_shape.len() == 1 && beta_shape[0] == d_model,
+            "layer_norm: beta must be a 1-D tensor of length equal to last dim of input \
+             (got shape {:?}, expected [{}])",
+            beta_shape,
             d_model,
-            "layer_norm: beta length must equal last dim of input"
         );
     }
 
@@ -580,59 +589,54 @@ fn layer_norm_f32(
     let beta_data: Option<&[f32]> = beta.as_ref().map(|b| b.storage());
 
     let n = input_data.len();
-    let mut output: Vec<f32> = Vec::with_capacity(n);
-    {
-        let spare = output.spare_capacity_mut();
-        // SAFETY: every element of `out_slice` is written by the row
-        // kernel (with_beta or no_beta) before we call set_len below.
-        let out_slice: &mut [f32] =
-            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<f32>(), n) };
+    // See softmax_last_f32 for the rationale on zero-init instead of
+    // `spare_capacity_mut` + `&mut [f32]` cast: the latter creates a
+    // reference to uninitialized f32 values, which is UB under Rust's
+    // aliasing model even with no intervening read.
+    let mut output: Vec<f32> = vec![0.0; n];
+    let out_slice = output.as_mut_slice();
 
-        // `#[macerator::with_simd]` can't auto-lifetime through
-        // `Option<&[T]>`, so we dispatch two separate monomorphized
-        // versions, one with beta and one without. Both call into the
-        // same shared row kernel.
-        #[cfg(feature = "rayon")]
-        {
-            use rayon::prelude::*;
-            const ROWS_PER_TASK: usize = 64;
-            let chunk_elems = ROWS_PER_TASK * d_model;
-            match beta_data {
-                Some(beta_slice) => {
-                    out_slice
-                        .par_chunks_mut(chunk_elems)
-                        .zip(input_data.par_chunks(chunk_elems))
-                        .for_each(|(o, i)| {
-                            layer_norm_rows_f32_with_beta(
-                                i, o, gamma_data, beta_slice, d_model, epsilon,
-                            );
-                        });
-                }
-                None => {
-                    out_slice
-                        .par_chunks_mut(chunk_elems)
-                        .zip(input_data.par_chunks(chunk_elems))
-                        .for_each(|(o, i)| {
-                            layer_norm_rows_f32_no_beta(i, o, gamma_data, d_model, epsilon);
-                        });
-                }
+    // `#[macerator::with_simd]` can't auto-lifetime through
+    // `Option<&[T]>`, so we dispatch two separate monomorphized
+    // versions, one with beta and one without. Both call into the
+    // same shared row kernel.
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        const ROWS_PER_TASK: usize = 64;
+        let chunk_elems = ROWS_PER_TASK * d_model;
+        match beta_data {
+            Some(beta_slice) => {
+                out_slice
+                    .par_chunks_mut(chunk_elems)
+                    .zip(input_data.par_chunks(chunk_elems))
+                    .for_each(|(o, i)| {
+                        layer_norm_rows_f32_with_beta(
+                            i, o, gamma_data, beta_slice, d_model, epsilon,
+                        );
+                    });
             }
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            match beta_data {
-                Some(beta_slice) => layer_norm_rows_f32_with_beta(
-                    input_data, out_slice, gamma_data, beta_slice, d_model, epsilon,
-                ),
-                None => {
-                    layer_norm_rows_f32_no_beta(input_data, out_slice, gamma_data, d_model, epsilon)
-                }
+            None => {
+                out_slice
+                    .par_chunks_mut(chunk_elems)
+                    .zip(input_data.par_chunks(chunk_elems))
+                    .for_each(|(o, i)| {
+                        layer_norm_rows_f32_no_beta(i, o, gamma_data, d_model, epsilon);
+                    });
             }
         }
     }
-    // SAFETY: every element in the first `n` slots of the backing buffer
-    // was written by the row kernel above.
-    unsafe { output.set_len(n) };
+    #[cfg(not(feature = "rayon"))]
+    {
+        match beta_data {
+            Some(beta_slice) => layer_norm_rows_f32_with_beta(
+                input_data, out_slice, gamma_data, beta_slice, d_model, epsilon,
+            ),
+            None => {
+                layer_norm_rows_f32_no_beta(input_data, out_slice, gamma_data, d_model, epsilon)
+            }
+        }
+    }
 
     FlexTensor::new(
         Bytes::from_elems(output),
@@ -1343,7 +1347,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "gamma length must equal last dim of input")]
+    #[should_panic(expected = "gamma must be a 1-D tensor")]
     fn test_layer_norm_gamma_length_mismatch_panics() {
         use burn_tensor::TensorPrimitive;
         // input last dim is 4, but gamma length is 3 — the assert_eq on
@@ -1363,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "beta length must equal last dim of input")]
+    #[should_panic(expected = "beta must be a 1-D tensor")]
     fn test_layer_norm_beta_length_mismatch_panics() {
         use burn_tensor::TensorPrimitive;
         let t: Tensor<Flex, 2> = Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
@@ -1384,6 +1388,34 @@ mod tests {
             _ => unreachable!(),
         };
         let _ = crate::ops::activation::layer_norm(t_p, g_p, Some(b_p), 1e-5);
+    }
+
+    #[test]
+    #[should_panic(expected = "gamma must be a 1-D tensor")]
+    fn test_layer_norm_gamma_rank_mismatch_panics() {
+        use burn_backend::DType;
+        use burn_tensor::TensorPrimitive;
+        // input last dim is 4, and gamma is [2, 4] — last dim matches d_model
+        // but rank is 2. The old check (only last-dim == d_model) would have
+        // accepted this and then indexed wrong data in the row kernel.
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            [[1.0f32, 2.0, 3.0, 4.0]],
+            (&Default::default(), DType::F32),
+        );
+        let gamma: Tensor<Flex, 2> = Tensor::from_data(
+            [[1.0f32, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0]],
+            (&Default::default(), DType::F32),
+        );
+
+        let t_p = match t.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let g_p = match gamma.into_primitive() {
+            TensorPrimitive::Float(x) => x,
+            _ => unreachable!(),
+        };
+        let _ = crate::ops::activation::layer_norm(t_p, g_p, None, 1e-5);
     }
 
     #[test]
@@ -1408,12 +1440,15 @@ mod tests {
     // a bug in the scalar tail kernel would pass CI silently.
     #[test]
     fn test_softmax_simd_body_plus_scalar_tail() {
+        use burn_backend::DType;
         use burn_tensor::TensorPrimitive;
         // 2 rows of length 17 with varied values so the max/exp/sum path is
         // meaningful per row.
         let data: Vec<f32> = (0..34).map(|i| (i as f32 * 0.137) - 2.3).collect();
-        let t: Tensor<Flex, 2> =
-            Tensor::from_data(TensorData::new(data, [2, 17]), &Default::default());
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(data, [2, 17]),
+            (&Default::default(), DType::F32),
+        );
         let reference = activation::softmax(t.clone(), 1);
 
         let primitive = match t.into_primitive() {
@@ -1430,18 +1465,25 @@ mod tests {
 
     #[test]
     fn test_layer_norm_simd_body_plus_scalar_tail() {
+        use burn_backend::DType;
         use burn_tensor::TensorPrimitive;
         // Same rationale as test_softmax_simd_body_plus_scalar_tail: row length
         // 17 leaves exactly one scalar-tail element after any common SIMD body.
         let data: Vec<f32> = (0..34).map(|i| (i as f32 * 0.137) - 2.3).collect();
-        let t: Tensor<Flex, 2> =
-            Tensor::from_data(TensorData::new(data, [2, 17]), &Default::default());
+        let t: Tensor<Flex, 2> = Tensor::from_data(
+            TensorData::new(data, [2, 17]),
+            (&Default::default(), DType::F32),
+        );
         let gamma_data: Vec<f32> = (0..17).map(|i| 1.0 + i as f32 * 0.05).collect();
         let beta_data: Vec<f32> = (0..17).map(|i| i as f32 * 0.01).collect();
-        let gamma: Tensor<Flex, 1> =
-            Tensor::from_data(TensorData::new(gamma_data, [17]), &Default::default());
-        let beta: Tensor<Flex, 1> =
-            Tensor::from_data(TensorData::new(beta_data, [17]), &Default::default());
+        let gamma: Tensor<Flex, 1> = Tensor::from_data(
+            TensorData::new(gamma_data, [17]),
+            (&Default::default(), DType::F32),
+        );
+        let beta: Tensor<Flex, 1> = Tensor::from_data(
+            TensorData::new(beta_data, [17]),
+            (&Default::default(), DType::F32),
+        );
 
         // Reference: manual layer_norm via primitive tensor ops.
         let mean = t.clone().mean_dim(1);
