@@ -229,34 +229,44 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
     let n = input.len();
 
     // Allocate without zero-init: the row kernel writes every element of
-    // `output` via its three passes (max/exp+sum/normalize), all fully
+    // `output` via its three passes (max, exp+sum, normalize), all fully
     // covered by a SIMD body plus scalar tail. Skipping `vec![0.0; n]`
-    // saves a full memset on a bandwidth-bound kernel. Matches the
-    // pattern used in FlexTensor::copy_contiguous.
+    // saves a full memset on a bandwidth-bound kernel.
     let mut output: Vec<f32> = Vec::with_capacity(n);
-    // SAFETY: capacity is n, and softmax_rows_f32_simd writes every
-    // element of the resulting slice before this Vec is read (either
-    // by the caller via FlexTensor::new below, or by drop).
+    {
+        let spare = output.spare_capacity_mut();
+        // SAFETY: every element of `out_slice` is written by
+        // softmax_rows_f32_simd below before we call set_len.
+        let out_slice: &mut [f32] = unsafe {
+            core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<f32>(), n)
+        };
+
+        // Row-parallel via rayon: one macerator dispatch per chunk of rows,
+        // amortized over all rows in the chunk.
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            const ROWS_PER_TASK: usize = 64;
+            let chunk_elems = ROWS_PER_TASK * last;
+            out_slice
+                .par_chunks_mut(chunk_elems)
+                .zip(input.par_chunks(chunk_elems))
+                .for_each(|(o, i)| softmax_rows_f32_simd(i, o, last));
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            softmax_rows_f32_simd(input, out_slice, last);
+        }
+    }
+    // SAFETY: every element in the first `n` slots of the backing buffer
+    // was written by softmax_rows_f32_simd above.
     unsafe { output.set_len(n) };
 
-    // Row-parallel via rayon: one macerator dispatch per chunk of rows,
-    // amortized over all rows in the chunk.
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-        const ROWS_PER_TASK: usize = 64;
-        let chunk_elems = ROWS_PER_TASK * last;
-        output
-            .par_chunks_mut(chunk_elems)
-            .zip(input.par_chunks(chunk_elems))
-            .for_each(|(o, i)| softmax_rows_f32_simd(i, o, last));
-    }
-    #[cfg(not(feature = "rayon"))]
-    {
-        softmax_rows_f32_simd(input, &mut output, last);
-    }
-
-    FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F32)
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(shape),
+        DType::F32,
+    )
 }
 
 /// One macerator dispatch per chunk of rows, amortized over all rows in
@@ -264,11 +274,7 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
 /// pass stays scalar (no SIMD exp in macerator) but is memory-bandwidth
 /// bound anyway.
 #[macerator::with_simd]
-fn softmax_rows_f32_simd<S: macerator::Simd>(
-    input: &[f32],
-    output: &mut [f32],
-    row_len: usize,
-) {
+fn softmax_rows_f32_simd<S: macerator::Simd>(input: &[f32], output: &mut [f32], row_len: usize) {
     debug_assert_eq!(input.len(), output.len());
     debug_assert_eq!(input.len() % row_len, 0);
     for (in_row, out_row) in input.chunks(row_len).zip(output.chunks_mut(row_len)) {
@@ -334,32 +340,70 @@ fn softmax_row_f32_simd<S: macerator::Simd>(input: &[f32], output: &mut [f32]) {
     }
 }
 
-fn softmax_last_f64(tensor: FlexTensor) -> FlexTensor {
-    let shape = tensor.layout().shape().clone();
-    // Shape derefs to &[usize], so we can use slice methods directly.
-    let last = *shape.last().expect("softmax: empty shape");
-    if last == 0 {
-        return tensor;
-    }
-    let input: &[f64] = tensor.storage();
-    let mut output: Vec<f64> = vec![0.0f64; input.len()];
+// f64, f16, bf16 softmax share the same row-parallel dispatcher shell and
+// differ only in their row kernel (native f64 vs via-f32 for half
+// precision). Generated via macros to keep the three variants in lockstep.
+// Only f32 has a dedicated SIMD fast path above.
 
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-        output
-            .par_chunks_mut(last)
-            .zip(input.par_chunks(last))
-            .for_each(|(o, i)| softmax_row_f64(i, o));
-    }
-    #[cfg(not(feature = "rayon"))]
-    {
-        for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
-            softmax_row_f64(i, o);
+macro_rules! softmax_last_dtype {
+    ($fn_name:ident, $T:ty, $zero:expr, $dtype:expr, $row_fn:ident) => {
+        fn $fn_name(tensor: FlexTensor) -> FlexTensor {
+            let shape = tensor.layout().shape().clone();
+            let last = *shape.last().expect("softmax: empty shape");
+            if last == 0 {
+                return tensor;
+            }
+            let input: &[$T] = tensor.storage();
+            let mut output: Vec<$T> = vec![$zero; input.len()];
+
+            #[cfg(feature = "rayon")]
+            {
+                use rayon::prelude::*;
+                output
+                    .par_chunks_mut(last)
+                    .zip(input.par_chunks(last))
+                    .for_each(|(o, i)| $row_fn(i, o));
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
+                    $row_fn(i, o);
+                }
+            }
+
+            FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), $dtype)
         }
-    }
+    };
+}
 
-    FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F64)
+/// Half-precision softmax row kernel. Accumulates in f32 for numerical
+/// stability and converts back to the target type at each write. This
+/// double-rounds across passes 2 and 3; acceptable for half precision. An
+/// f32 scratch buffer would remove the double rounding at the cost of a
+/// per-row allocation.
+macro_rules! softmax_row_half {
+    ($fn_name:ident, $T:ty) => {
+        #[inline]
+        fn $fn_name(input: &[$T], output: &mut [$T]) {
+            let mut max_val = f32::NEG_INFINITY;
+            for &x in input {
+                let xf = x.to_f32();
+                if xf > max_val {
+                    max_val = xf;
+                }
+            }
+            let mut sum = 0.0f32;
+            for (i, &x) in input.iter().enumerate() {
+                let e = (x.to_f32() - max_val).exp();
+                output[i] = <$T>::from_f32(e);
+                sum += e;
+            }
+            let inv = 1.0f32 / sum;
+            for x in output.iter_mut() {
+                *x = <$T>::from_f32(x.to_f32() * inv);
+            }
+        }
+    };
 }
 
 #[inline]
@@ -382,114 +426,24 @@ fn softmax_row_f64(input: &[f64], output: &mut [f64]) {
     }
 }
 
-// f16 / bf16: convert to f32 for the numeric work (standard practice for
-// half-precision accuracy; the exp() saturates very fast in f16 dynamic
-// range). Row-level parallelism still applies.
-fn softmax_last_f16(tensor: FlexTensor) -> FlexTensor {
-    let shape = tensor.layout().shape().clone();
-    // Shape derefs to &[usize], so we can use slice methods directly.
-    let last = *shape.last().expect("softmax: empty shape");
-    if last == 0 {
-        return tensor;
-    }
-    let input: &[f16] = tensor.storage();
-    let mut output: Vec<f16> = vec![f16::from_f32(0.0); input.len()];
+softmax_row_half!(softmax_row_f16, f16);
+softmax_row_half!(softmax_row_bf16, bf16);
 
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-        output
-            .par_chunks_mut(last)
-            .zip(input.par_chunks(last))
-            .for_each(|(o, i)| softmax_row_f16(i, o));
-    }
-    #[cfg(not(feature = "rayon"))]
-    {
-        for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
-            softmax_row_f16(i, o);
-        }
-    }
-
-    FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F16)
-}
-
-#[inline]
-fn softmax_row_f16(input: &[f16], output: &mut [f16]) {
-    let mut max_val = f32::NEG_INFINITY;
-    for &x in input {
-        let xf = x.to_f32();
-        if xf > max_val {
-            max_val = xf;
-        }
-    }
-    // f16 intermediates double-round: pass 2 stores `from_f32(e)`, pass 3
-    // re-reads it and rounds again after the multiply-by-inv. Acceptable
-    // for f16 precision; an f32 scratch buffer would remove the double
-    // rounding at the cost of a per-row allocation.
-    let mut sum = 0.0f32;
-    for (i, &x) in input.iter().enumerate() {
-        let e = (x.to_f32() - max_val).exp();
-        output[i] = f16::from_f32(e);
-        sum += e;
-    }
-    let inv = 1.0f32 / sum;
-    for x in output.iter_mut() {
-        *x = f16::from_f32(x.to_f32() * inv);
-    }
-}
-
-fn softmax_last_bf16(tensor: FlexTensor) -> FlexTensor {
-    let shape = tensor.layout().shape().clone();
-    // Shape derefs to &[usize], so we can use slice methods directly.
-    let last = *shape.last().expect("softmax: empty shape");
-    if last == 0 {
-        return tensor;
-    }
-    let input: &[bf16] = tensor.storage();
-    let mut output: Vec<bf16> = vec![bf16::from_f32(0.0); input.len()];
-
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-        output
-            .par_chunks_mut(last)
-            .zip(input.par_chunks(last))
-            .for_each(|(o, i)| softmax_row_bf16(i, o));
-    }
-    #[cfg(not(feature = "rayon"))]
-    {
-        for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
-            softmax_row_bf16(i, o);
-        }
-    }
-
-    FlexTensor::new(
-        Bytes::from_elems(output),
-        Layout::contiguous(shape),
-        DType::BF16,
-    )
-}
-
-#[inline]
-fn softmax_row_bf16(input: &[bf16], output: &mut [bf16]) {
-    let mut max_val = f32::NEG_INFINITY;
-    for &x in input {
-        let xf = x.to_f32();
-        if xf > max_val {
-            max_val = xf;
-        }
-    }
-    let mut sum = 0.0f32;
-    for (i, &x) in input.iter().enumerate() {
-        let e = (x.to_f32() - max_val).exp();
-        output[i] = bf16::from_f32(e);
-        sum += e;
-    }
-    let inv = 1.0f32 / sum;
-    for x in output.iter_mut() {
-        *x = bf16::from_f32(x.to_f32() * inv);
-    }
-}
+softmax_last_dtype!(softmax_last_f64, f64, 0.0f64, DType::F64, softmax_row_f64);
+softmax_last_dtype!(
+    softmax_last_f16,
+    f16,
+    f16::from_f32(0.0),
+    DType::F16,
+    softmax_row_f16
+);
+softmax_last_dtype!(
+    softmax_last_bf16,
+    bf16,
+    bf16::from_f32(0.0),
+    DType::BF16,
+    softmax_row_bf16
+);
 
 // ============================================================================
 // Fused layer_norm
@@ -573,65 +527,65 @@ fn layer_norm_f32(
 
     let n = input_data.len();
     let mut output: Vec<f32> = Vec::with_capacity(n);
-    // SAFETY: capacity is n, and the row kernel (both the with_beta and
-    // no_beta SIMD helpers below) writes every element via its two passes
-    // (sum+sumsq, then normalize+affine with SIMD body + scalar tail)
-    // before this Vec is read by FlexTensor::new.
+    {
+        let spare = output.spare_capacity_mut();
+        // SAFETY: every element of `out_slice` is written by the row
+        // kernel (with_beta or no_beta) before we call set_len below.
+        let out_slice: &mut [f32] = unsafe {
+            core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<f32>(), n)
+        };
+
+        // `#[macerator::with_simd]` can't auto-lifetime through
+        // `Option<&[T]>`, so we dispatch two separate monomorphized
+        // versions — one with beta, one without. Both call into the
+        // same shared row kernel.
+        #[cfg(feature = "rayon")]
+        {
+            use rayon::prelude::*;
+            const ROWS_PER_TASK: usize = 64;
+            let chunk_elems = ROWS_PER_TASK * d_model;
+            match beta_data {
+                Some(beta_slice) => {
+                    out_slice
+                        .par_chunks_mut(chunk_elems)
+                        .zip(input_data.par_chunks(chunk_elems))
+                        .for_each(|(o, i)| {
+                            layer_norm_rows_f32_with_beta_simd(
+                                i, o, gamma_data, beta_slice, d_model, epsilon,
+                            );
+                        });
+                }
+                None => {
+                    out_slice
+                        .par_chunks_mut(chunk_elems)
+                        .zip(input_data.par_chunks(chunk_elems))
+                        .for_each(|(o, i)| {
+                            layer_norm_rows_f32_no_beta_simd(i, o, gamma_data, d_model, epsilon);
+                        });
+                }
+            }
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            match beta_data {
+                Some(beta_slice) => layer_norm_rows_f32_with_beta_simd(
+                    input_data, out_slice, gamma_data, beta_slice, d_model, epsilon,
+                ),
+                None => layer_norm_rows_f32_no_beta_simd(
+                    input_data, out_slice, gamma_data, d_model, epsilon,
+                ),
+            }
+        }
+    }
+    // SAFETY: every element in the first `n` slots of the backing buffer
+    // was written by the row kernel above.
     unsafe { output.set_len(n) };
 
-    // `#[macerator::with_simd]` can't auto-lifetime through `Option<&[T]>`,
-    // so we dispatch two separate monomorphized versions — one with beta,
-    // one without. Both call into the same shared row kernel.
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-        const ROWS_PER_TASK: usize = 64;
-        let chunk_elems = ROWS_PER_TASK * d_model;
-        match beta_data {
-            Some(beta_slice) => {
-                output
-                    .par_chunks_mut(chunk_elems)
-                    .zip(input_data.par_chunks(chunk_elems))
-                    .for_each(|(o, i)| {
-                        layer_norm_rows_f32_with_beta_simd(
-                            i, o, gamma_data, beta_slice, d_model, epsilon,
-                        );
-                    });
-            }
-            None => {
-                output
-                    .par_chunks_mut(chunk_elems)
-                    .zip(input_data.par_chunks(chunk_elems))
-                    .for_each(|(o, i)| {
-                        layer_norm_rows_f32_no_beta_simd(
-                            i, o, gamma_data, d_model, epsilon,
-                        );
-                    });
-            }
-        }
-    }
-    #[cfg(not(feature = "rayon"))]
-    {
-        match beta_data {
-            Some(beta_slice) => layer_norm_rows_f32_with_beta_simd(
-                input_data,
-                &mut output,
-                gamma_data,
-                beta_slice,
-                d_model,
-                epsilon,
-            ),
-            None => layer_norm_rows_f32_no_beta_simd(
-                input_data,
-                &mut output,
-                gamma_data,
-                d_model,
-                epsilon,
-            ),
-        }
-    }
-
-    FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F32)
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(shape),
+        DType::F32,
+    )
 }
 
 /// SIMD-dispatched row sweep for f32 layer_norm with bias (beta). One
@@ -695,7 +649,7 @@ fn layer_norm_row_f32_simd<S: macerator::Simd>(
         while i < simd_len {
             unsafe {
                 let v = vload_unaligned::<S, _>(input.as_ptr().add(i));
-                acc_sum = acc_sum + v;
+                acc_sum += v;
                 // acc_sumsq += v * v; Vector::mul_add(self, a, b) = self*a + b,
                 // so v.mul_add(v, acc_sumsq) = v*v + acc_sumsq.
                 acc_sumsq = v.mul_add(v, acc_sumsq);
@@ -854,10 +808,9 @@ mod tests {
         let fused = crate::ops::activation::softmax(primitive, 1);
         let fused: Tensor<Flex, 2> = Tensor::from_primitive(TensorPrimitive::Float(fused));
 
-        fused.into_data().assert_approx_eq::<f32>(
-            &reference.into_data(),
-            Tolerance::absolute(1e-5),
-        );
+        fused
+            .into_data()
+            .assert_approx_eq::<f32>(&reference.into_data(), Tolerance::absolute(1e-5));
     }
 
     #[test]
@@ -895,18 +848,15 @@ mod tests {
             [-1.3416408, -0.4472136, 0.4472136, 1.3416408],
             [-1.3416408, -0.4472136, 0.4472136, 1.3416408],
         ];
-        out.into_data().assert_approx_eq::<f32>(
-            &TensorData::from(expected),
-            Tolerance::absolute(1e-4),
-        );
+        out.into_data()
+            .assert_approx_eq::<f32>(&TensorData::from(expected), Tolerance::absolute(1e-4));
     }
 
     #[test]
     fn test_layer_norm_with_affine() {
         // gamma/beta should scale and shift the normalized output.
         use burn_tensor::TensorPrimitive;
-        let t: Tensor<Flex, 2> =
-            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
+        let t: Tensor<Flex, 2> = Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
         let gamma: Tensor<Flex, 1> =
             Tensor::from_data([2.0f32, 0.5, 1.0, 3.0], &Default::default());
         let beta: Tensor<Flex, 1> =
@@ -942,8 +892,7 @@ mod tests {
     #[test]
     fn test_layer_norm_no_beta() {
         use burn_tensor::TensorPrimitive;
-        let t: Tensor<Flex, 2> =
-            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
+        let t: Tensor<Flex, 2> = Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], &Default::default());
         let gamma: Tensor<Flex, 1> =
             Tensor::from_data([1.0f32, 1.0, 1.0, 1.0], &Default::default());
 
@@ -970,7 +919,10 @@ mod tests {
         // wav2vec2-like attention scores [heads, seq_q, seq_k], softmax over seq_k.
         use burn_tensor::TensorPrimitive;
         let t: Tensor<Flex, 3> = Tensor::from_data(
-            [[[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]], [[0.0, 0.0, 1.0], [1.0, 1.0, 1.0]]],
+            [
+                [[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                [[0.0, 0.0, 1.0], [1.0, 1.0, 1.0]],
+            ],
             &Default::default(),
         );
         let reference = activation::softmax(t.clone(), 2);
@@ -982,10 +934,9 @@ mod tests {
         let fused = crate::ops::activation::softmax(primitive, 2);
         let fused: Tensor<Flex, 3> = Tensor::from_primitive(TensorPrimitive::Float(fused));
 
-        fused.into_data().assert_approx_eq::<f32>(
-            &reference.into_data(),
-            Tolerance::absolute(1e-5),
-        );
+        fused
+            .into_data()
+            .assert_approx_eq::<f32>(&reference.into_data(), Tolerance::absolute(1e-5));
     }
 
     #[test]

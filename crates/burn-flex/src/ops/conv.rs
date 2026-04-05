@@ -93,21 +93,36 @@ macro_rules! conv3d_typed {
             // packing overhead dominates compute and per-c_out parallelism
             // beats gemm's internal parallelism.
             let out_d = calculate_conv_output_size(
-                w_shape[2], options.stride[0], options.padding[0], options.dilation[0], x_shape[2],
+                w_shape[2],
+                options.stride[0],
+                options.padding[0],
+                options.dilation[0],
+                x_shape[2],
             );
             let out_h = calculate_conv_output_size(
-                w_shape[3], options.stride[1], options.padding[1], options.dilation[1], x_shape[3],
+                w_shape[3],
+                options.stride[1],
+                options.padding[1],
+                options.dilation[1],
+                x_shape[3],
             );
             let out_w = calculate_conv_output_size(
-                w_shape[4], options.stride[2], options.padding[2], options.dilation[2], x_shape[4],
+                w_shape[4],
+                options.stride[2],
+                options.padding[2],
+                options.dilation[2],
+                x_shape[4],
             );
             let spatial_out = out_d * out_h * out_w;
             if should_use_direct_conv3d(
-                w_shape[1], w_shape[2], w_shape[3], w_shape[4], spatial_out, options,
+                w_shape[1],
+                w_shape[2],
+                w_shape[3],
+                w_shape[4],
+                spatial_out,
+                options,
             ) {
-                return conv3d_direct_impl::<$T>(
-                    x, weight, bias, options, $dtype, $add_fn,
-                );
+                return conv3d_direct_impl::<$T>(x, weight, bias, options, $dtype, $add_fn);
             }
             conv3d_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
         }
@@ -687,9 +702,8 @@ fn conv3d_direct_impl<T: ConvElement>(
                 for h in 0..in_h {
                     for w_ in 0..in_w {
                         let src_idx = src_c_base + (d * in_h + h) * in_w + w_;
-                        let dst_idx = ((b * in_d + d) * in_h + h) * in_w * channels_in
-                            + w_ * channels_in
-                            + c;
+                        let dst_idx =
+                            ((b * in_d + d) * in_h + h) * in_w * channels_in + w_ * channels_in + c;
                         x_nhwc[dst_idx] = x_data[src_idx];
                     }
                 }
@@ -748,8 +762,7 @@ fn conv3d_direct_impl<T: ConvElement>(
 
                         (0..channels_out).into_par_iter().for_each(|c_out| {
                             let w_start = c_out * col_len + k_offset_c;
-                            let w_slice =
-                                &w_reshaped_ref[w_start..w_start + channels_per_group];
+                            let w_slice = &w_reshaped_ref[w_start..w_start + channels_per_group];
                             let dst_c_base = dst_b_base + c_out * spatial_out;
                             // Safety: each c_out owns a disjoint
                             // `spatial_out`-length range of the output buffer,
@@ -811,11 +824,9 @@ fn conv3d_direct_impl<T: ConvElement>(
 
                         for c_out in 0..channels_out {
                             let w_start = c_out * col_len + k_offset_c;
-                            let w_slice =
-                                &w_reshaped[w_start..w_start + channels_per_group];
+                            let w_slice = &w_reshaped[w_start..w_start + channels_per_group];
                             let dst_c_base = dst_b_base + c_out * spatial_out;
-                            let dst_row =
-                                &mut dst[dst_c_base..dst_c_base + spatial_out];
+                            let dst_row = &mut dst[dst_c_base..dst_c_base + spatial_out];
                             T::conv_direct_sweep(
                                 w_slice,
                                 x_batch,
@@ -1711,114 +1722,55 @@ fn convert_f32_to_bf16(tensor: &FlexTensor) -> FlexTensor {
 // ============================================================================
 // gemm implementations
 // ============================================================================
+//
+// One thin wrapper per element type around `gemm::gemm` with the strides and
+// parallelism heuristic fixed to what conv3d_impl needs. The wrappers share
+// every line of logic aside from the numeric type, zero, and one literals,
+// so they're generated via a macro.
 
-fn gemm_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    let mut c = vec![0.0f32; m * n];
-    #[cfg(feature = "rayon")]
-    let parallelism = if m * n * k >= 192 * 192 * 192 {
-        gemm::Parallelism::Rayon(0)
-    } else {
-        gemm::Parallelism::None
+macro_rules! gemm_typed {
+    ($fn_name:ident, $T:ty, $zero:expr, $one:expr) => {
+        fn $fn_name(a: &[$T], b: &[$T], m: usize, k: usize, n: usize) -> Vec<$T> {
+            let mut c = vec![$zero; m * n];
+            #[cfg(feature = "rayon")]
+            let parallelism = if m * n * k >= 192 * 192 * 192 {
+                gemm::Parallelism::Rayon(0)
+            } else {
+                gemm::Parallelism::None
+            };
+            #[cfg(not(feature = "rayon"))]
+            let parallelism = gemm::Parallelism::None;
+            unsafe {
+                gemm::gemm(
+                    m,
+                    n,
+                    k,
+                    c.as_mut_ptr(),
+                    1,
+                    n as isize,
+                    false,
+                    a.as_ptr(),
+                    1,
+                    k as isize,
+                    b.as_ptr(),
+                    k as isize,
+                    1,
+                    $zero,
+                    $one,
+                    false,
+                    false,
+                    false,
+                    parallelism,
+                );
+            }
+            c
+        }
     };
-    #[cfg(not(feature = "rayon"))]
-    let parallelism = gemm::Parallelism::None;
-    unsafe {
-        gemm::gemm(
-            m,
-            n,
-            k,
-            c.as_mut_ptr(),
-            1,
-            n as isize,
-            false,
-            a.as_ptr(),
-            1,
-            k as isize,
-            b.as_ptr(),
-            k as isize,
-            1,
-            0.0f32,
-            1.0f32,
-            false,
-            false,
-            false,
-            parallelism,
-        );
-    }
-    c
 }
 
-fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
-    let mut c = vec![0.0f64; m * n];
-    #[cfg(feature = "rayon")]
-    let parallelism = if m * n * k >= 192 * 192 * 192 {
-        gemm::Parallelism::Rayon(0)
-    } else {
-        gemm::Parallelism::None
-    };
-    #[cfg(not(feature = "rayon"))]
-    let parallelism = gemm::Parallelism::None;
-    unsafe {
-        gemm::gemm(
-            m,
-            n,
-            k,
-            c.as_mut_ptr(),
-            1,
-            n as isize,
-            false,
-            a.as_ptr(),
-            1,
-            k as isize,
-            b.as_ptr(),
-            k as isize,
-            1,
-            0.0f64,
-            1.0f64,
-            false,
-            false,
-            false,
-            parallelism,
-        );
-    }
-    c
-}
-
-fn gemm_f16(a: &[f16], b: &[f16], m: usize, k: usize, n: usize) -> Vec<f16> {
-    let mut c = vec![f16::from_f32(0.0); m * n];
-    #[cfg(feature = "rayon")]
-    let parallelism = if m * n * k >= 192 * 192 * 192 {
-        gemm::Parallelism::Rayon(0)
-    } else {
-        gemm::Parallelism::None
-    };
-    #[cfg(not(feature = "rayon"))]
-    let parallelism = gemm::Parallelism::None;
-    unsafe {
-        gemm::gemm(
-            m,
-            n,
-            k,
-            c.as_mut_ptr(),
-            1,
-            n as isize,
-            false,
-            a.as_ptr(),
-            1,
-            k as isize,
-            b.as_ptr(),
-            k as isize,
-            1,
-            half::f16::from_f32(0.0),
-            half::f16::from_f32(1.0),
-            false,
-            false,
-            false,
-            parallelism,
-        );
-    }
-    c
-}
+gemm_typed!(gemm_f32, f32, 0.0f32, 1.0f32);
+gemm_typed!(gemm_f64, f64, 0.0f64, 1.0f64);
+gemm_typed!(gemm_f16, f16, f16::from_f32(0.0), f16::from_f32(1.0));
 
 // ============================================================================
 // Direct conv SIMD helpers (via macerator)
@@ -1879,212 +1831,195 @@ trait ConvElement: bytemuck::Pod + Copy + Send + Sync + burn_backend::Element + 
 
 // -- f32 --
 
-#[cfg(feature = "simd")]
-#[macerator::with_simd]
-fn conv_direct_sweep_f32_simd<S: macerator::Simd>(
-    w_slice: &[f32],
-    x_nhwc: &[f32],
-    dst_row: &mut [f32],
-    params: &SweepParams,
-    channels_in: usize,
-) {
-    use macerator::{Scalar, vload_unaligned};
-    let lanes = <f32 as Scalar>::lanes::<S>();
-    let unroll = 4 * lanes;
-    let unroll_len = channels_in / unroll * unroll;
-    let simd_len = channels_in / lanes * lanes;
+// The SIMD and scalar sweep helpers are byte-identical aside from element
+// type and the zero literal, so they're generated via macros. Generating
+// all variants from one canonical form also guarantees f32 and f64 stay in
+// sync on tuning (loop order, unroll factor, udiv elimination, etc.).
 
-    let SweepParams {
-        out_h,
-        out_w,
-        in_d,
-        in_h,
-        in_w,
-        stride_d,
-        stride_h,
-        stride_w,
-        dilation_d,
-        dilation_h,
-        dilation_w,
-        kd,
-        kh,
-        kw,
-        pad_d,
-        pad_h,
-        pad_w,
-        has_padding,
-        ..
-    } = *params;
+/// Generates a `#[macerator::with_simd]` direct-conv sweep for one element type.
+/// The body uses nested (od, oh_, ow_) loops with a running `oidx` counter so
+/// LLVM never emits a per-iteration `udiv` — a flat `for oidx in 0..spatial_out`
+/// form burns ~4 udiv per output position that cannot be strength-reduced.
+macro_rules! conv_direct_sweep_simd_typed {
+    ($fn_name:ident, $T:ty, $zero:expr) => {
+        #[cfg(feature = "simd")]
+        #[macerator::with_simd]
+        fn $fn_name<S: macerator::Simd>(
+            w_slice: &[$T],
+            x_nhwc: &[$T],
+            dst_row: &mut [$T],
+            params: &SweepParams,
+            channels_in: usize,
+        ) {
+            use macerator::{Scalar, vload_unaligned};
+            let lanes = <$T as Scalar>::lanes::<S>();
+            let unroll = 4 * lanes;
+            let unroll_len = channels_in / unroll * unroll;
+            let simd_len = channels_in / lanes * lanes;
 
-    let out_d = dst_row.len() / (out_h * out_w);
+            let SweepParams {
+                out_h, out_w, in_d, in_h, in_w,
+                stride_d, stride_h, stride_w,
+                dilation_d, dilation_h, dilation_w,
+                kd, kh, kw,
+                pad_d, pad_h, pad_w,
+                has_padding,
+                ..
+            } = *params;
 
-    // Nested (od, oh_, ow_) loops with a running `oidx` counter avoid
-    // per-output integer divisions on (out_h * out_w) — LLVM cannot
-    // strength-reduce division by a runtime value, so a flat
-    // `for oidx in 0..spatial_out` form burns ~4 udiv per iteration.
-    let mut oidx: usize = 0;
-    for od in 0..out_d {
-        let base_id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
-        let id_in_range = !has_padding || (base_id_s >= 0 && base_id_s < in_d as isize);
-        let id = if has_padding {
-            if !id_in_range {
-                // Entire (od, *, *) block is out of bounds — skip all
-                // output positions for this od.
-                oidx += out_h * out_w;
-                continue;
+            let out_d = dst_row.len() / (out_h * out_w);
+
+            let mut oidx: usize = 0;
+            for od in 0..out_d {
+                let base_id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
+                if has_padding && (base_id_s < 0 || base_id_s >= in_d as isize) {
+                    oidx += out_h * out_w;
+                    continue;
+                }
+                let id = base_id_s as usize;
+
+                for oh_ in 0..out_h {
+                    let base_ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
+                    if has_padding && (base_ih_s < 0 || base_ih_s >= in_h as isize) {
+                        oidx += out_w;
+                        continue;
+                    }
+                    let ih = base_ih_s as usize;
+
+                    for ow_ in 0..out_w {
+                        let base_iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
+                        if has_padding && (base_iw_s < 0 || base_iw_s >= in_w as isize) {
+                            oidx += 1;
+                            continue;
+                        }
+                        let iw = base_iw_s as usize;
+
+                        let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
+                        let x_slice = &x_nhwc[x_start..x_start + channels_in];
+
+                        // Four independent accumulators for ILP through the FMA pipeline.
+                        // Vector::mul_add(self, b, c) = self*b + c, so
+                        //   w.mul_add(x, acc) = w*x + acc.
+                        let mut acc0 = ($zero).splat::<S>();
+                        let mut acc1 = ($zero).splat::<S>();
+                        let mut acc2 = ($zero).splat::<S>();
+                        let mut acc3 = ($zero).splat::<S>();
+                        let mut i = 0;
+                        while i < unroll_len {
+                            unsafe {
+                                let w0 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
+                                let x0 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
+                                acc0 = w0.mul_add(x0, acc0);
+                                let w1 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + lanes));
+                                let x1 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + lanes));
+                                acc1 = w1.mul_add(x1, acc1);
+                                let w2 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 2 * lanes));
+                                let x2 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 2 * lanes));
+                                acc2 = w2.mul_add(x2, acc2);
+                                let w3 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 3 * lanes));
+                                let x3 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 3 * lanes));
+                                acc3 = w3.mul_add(x3, acc3);
+                            }
+                            i += unroll;
+                        }
+                        while i < simd_len {
+                            unsafe {
+                                let wv = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
+                                let xv = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
+                                acc0 = wv.mul_add(xv, acc0);
+                            }
+                            i += lanes;
+                        }
+                        let partial = (acc0 + acc1 + acc2 + acc3).reduce_add();
+                        let mut tail: $T = $zero;
+                        while i < channels_in {
+                            tail += w_slice[i] * x_slice[i];
+                            i += 1;
+                        }
+                        dst_row[oidx] += partial + tail;
+                        oidx += 1;
+                    }
+                }
             }
-            base_id_s as usize
-        } else {
-            base_id_s as usize
-        };
+        }
+    };
+}
 
-        for oh_ in 0..out_h {
-            let base_ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
-            let ih_in_range =
-                !has_padding || (base_ih_s >= 0 && base_ih_s < in_h as isize);
-            let ih = if has_padding {
-                if !ih_in_range {
-                    oidx += out_w;
-                    continue;
-                }
-                base_ih_s as usize
-            } else {
-                base_ih_s as usize
-            };
-
-            for ow_ in 0..out_w {
-                let base_iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
-                if has_padding && (base_iw_s < 0 || base_iw_s >= in_w as isize) {
-                    oidx += 1;
-                    continue;
-                }
-                let iw = base_iw_s as usize;
-
+/// Generates a scalar-fallback direct-conv sweep for one element type. Used
+/// when the `simd` feature is disabled. LLVM autovectorizes the unrolled
+/// 4-accumulator loop on most modern targets.
+macro_rules! conv_direct_sweep_scalar_typed {
+    ($fn_name:ident, $T:ty, $zero:expr) => {
+        #[cfg(not(feature = "simd"))]
+        fn $fn_name(
+            w_slice: &[$T],
+            x_nhwc: &[$T],
+            dst_row: &mut [$T],
+            params: &SweepParams,
+            channels_in: usize,
+        ) {
+            let SweepParams {
+                out_h, out_w, in_d, in_h, in_w,
+                stride_d, stride_h, stride_w,
+                dilation_d, dilation_h, dilation_w,
+                kd, kh, kw,
+                pad_d, pad_h, pad_w,
+                has_padding,
+                ..
+            } = *params;
+            for (oidx, out) in dst_row.iter_mut().enumerate() {
+                let od = oidx / (out_h * out_w);
+                let rem = oidx % (out_h * out_w);
+                let oh_ = rem / out_w;
+                let ow_ = rem % out_w;
+                let (id, ih, iw) = if has_padding {
+                    let id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
+                    let ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
+                    let iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
+                    if id_s < 0
+                        || id_s >= in_d as isize
+                        || ih_s < 0
+                        || ih_s >= in_h as isize
+                        || iw_s < 0
+                        || iw_s >= in_w as isize
+                    {
+                        continue;
+                    }
+                    (id_s as usize, ih_s as usize, iw_s as usize)
+                } else {
+                    (
+                        od * stride_d + kd * dilation_d,
+                        oh_ * stride_h + kh * dilation_h,
+                        ow_ * stride_w + kw * dilation_w,
+                    )
+                };
                 let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
                 let x_slice = &x_nhwc[x_start..x_start + channels_in];
-
-                // Four independent accumulators for ILP through the FMA pipeline.
-                let mut acc0 = (0.0f32).splat::<S>();
-                let mut acc1 = (0.0f32).splat::<S>();
-                let mut acc2 = (0.0f32).splat::<S>();
-                let mut acc3 = (0.0f32).splat::<S>();
-                // Vector::mul_add(self, b, c) = self*b + c, so
-                //   w.mul_add(x, acc) = w*x + acc.
+                let (mut s0, mut s1, mut s2, mut s3): ($T, $T, $T, $T) =
+                    ($zero, $zero, $zero, $zero);
                 let mut i = 0;
-                while i < unroll_len {
-                    unsafe {
-                        let w0 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
-                        let x0 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
-                        acc0 = w0.mul_add(x0, acc0);
-                        let w1 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + lanes));
-                        let x1 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + lanes));
-                        acc1 = w1.mul_add(x1, acc1);
-                        let w2 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 2 * lanes));
-                        let x2 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 2 * lanes));
-                        acc2 = w2.mul_add(x2, acc2);
-                        let w3 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 3 * lanes));
-                        let x3 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 3 * lanes));
-                        acc3 = w3.mul_add(x3, acc3);
-                    }
-                    i += unroll;
+                while i + 4 <= channels_in {
+                    s0 += w_slice[i] * x_slice[i];
+                    s1 += w_slice[i + 1] * x_slice[i + 1];
+                    s2 += w_slice[i + 2] * x_slice[i + 2];
+                    s3 += w_slice[i + 3] * x_slice[i + 3];
+                    i += 4;
                 }
-                while i < simd_len {
-                    unsafe {
-                        let wv = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
-                        let xv = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
-                        acc0 = wv.mul_add(xv, acc0);
-                    }
-                    i += lanes;
-                }
-                let partial = (acc0 + acc1 + acc2 + acc3).reduce_add();
-                let mut tail = 0.0f32;
+                let mut s = s0 + s1 + s2 + s3;
                 while i < channels_in {
-                    tail += w_slice[i] * x_slice[i];
+                    s += w_slice[i] * x_slice[i];
                     i += 1;
                 }
-                dst_row[oidx] += partial + tail;
-                oidx += 1;
+                *out += s;
             }
         }
-    }
+    };
 }
 
-/// Scalar fallback for targets without the `simd` feature. LLVM
-/// autovectorizes the unrolled 4-accumulator loop on most modern targets.
-#[cfg(not(feature = "simd"))]
-fn conv_direct_sweep_f32_scalar(
-    w_slice: &[f32],
-    x_nhwc: &[f32],
-    dst_row: &mut [f32],
-    params: &SweepParams,
-    channels_in: usize,
-) {
-    let SweepParams {
-        out_h,
-        out_w,
-        in_d,
-        in_h,
-        in_w,
-        stride_d,
-        stride_h,
-        stride_w,
-        dilation_d,
-        dilation_h,
-        dilation_w,
-        kd,
-        kh,
-        kw,
-        pad_d,
-        pad_h,
-        pad_w,
-        has_padding,
-        ..
-    } = *params;
-    for oidx in 0..dst_row.len() {
-        let od = oidx / (out_h * out_w);
-        let rem = oidx % (out_h * out_w);
-        let oh_ = rem / out_w;
-        let ow_ = rem % out_w;
-        let (id, ih, iw) = if has_padding {
-            let id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
-            let ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
-            let iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
-            if id_s < 0
-                || id_s >= in_d as isize
-                || ih_s < 0
-                || ih_s >= in_h as isize
-                || iw_s < 0
-                || iw_s >= in_w as isize
-            {
-                continue;
-            }
-            (id_s as usize, ih_s as usize, iw_s as usize)
-        } else {
-            (
-                od * stride_d + kd * dilation_d,
-                oh_ * stride_h + kh * dilation_h,
-                ow_ * stride_w + kw * dilation_w,
-            )
-        };
-        let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
-        let x_slice = &x_nhwc[x_start..x_start + channels_in];
-        let (mut s0, mut s1, mut s2, mut s3) = (0.0f32, 0.0, 0.0, 0.0);
-        let mut i = 0;
-        while i + 4 <= channels_in {
-            s0 += w_slice[i] * x_slice[i];
-            s1 += w_slice[i + 1] * x_slice[i + 1];
-            s2 += w_slice[i + 2] * x_slice[i + 2];
-            s3 += w_slice[i + 3] * x_slice[i + 3];
-            i += 4;
-        }
-        let mut s = s0 + s1 + s2 + s3;
-        while i < channels_in {
-            s += w_slice[i] * x_slice[i];
-            i += 1;
-        }
-        dst_row[oidx] += s;
-    }
-}
+conv_direct_sweep_simd_typed!(conv_direct_sweep_f32_simd, f32, 0.0f32);
+conv_direct_sweep_simd_typed!(conv_direct_sweep_f64_simd, f64, 0.0f64);
+conv_direct_sweep_scalar_typed!(conv_direct_sweep_f32_scalar, f32, 0.0f32);
+conv_direct_sweep_scalar_typed!(conv_direct_sweep_f64_scalar, f64, 0.0f64);
 
 impl ConvElement for f32 {
     #[inline(always)]
@@ -2103,183 +2038,6 @@ impl ConvElement for f32 {
         conv_direct_sweep_f32_simd(w_slice, x_nhwc, dst_row, params, channels_in);
         #[cfg(not(feature = "simd"))]
         conv_direct_sweep_f32_scalar(w_slice, x_nhwc, dst_row, params, channels_in);
-    }
-}
-
-// -- f64 --
-
-#[cfg(feature = "simd")]
-#[macerator::with_simd]
-fn conv_direct_sweep_f64_simd<S: macerator::Simd>(
-    w_slice: &[f64],
-    x_nhwc: &[f64],
-    dst_row: &mut [f64],
-    params: &SweepParams,
-    channels_in: usize,
-) {
-    use macerator::{Scalar, vload_unaligned};
-    let lanes = <f64 as Scalar>::lanes::<S>();
-    let unroll = 4 * lanes;
-    let unroll_len = channels_in / unroll * unroll;
-    let simd_len = channels_in / lanes * lanes;
-
-    let SweepParams {
-        out_h,
-        out_w,
-        in_d,
-        in_h,
-        in_w,
-        stride_d,
-        stride_h,
-        stride_w,
-        dilation_d,
-        dilation_h,
-        dilation_w,
-        kd,
-        kh,
-        kw,
-        pad_d,
-        pad_h,
-        pad_w,
-        has_padding,
-        ..
-    } = *params;
-
-    for oidx in 0..dst_row.len() {
-        let od = oidx / (out_h * out_w);
-        let rem = oidx % (out_h * out_w);
-        let oh_ = rem / out_w;
-        let ow_ = rem % out_w;
-
-        let (id, ih, iw) = if has_padding {
-            let id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
-            let ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
-            let iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
-            if id_s < 0
-                || id_s >= in_d as isize
-                || ih_s < 0
-                || ih_s >= in_h as isize
-                || iw_s < 0
-                || iw_s >= in_w as isize
-            {
-                continue;
-            }
-            (id_s as usize, ih_s as usize, iw_s as usize)
-        } else {
-            (
-                od * stride_d + kd * dilation_d,
-                oh_ * stride_h + kh * dilation_h,
-                ow_ * stride_w + kw * dilation_w,
-            )
-        };
-
-        let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
-        let x_slice = &x_nhwc[x_start..x_start + channels_in];
-
-        let mut acc0 = (0.0f64).splat::<S>();
-        let mut acc1 = (0.0f64).splat::<S>();
-        let mut acc2 = (0.0f64).splat::<S>();
-        let mut acc3 = (0.0f64).splat::<S>();
-        // Vector::mul_add(self, b, c) = self*b + c, so
-        //   w.mul_add(x, acc) = w*x + acc.
-        let mut i = 0;
-        while i < unroll_len {
-            unsafe {
-                let w0 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
-                let x0 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
-                acc0 = w0.mul_add(x0, acc0);
-                let w1 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + lanes));
-                let x1 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + lanes));
-                acc1 = w1.mul_add(x1, acc1);
-                let w2 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 2 * lanes));
-                let x2 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 2 * lanes));
-                acc2 = w2.mul_add(x2, acc2);
-                let w3 = vload_unaligned::<S, _>(w_slice.as_ptr().add(i + 3 * lanes));
-                let x3 = vload_unaligned::<S, _>(x_slice.as_ptr().add(i + 3 * lanes));
-                acc3 = w3.mul_add(x3, acc3);
-            }
-            i += unroll;
-        }
-        while i < simd_len {
-            unsafe {
-                let wv = vload_unaligned::<S, _>(w_slice.as_ptr().add(i));
-                let xv = vload_unaligned::<S, _>(x_slice.as_ptr().add(i));
-                acc0 = wv.mul_add(xv, acc0);
-            }
-            i += lanes;
-        }
-        let partial = (acc0 + acc1 + acc2 + acc3).reduce_add();
-        let mut tail = 0.0f64;
-        while i < channels_in {
-            tail += w_slice[i] * x_slice[i];
-            i += 1;
-        }
-        dst_row[oidx] += partial + tail;
-    }
-}
-
-#[cfg(not(feature = "simd"))]
-fn conv_direct_sweep_f64_scalar(
-    w_slice: &[f64],
-    x_nhwc: &[f64],
-    dst_row: &mut [f64],
-    params: &SweepParams,
-    channels_in: usize,
-) {
-    let SweepParams {
-        out_h,
-        out_w,
-        in_d,
-        in_h,
-        in_w,
-        stride_d,
-        stride_h,
-        stride_w,
-        dilation_d,
-        dilation_h,
-        dilation_w,
-        kd,
-        kh,
-        kw,
-        pad_d,
-        pad_h,
-        pad_w,
-        has_padding,
-        ..
-    } = *params;
-    for oidx in 0..dst_row.len() {
-        let od = oidx / (out_h * out_w);
-        let rem = oidx % (out_h * out_w);
-        let oh_ = rem / out_w;
-        let ow_ = rem % out_w;
-        let (id, ih, iw) = if has_padding {
-            let id_s = (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
-            let ih_s = (oh_ * stride_h + kh * dilation_h) as isize - pad_h as isize;
-            let iw_s = (ow_ * stride_w + kw * dilation_w) as isize - pad_w as isize;
-            if id_s < 0
-                || id_s >= in_d as isize
-                || ih_s < 0
-                || ih_s >= in_h as isize
-                || iw_s < 0
-                || iw_s >= in_w as isize
-            {
-                continue;
-            }
-            (id_s as usize, ih_s as usize, iw_s as usize)
-        } else {
-            (
-                od * stride_d + kd * dilation_d,
-                oh_ * stride_h + kh * dilation_h,
-                ow_ * stride_w + kw * dilation_w,
-            )
-        };
-        let x_start = ((id * in_h + ih) * in_w + iw) * channels_in;
-        let x_slice = &x_nhwc[x_start..x_start + channels_in];
-        let mut s = 0.0f64;
-        for i in 0..channels_in {
-            s += w_slice[i] * x_slice[i];
-        }
-        dst_row[oidx] += s;
     }
 }
 
@@ -2341,7 +2099,7 @@ impl ConvElement for f16 {
             has_padding,
             ..
         } = *params;
-        for oidx in 0..dst_row.len() {
+        for (oidx, out) in dst_row.iter_mut().enumerate() {
             let od = oidx / (out_h * out_w);
             let rem = oidx % (out_h * out_w);
             let oh_ = rem / out_w;
@@ -2373,8 +2131,7 @@ impl ConvElement for f16 {
             for i in 0..channels_in {
                 sum += w_slice[i].to_f32() * x_slice[i].to_f32();
             }
-            let prev = dst_row[oidx].to_f32();
-            dst_row[oidx] = f16::from_f32(prev + sum);
+            *out = f16::from_f32(out.to_f32() + sum);
         }
     }
 }
