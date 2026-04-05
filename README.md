@@ -125,8 +125,33 @@ the decomposed 5-6-op default path in burn-tensor / burn-nn; there is an
 [upstream proposal](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md) to add fused `softmax` and
 `layer_norm` hooks to burn-backend so any CPU backend can plug in.
 
+#### Broader op coverage
+
+Eleven bench files now cover every flex op that intersects with candle's CPU API (elementwise,
+reduce, shape ops, batched matmul, conv2d, pool2d, indexing, cumsum, sort, interpolate). Selected
+highlights on the same hardware:
+
+| Op                                | Shape                                  | Flex         | Candle   | Flex vs Candle |
+| --------------------------------- | -------------------------------------- | ------------ | -------- | -------------- |
+| batched matmul (attention)        | `[32, 128, 128] @ [32, 128, 128]`      | **253 µs**   | 3.29 ms  | **13.0×**      |
+| batched matmul (AV, 3s)           | `[16, 150, 150] @ [16, 150, 64]`       | **173 µs**   | 1.59 ms  | **9.19×**      |
+| conv2d ResNet layer 2             | 1×128×28² k=3                          | **1.03 ms**  | 1.90 ms  | **1.85×**      |
+| max_pool2d k=3 s=2                | 8×64×56²                               | **684 µs**   | 1.81 ms  | **2.64×**      |
+| cumsum last dim                   | 256×256                                | **42 µs**    | 436 µs   | **10.4×**      |
+| full-tensor max / min             | 1024²                                  | **129 µs**   | 520 µs   | **4.0×**       |
+| sum along non-last dim            | 1024²                                  | **78 µs**    | 1.20 ms  | **15.3×**      |
+| gather last dim                   | 1024², half-index                      | **244 µs**   | 511 µs   | **2.09×**      |
+| cat along last dim                | 2×1024²                                | **121 µs**   | 322 µs   | **2.66×**      |
+| basic elementwise (add/mul/...)   | 1M f32                                 | 112 µs       | 112 µs   | tied (BW-bound)|
+
+Ties cover all basic elementwise arithmetic, transcendentals, view ops (transpose/reshape/narrow),
+square matmul, and gelu. Ten specific regressions vs candle are documented and prioritized as a
+perf bug list in [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md#perf-bug-list-prioritized). The biggest
+are `conv_transpose2d` (8× slower, upsampling decoders), `sort_last` at large rows (8× slower), and
+`max_dim`/`argmax_dim` (4× slower, affects classifier output paths).
+
 See [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md) for the full breakdown including conv1d L1-L6, all
-transformer shapes, and per-forward-pass estimates.
+transformer shapes, per-forward-pass estimates, and the complete bench output.
 
 ### Status
 

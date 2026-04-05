@@ -18,9 +18,23 @@ version**: 0.10 (pinned in `crates/burn-flex-bench-candle/Cargo.toml`) **Burn-fl
 ## Running
 
 ```sh
+# Original wav2vec2-focused benches
 cargo bench -p burn-flex-bench-candle --bench matmul
 cargo bench -p burn-flex-bench-candle --bench conv1d
 cargo bench -p burn-flex-bench-candle --bench transformer_ops
+
+# Broader op coverage (added 2026-04-05)
+cargo bench -p burn-flex-bench-candle --bench elementwise
+cargo bench -p burn-flex-bench-candle --bench reduce
+cargo bench -p burn-flex-bench-candle --bench shape_ops
+cargo bench -p burn-flex-bench-candle --bench matmul_batched
+cargo bench -p burn-flex-bench-candle --bench conv2d
+cargo bench -p burn-flex-bench-candle --bench pool2d
+cargo bench -p burn-flex-bench-candle --bench indexing
+cargo bench -p burn-flex-bench-candle --bench misc_ops
+
+# Or everything
+cargo bench -p burn-flex-bench-candle
 ```
 
 ---
@@ -144,6 +158,171 @@ transformer layer runs softmax + 2× layer_norm × 24 layers.
 The rest of the forward pass (matmul, gelu, attention) is tied or a small flex win, so the 4.7 ms
 wallclock savings from just these three op families drives the overall wav2vec2-large inference
 advantage vs candle on the same hardware.
+
+---
+
+## Broader op coverage (added 2026-04-05)
+
+Eight additional bench files in `crates/burn-flex-bench-candle/benches/` cover every flex op that
+intersects with candle's CPU API. Medians below are from a single fresh run on the same Apple M3
+Max. Ratios use candle / flex (>1.0 means flex is faster).
+
+### Batched matmul (attention shapes)
+
+| Shape                                         | Flex       | Candle  | Ratio     |
+| --------------------------------------------- | ---------- | ------- | --------- |
+| QK^T `[16, 50, 64] @ [16, 64, 50]`            | **52 µs**  | 74 µs   | **1.40×** |
+| QK^T `[16, 150, 64] @ [16, 64, 150]`          | **190 µs** | 1.61 ms | **8.47×** |
+| AV `[16, 50, 50] @ [16, 50, 64]`              | 58 µs      | 58 µs   | tied      |
+| AV `[16, 150, 150] @ [16, 150, 64]`           | **173 µs** | 1.59 ms | **9.19×** |
+| batched_128 `[32, 128, 128] @ [32, 128, 128]` | **253 µs** | 3.29 ms | **13.0×** |
+
+Flex's batched matmul delegates to gemm crate per-batch; candle's 3D matmul path does not call a
+blocked gemm at 3D, so it loses dramatically as batch×inner gets larger.
+
+Caveat: the view-input form `q.matmul(k.swap_dims(1,2))` currently regresses flex at small seqs (340
+µs at seq=50 vs 83 µs for candle, and vs 52 µs for flex's own contiguous path). Tracked in the perf
+bug list below.
+
+### Conv2d + conv_transpose2d (ResNet shapes)
+
+| Layer                         | Flex        | Candle  | Ratio        |
+| ----------------------------- | ----------- | ------- | ------------ |
+| resnet_conv1 1×3×224² k7 s2   | **872 µs**  | 1.10 ms | **1.27×**    |
+| resnet_l1 1×64×56² k3         | **942 µs**  | 1.28 ms | **1.36×**    |
+| resnet_l2 1×128×28² k3        | **1.03 ms** | 1.90 ms | **1.85×**    |
+| resnet_l3 1×256×14² k3        | **1.47 ms** | 2.20 ms | **1.49×**    |
+| resnet_l4 1×512×7² k3         | **2.35 ms** | 3.08 ms | **1.31×**    |
+| 1×1 pointwise 1×256×56² → 64  | 2.23 ms     | 1.52 ms | 0.68×        |
+| conv_transpose 1×128×16² → 64 | **12.5 ms** | 1.45 ms | **0.12×** ⚠️ |
+| conv_transpose 1×64×32² → 32  | **10.6 ms** | 1.30 ms | **0.12×** ⚠️ |
+
+Flex wins every standard 3×3 conv2d layer; 1×1 pointwise is where candle's direct gemm is sharper.
+`conv_transpose2d` is a major outlier (8× slower) and is listed in the perf bug list.
+
+### Pool2d
+
+| Shape          | Op  | Flex       | Candle  | Ratio     |
+| -------------- | --- | ---------- | ------- | --------- |
+| 1×64×112² k3s2 | max | **436 µs** | 893 µs  | **2.05×** |
+| 1×64×112² k3s2 | avg | **471 µs** | 896 µs  | **1.90×** |
+| 8×64×56² k3s2  | max | **684 µs** | 1.81 ms | **2.64×** |
+| 8×64×56² k3s2  | avg | **766 µs** | 1.75 ms | **2.29×** |
+| 1×128×28² k2s2 | max | 92 µs      | 57 µs   | 0.62×     |
+| 1×128×28² k2s2 | avg | 89 µs      | 56 µs   | 0.63×     |
+
+Flex wins the common k=3 stride=2 ResNet pool by ~2×; loses on the tiny k=2 shapes, which are near
+the divan noise floor (<100 µs).
+
+### Reductions
+
+| Op              | Shape | Flex        | Candle  | Ratio     |
+| --------------- | ----- | ----------- | ------- | --------- |
+| sum (full)      | 1024² | 52.6 µs     | 47.8 µs | 0.91×     |
+| mean (full)     | 1024² | 48.5 µs     | 48.0 µs | tied      |
+| max (full)      | 1024² | **129 µs**  | 520 µs  | **4.0×**  |
+| min (full)      | 1024² | **129 µs**  | 520 µs  | **4.0×**  |
+| sum_dim last    | 1024² | 78.2 µs     | 40.4 µs | 0.52×     |
+| sum_dim first   | 1024² | **78.4 µs** | 1.20 ms | **15.3×** |
+| mean_dim last   | 1024² | 77.6 µs     | 40.8 µs | 0.53×     |
+| max_dim last    | 1024² | 3.37 ms     | 506 µs  | 0.15×     |
+| max_dim first   | 1024² | 3.35 ms     | 911 µs  | 0.27×     |
+| argmax_dim last | 1024² | 3.40 ms     | 911 µs  | 0.27×     |
+
+Two big wins: **4× faster full-tensor max/min** (candle routes via `flatten_all → max(0)`) and **15×
+faster non-last-dim sum** (candle is missing a SIMD strided reducer). Two real losses: **sum_dim /
+mean_dim last-axis** is 2× slower on flex, and **max_dim / argmax_dim** is 4× slower regardless of
+axis. Both are listed in the perf bug list.
+
+### Elementwise (1D, 1M elements, f32)
+
+All basic arithmetic and transcendentals land within 5% on both backends (both bottleneck on LPDDR5
+bandwidth at roughly 56 GB/s for the cheap ops). Representative numbers at 1M:
+
+| Op    | Flex     | Candle   |
+| ----- | -------- | -------- |
+| add   | 112.6 µs | 112.8 µs |
+| mul   | 112.7 µs | 112.8 µs |
+| neg   | 74.6 µs  | 76.7 µs  |
+| recip | 74.3 µs  | 74.2 µs  |
+| sqrt  | 139 µs   | 142 µs   |
+| log   | 1.69 ms  | 1.69 ms  |
+| tanh  | 1.73 ms  | 1.73 ms  |
+| powf  | 3.01 ms  | 3.11 ms  |
+| sin   | 1.41 ms  | 1.27 ms  |
+
+The only notable gap is `sin` at ~10% slower on flex.
+
+### Shape ops
+
+View ops (transpose, reshape, narrow, expand, permute) are all under 150 ns on both backends;
+differences are pure dispatch overhead and not meaningful.
+
+Data-moving shape ops:
+
+| Op                                 | Flex        | Candle  | Ratio     |
+| ---------------------------------- | ----------- | ------- | --------- |
+| transpose_then_exp 1024² (strided) | **1.29 ms** | 2.14 ms | **1.65×** |
+| cat along dim 0, 2×1024²           | 101 µs      | 109 µs  | 1.08×     |
+| cat along last dim, 2×1024²        | **121 µs**  | 322 µs  | **2.66×** |
+| repeat_dim 256² ×4                 | 13.1 µs     | 13.0 µs | tied      |
+
+Flex's strided-unary path handles transposed inputs 1.65× faster than candle, and its last-axis
+`cat` is 2.66× faster (candle's per-row stride copy is the bottleneck).
+
+### Indexing
+
+| Shape | Op                 | Flex       | Candle | Ratio     |
+| ----- | ------------------ | ---------- | ------ | --------- |
+| 1024² | gather last dim    | **244 µs** | 511 µs | **2.09×** |
+| 1024² | scatter_add last   | 548 µs     | 622 µs | 1.13×     |
+| 1024² | index_select dim 0 | 100 µs     | 36 µs  | 0.36× ⚠️  |
+| 1024² | where_cond         | 248 µs     | 122 µs | 0.49× ⚠️  |
+
+Flex wins gather (the hottest indexing op in language models) by 2×; loses `index_select` and
+`mask_where` by ~2×.
+
+### Cumsum, sort, nearest2d
+
+| Op                            | Flex         | Candle  | Ratio     |
+| ----------------------------- | ------------ | ------- | --------- |
+| cumsum last dim, 256²         | **42 µs**    | 436 µs  | **10.4×** |
+| cumsum last dim, 1024²        | **696 µs**   | 4.68 ms | **6.72×** |
+| sort last dim, 256²           | 202 µs       | 186 µs  | tied      |
+| sort last dim, 1024²          | **11.95 ms** | 1.54 ms | 0.13× ⚠️  |
+| nearest2d upsample 64² → 128² | 56 µs        | 30 µs   | 0.54×     |
+
+Cumsum is one of the biggest flex wins (6–10×). Sort ties at 256² but scales poorly to 1024² (8×
+slower, listed below).
+
+---
+
+## Perf bug list (prioritized)
+
+Surfaced by the broader coverage pass. Ordered by impact on real workloads.
+
+1. **conv_transpose2d: 8× slower** (12.5 ms vs 1.45 ms). Largest single gap. Affects any model with
+   an upsampling decoder (segmentation, GAN, super-resolution).
+2. **sort_last at 1024²: 7.8× slower** (12 ms vs 1.5 ms). Ties at 256² then regresses sharply as
+   rows grow.
+3. **max_dim / argmax_dim: ~4× slower** (3.4 ms vs ~900 µs at 1024²). On the classifier output path
+   for any model with an argmax head.
+4. **matmul on transposed-view input at small seqs: 4× slower than candle, 6× slower than flex's own
+   contiguous path**. `Q @ K.swap_dims(1,2)` at `[16, 50, 64]` takes 340 µs on flex vs 52 µs for the
+   contiguous-input form. Affects any attention kernel written in the idiomatic transpose form.
+5. **conv1d L3–L6 (small wav2vec2 shapes): 1.2–1.5× slower**. Already tracked at
+   [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
+6. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
+7. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
+8. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
+   the fused-layer_norm dependency path.
+9. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
+10. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
+    pointwise; flex's im2col adds overhead.
+
+Items 1–4 together cover decoder models, classifiers, and any attention not written in the
+pre-transposed-K form. Fixing them would move flex into a "wins everywhere" state against candle on
+this hardware.
 
 ---
 
