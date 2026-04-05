@@ -245,45 +245,105 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
     let input: &[f32] = tensor.storage();
     let mut output: Vec<f32> = vec![0.0f32; input.len()];
 
+    // Row-parallel via rayon. Each task owns a contiguous range of rows
+    // and calls the SIMD-specialized sweep once, so macerator's dispatch
+    // is amortized over the whole range rather than paid per row.
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
+        // Keep chunks coarse enough (~64 rows) so each rayon task does
+        // real work and the dispatch shim runs once per task.
+        const ROWS_PER_TASK: usize = 64;
+        let chunk_bytes = ROWS_PER_TASK * last;
         output
-            .par_chunks_mut(last)
-            .zip(input.par_chunks(last))
-            .for_each(|(o, i)| softmax_row_f32(i, o));
+            .par_chunks_mut(chunk_bytes)
+            .zip(input.par_chunks(chunk_bytes))
+            .for_each(|(o, i)| softmax_rows_f32_simd(i, o, last));
     }
     #[cfg(not(feature = "rayon"))]
     {
-        for (i, o) in input.chunks(last).zip(output.chunks_mut(last)) {
-            softmax_row_f32(i, o);
-        }
+        softmax_rows_f32_simd(input, &mut output, last);
     }
 
     FlexTensor::new(Bytes::from_elems(output), Layout::contiguous(shape), DType::F32)
 }
 
-#[inline]
-fn softmax_row_f32(input: &[f32], output: &mut [f32]) {
-    // Pass 1: find the row max for numerical stability.
-    let mut max_val = f32::NEG_INFINITY;
-    for &x in input {
+/// SIMD-dispatched row sweep for f32 softmax.
+///
+/// Macerator picks the best backend (NEON on aarch64, AVX/AVX-512 on x86_64,
+/// SIMD128 on wasm32, scalar fallback elsewhere) once per call. The inner
+/// row kernel runs fully in the selected ISA for the max-reduce and
+/// normalize passes; the exp pass stays scalar because macerator does not
+/// (yet) expose a vectorized `exp`. The exp pass is memory-bandwidth bound
+/// anyway — every element still has to be read, exp'd, and written — so
+/// the SIMD wins come from the other two passes.
+#[macerator::with_simd]
+fn softmax_rows_f32_simd<S: macerator::Simd>(
+    input: &[f32],
+    output: &mut [f32],
+    row_len: usize,
+) {
+    debug_assert_eq!(input.len(), output.len());
+    debug_assert_eq!(input.len() % row_len, 0);
+    for (in_row, out_row) in input.chunks(row_len).zip(output.chunks_mut(row_len)) {
+        softmax_row_f32_simd::<S>(in_row, out_row);
+    }
+}
+
+/// Inner row kernel for a single softmax row. `#[inline(always)]` so it
+/// inlines into `softmax_rows_f32_simd`'s loop body for each monomorphized S,
+/// avoiding a per-row call boundary.
+#[inline(always)]
+fn softmax_row_f32_simd<S: macerator::Simd>(input: &[f32], output: &mut [f32]) {
+    use macerator::{Scalar, vload_unaligned, vstore_unaligned};
+    let lanes = <f32 as Scalar>::lanes::<S>();
+    let len = input.len();
+    let simd_len = len / lanes * lanes;
+
+    // Pass 1: row max for numerical stability.
+    // SIMD max-reduction across the row, scalar tail.
+    let (mut max_val, tail_start) = if simd_len >= lanes {
+        let mut max_vec = unsafe { vload_unaligned::<S, _>(input.as_ptr()) };
+        let mut j = lanes;
+        while j < simd_len {
+            let v = unsafe { vload_unaligned::<S, _>(input.as_ptr().add(j)) };
+            max_vec = max_vec.max(v);
+            j += lanes;
+        }
+        (max_vec.reduce_max(), simd_len)
+    } else {
+        (f32::NEG_INFINITY, 0)
+    };
+    for &x in &input[tail_start..] {
         if x > max_val {
             max_val = x;
         }
     }
+
     // Pass 2: compute exp(x - max), store in output, accumulate sum.
+    // Scalar exp (no SIMD exp in macerator). This pass is the one that
+    // actually does memory reads + writes on the whole row, so scalar
+    // here still lands us at memory bandwidth.
     let mut sum = 0.0f32;
-    for (i, &x) in input.iter().enumerate() {
-        let e = (x - max_val).exp();
-        output[i] = e;
+    for idx in 0..len {
+        let e = (input[idx] - max_val).exp();
+        output[idx] = e;
         sum += e;
     }
-    // Pass 3: normalize. Multiply-by-reciprocal is faster than division
-    // per element and bit-identical for our purposes because the reciprocal
-    // is computed once.
+
+    // Pass 3: normalize — multiply every element by 1/sum.
+    // SIMD splat + multiply, scalar tail.
     let inv = 1.0f32 / sum;
-    for x in output.iter_mut() {
+    let inv_vec = inv.splat::<S>();
+    let mut i = 0;
+    while i < simd_len {
+        unsafe {
+            let v = vload_unaligned::<S, _>(output.as_ptr().add(i));
+            vstore_unaligned::<S, _>(output.as_mut_ptr().add(i), v * inv_vec);
+        }
+        i += lanes;
+    }
+    for x in &mut output[i..] {
         *x *= inv;
     }
 }
