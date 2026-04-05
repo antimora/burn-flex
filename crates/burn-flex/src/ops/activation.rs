@@ -253,15 +253,15 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
             out_slice
                 .par_chunks_mut(chunk_elems)
                 .zip(input.par_chunks(chunk_elems))
-                .for_each(|(o, i)| softmax_rows_f32_simd(i, o, last));
+                .for_each(|(o, i)| softmax_rows_f32(i, o, last));
         }
         #[cfg(not(feature = "rayon"))]
         {
-            softmax_rows_f32_simd(input, out_slice, last);
+            softmax_rows_f32(input, out_slice, last);
         }
     }
     // SAFETY: every element in the first `n` slots of the backing buffer
-    // was written by softmax_rows_f32_simd above.
+    // was written by softmax_rows_f32 above.
     unsafe { output.set_len(n) };
 
     FlexTensor::new(
@@ -271,10 +271,25 @@ fn softmax_last_f32(tensor: FlexTensor) -> FlexTensor {
     )
 }
 
-/// One macerator dispatch per chunk of rows, amortized over all rows in
-/// the chunk. Max-reduce and normalize passes are vectorized; the exp
-/// pass stays scalar (no SIMD exp in macerator) but is memory-bandwidth
-/// bound anyway.
+/// Row sweep for f32 softmax. With the `simd` feature, delegates to the
+/// `#[macerator::with_simd]` SIMD kernel (one dispatch per chunk of rows,
+/// amortized over all rows in the chunk). Without `simd`, uses a scalar
+/// row kernel.
+#[inline]
+fn softmax_rows_f32(input: &[f32], output: &mut [f32], row_len: usize) {
+    #[cfg(feature = "simd")]
+    softmax_rows_f32_simd(input, output, row_len);
+    #[cfg(not(feature = "simd"))]
+    {
+        debug_assert_eq!(input.len(), output.len());
+        debug_assert_eq!(input.len() % row_len, 0);
+        for (in_row, out_row) in input.chunks(row_len).zip(output.chunks_mut(row_len)) {
+            softmax_row_f32_scalar(in_row, out_row);
+        }
+    }
+}
+
+#[cfg(feature = "simd")]
 #[macerator::with_simd]
 fn softmax_rows_f32_simd<S: macerator::Simd>(input: &[f32], output: &mut [f32], row_len: usize) {
     debug_assert_eq!(input.len(), output.len());
@@ -284,9 +299,34 @@ fn softmax_rows_f32_simd<S: macerator::Simd>(input: &[f32], output: &mut [f32], 
     }
 }
 
+/// Scalar fallback row kernel for f32 softmax when the `simd` feature is
+/// disabled. Uses the same 3-pass algorithm as the SIMD path; LLVM
+/// autovectorizes the max-reduce and normalize loops on most targets.
+#[cfg(not(feature = "simd"))]
+#[inline]
+fn softmax_row_f32_scalar(input: &[f32], output: &mut [f32]) {
+    let mut max_val = f32::NEG_INFINITY;
+    for &x in input {
+        if x > max_val {
+            max_val = x;
+        }
+    }
+    let mut sum = 0.0f32;
+    for (i, &x) in input.iter().enumerate() {
+        let e = (x - max_val).exp();
+        output[i] = e;
+        sum += e;
+    }
+    let inv = 1.0f32 / sum;
+    for x in output.iter_mut() {
+        *x *= inv;
+    }
+}
+
 /// Inner row kernel for a single softmax row. `#[inline(always)]` so it
 /// inlines into `softmax_rows_f32_simd`'s loop body for each monomorphized S,
 /// avoiding a per-row call boundary.
+#[cfg(feature = "simd")]
 #[inline(always)]
 fn softmax_row_f32_simd<S: macerator::Simd>(input: &[f32], output: &mut [f32]) {
     use macerator::{Scalar, vload_unaligned, vstore_unaligned};
@@ -557,7 +597,7 @@ fn layer_norm_f32(
                         .par_chunks_mut(chunk_elems)
                         .zip(input_data.par_chunks(chunk_elems))
                         .for_each(|(o, i)| {
-                            layer_norm_rows_f32_with_beta_simd(
+                            layer_norm_rows_f32_with_beta(
                                 i, o, gamma_data, beta_slice, d_model, epsilon,
                             );
                         });
@@ -567,7 +607,7 @@ fn layer_norm_f32(
                         .par_chunks_mut(chunk_elems)
                         .zip(input_data.par_chunks(chunk_elems))
                         .for_each(|(o, i)| {
-                            layer_norm_rows_f32_no_beta_simd(i, o, gamma_data, d_model, epsilon);
+                            layer_norm_rows_f32_no_beta(i, o, gamma_data, d_model, epsilon);
                         });
                 }
             }
@@ -575,10 +615,10 @@ fn layer_norm_f32(
         #[cfg(not(feature = "rayon"))]
         {
             match beta_data {
-                Some(beta_slice) => layer_norm_rows_f32_with_beta_simd(
+                Some(beta_slice) => layer_norm_rows_f32_with_beta(
                     input_data, out_slice, gamma_data, beta_slice, d_model, epsilon,
                 ),
-                None => layer_norm_rows_f32_no_beta_simd(
+                None => layer_norm_rows_f32_no_beta(
                     input_data, out_slice, gamma_data, d_model, epsilon,
                 ),
             }
@@ -595,8 +635,89 @@ fn layer_norm_f32(
     )
 }
 
+/// Row sweep for f32 layer_norm with bias. Delegates to the SIMD kernel
+/// when the `simd` feature is enabled; otherwise uses a scalar row loop.
+#[inline]
+fn layer_norm_rows_f32_with_beta(
+    input: &[f32],
+    output: &mut [f32],
+    gamma: &[f32],
+    beta: &[f32],
+    d_model: usize,
+    epsilon: f32,
+) {
+    #[cfg(feature = "simd")]
+    layer_norm_rows_f32_with_beta_simd(input, output, gamma, beta, d_model, epsilon);
+    #[cfg(not(feature = "simd"))]
+    {
+        debug_assert_eq!(input.len(), output.len());
+        debug_assert_eq!(input.len() % d_model, 0);
+        debug_assert_eq!(gamma.len(), d_model);
+        debug_assert_eq!(beta.len(), d_model);
+        for (in_row, out_row) in input.chunks(d_model).zip(output.chunks_mut(d_model)) {
+            layer_norm_row_f32_scalar(in_row, out_row, gamma, Some(beta), epsilon);
+        }
+    }
+}
+
+/// Row sweep for f32 layer_norm without bias.
+#[inline]
+fn layer_norm_rows_f32_no_beta(
+    input: &[f32],
+    output: &mut [f32],
+    gamma: &[f32],
+    d_model: usize,
+    epsilon: f32,
+) {
+    #[cfg(feature = "simd")]
+    layer_norm_rows_f32_no_beta_simd(input, output, gamma, d_model, epsilon);
+    #[cfg(not(feature = "simd"))]
+    {
+        debug_assert_eq!(input.len(), output.len());
+        debug_assert_eq!(input.len() % d_model, 0);
+        debug_assert_eq!(gamma.len(), d_model);
+        for (in_row, out_row) in input.chunks(d_model).zip(output.chunks_mut(d_model)) {
+            layer_norm_row_f32_scalar(in_row, out_row, gamma, None, epsilon);
+        }
+    }
+}
+
+/// Scalar fallback row kernel for layer_norm when the `simd` feature is
+/// disabled. Two-pass algorithm matching the SIMD version (sum+sumsq,
+/// then normalize+affine).
+#[cfg(not(feature = "simd"))]
+#[inline]
+fn layer_norm_row_f32_scalar(
+    input: &[f32],
+    output: &mut [f32],
+    gamma: &[f32],
+    beta: Option<&[f32]>,
+    epsilon: f32,
+) {
+    let len = input.len();
+    let mut sum = 0.0f32;
+    let mut sumsq = 0.0f32;
+    for &x in input {
+        sum += x;
+        sumsq += x * x;
+    }
+    let n = len as f32;
+    let mean = sum / n;
+    let var = (sumsq / n) - mean * mean;
+    let inv_std = 1.0f32 / (var + epsilon).sqrt();
+    for (i, &x) in input.iter().enumerate() {
+        let scale = inv_std * gamma[i];
+        let normed = (x - mean) * scale;
+        output[i] = match beta {
+            Some(b) => normed + b[i],
+            None => normed,
+        };
+    }
+}
+
 /// SIMD-dispatched row sweep for f32 layer_norm with bias (beta). One
 /// macerator dispatch per chunk of rows, amortized over the whole chunk.
+#[cfg(feature = "simd")]
 #[macerator::with_simd]
 fn layer_norm_rows_f32_with_beta_simd<S: macerator::Simd>(
     input: &[f32],
@@ -616,6 +737,7 @@ fn layer_norm_rows_f32_with_beta_simd<S: macerator::Simd>(
 }
 
 /// SIMD-dispatched row sweep for f32 layer_norm without bias.
+#[cfg(feature = "simd")]
 #[macerator::with_simd]
 fn layer_norm_rows_f32_no_beta_simd<S: macerator::Simd>(
     input: &[f32],
@@ -633,6 +755,7 @@ fn layer_norm_rows_f32_no_beta_simd<S: macerator::Simd>(
 }
 
 /// Single-row layer_norm kernel. Two vectorized passes.
+#[cfg(feature = "simd")]
 #[inline(always)]
 fn layer_norm_row_f32_simd<S: macerator::Simd>(
     input: &[f32],
