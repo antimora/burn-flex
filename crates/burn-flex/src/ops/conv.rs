@@ -1056,11 +1056,9 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
     let output_size = batch_size * out_channels * out_spatial;
     let mut output = vec![zero; output_size];
 
-    // For each (batch, group) pair:
-    //   W_g: [in_ch_per_group, out_ch_per_group * k_spatial]  (contiguous in weight)
-    //   X_g: [in_ch_per_group, in_spatial]                    (contiguous in input)
-    //   columns = W_g^T @ X_g: [col_ch, in_spatial]
-    //   col2im scatters columns into output
+    // Reuse columns buffer across (batch, group) iterations; GEMM overwrites it fully.
+    let mut columns = vec![zero; col_ch * in_spatial];
+
     for b in 0..batch_size {
         for g in 0..groups {
             let ic_start = g * in_channels_per_group;
@@ -1072,8 +1070,6 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
             let x_group = &x_data[x_offset..x_offset + in_channels_per_group * in_spatial];
             let w_group = &w_data[w_offset..w_offset + in_channels_per_group * col_ch];
 
-            // GEMM: columns[col_ch, in_spatial] = W_g[in_ch/g, col_ch]^T @ X_g[in_ch/g, in_spatial]
-            let mut columns = vec![zero; col_ch * in_spatial];
             gemm_fn(
                 &mut columns,
                 w_group,
@@ -1087,47 +1083,51 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
             let out_base = b * out_channels * out_spatial;
             for oc in 0..out_channels_per_group {
                 let out_ch_base = out_base + (oc_start + oc) * out_spatial;
-                for k_idx in 0..k_spatial {
-                    let kd = k_idx / (kernel_h * kernel_w);
-                    let kh = (k_idx / kernel_w) % kernel_h;
-                    let kw = k_idx % kernel_w;
+                let oc_col_base = oc * k_spatial;
 
-                    let col_base = (oc * k_spatial + k_idx) * in_spatial;
+                for kd in 0..kernel_d {
+                    for kh in 0..kernel_h {
+                        for kw in 0..kernel_w {
+                            let k_idx = kd * kernel_h * kernel_w + kh * kernel_w + kw;
+                            let col_base = (oc_col_base + k_idx) * in_spatial;
 
-                    for id in 0..in_d {
-                        let od_raw = id * stride_d + kd * dilation_d;
-                        if od_raw < pad_d {
-                            continue;
-                        }
-                        let od = od_raw - pad_d;
-                        if od >= out_d {
-                            continue;
-                        }
-
-                        for ih in 0..in_h {
-                            let oh_raw = ih * stride_h + kh * dilation_h;
-                            if oh_raw < pad_h {
-                                continue;
-                            }
-                            let oh = oh_raw - pad_h;
-                            if oh >= out_h {
-                                continue;
-                            }
-
-                            for iw in 0..in_w {
-                                let ow_raw = iw * stride_w + kw * dilation_w;
-                                if ow_raw < pad_w {
+                            for id in 0..in_d {
+                                let od_raw = id * stride_d + kd * dilation_d;
+                                if od_raw < pad_d {
                                     continue;
                                 }
-                                let ow = ow_raw - pad_w;
-                                if ow >= out_w {
+                                let od = od_raw - pad_d;
+                                if od >= out_d {
                                     continue;
                                 }
 
-                                let s = id * in_h * in_w + ih * in_w + iw;
-                                let val = columns[col_base + s];
-                                let out_idx = out_ch_base + od * out_h * out_w + oh * out_w + ow;
-                                output[out_idx] = add_fn(output[out_idx], val);
+                                for ih in 0..in_h {
+                                    let oh_raw = ih * stride_h + kh * dilation_h;
+                                    if oh_raw < pad_h {
+                                        continue;
+                                    }
+                                    let oh = oh_raw - pad_h;
+                                    if oh >= out_h {
+                                        continue;
+                                    }
+
+                                    for iw in 0..in_w {
+                                        let ow_raw = iw * stride_w + kw * dilation_w;
+                                        if ow_raw < pad_w {
+                                            continue;
+                                        }
+                                        let ow = ow_raw - pad_w;
+                                        if ow >= out_w {
+                                            continue;
+                                        }
+
+                                        let s = id * in_h * in_w + ih * in_w + iw;
+                                        let val = columns[col_base + s];
+                                        let out_idx =
+                                            out_ch_base + od * out_h * out_w + oh * out_w + ow;
+                                        output[out_idx] = add_fn(output[out_idx], val);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1558,5 +1558,77 @@ mod tests {
         for (a, e) in out.iter().zip(expected.iter()) {
             assert!((a.to_f32() - e).abs() < 0.1);
         }
+    }
+
+    #[test]
+    fn test_conv_transpose2d_with_padding() {
+        // Input: [1, 1, 2, 2], Weight: [1, 1, 3, 3], stride=2, padding=1
+        // Output size: (2-1)*2 - 2*1 + 1*(3-1) + 0 + 1 = 3
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 9], vec![1, 1, 3, 3]));
+        let opts = ConvTransposeOptions::new([2, 2], [1, 1], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 3, 3]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Verify center element gets all 4 input contributions
+        assert_eq!(out[4], 10.0); // 1+2+3+4 = 10
+    }
+
+    #[test]
+    fn test_conv_transpose2d_groups() {
+        // Input: [1, 4, 1, 1], Weight: [4, 1, 1, 1], groups=2
+        // Group 0: ic=[0,1], oc=[0,1]; Group 1: ic=[2,3], oc=[2,3] (wait, no)
+        // Weight [in_ch=4, out_ch_per_group=1, 1, 1], groups=2
+        // out_ch = out_ch_per_group * groups = 1 * 2 = 2
+        // Group 0: ic=[0,1] -> oc=[0]; Group 1: ic=[2,3] -> oc=[1]
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 4, 1, 1]));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 4], vec![4, 1, 1, 1]));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 2);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 2, 1, 1]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // oc=0: 1*1 + 2*1 = 3, oc=1: 3*1 + 4*1 = 7
+        assert_eq!(out, vec![3.0, 7.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_dilation() {
+        // Input: [1, 1, 2, 2], Weight: [1, 1, 2, 2], stride=1, dilation=2
+        // Output size: (2-1)*1 - 0 + 2*(2-1) + 0 + 1 = 4
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0], vec![1, 1, 2, 2]));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [2, 2], 1);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 4, 4]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Weight [[1,0],[0,1]] with dilation=2: kernel position (0,0) with weight=1
+        // places inputs at (id,ih,iw), kernel position (1,1) with weight=1
+        // places inputs at (id+2,ih+2).
+        #[rustfmt::skip]
+        let expected = vec![
+            1.0, 2.0, 0.0, 0.0,
+            3.0, 4.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 2.0,
+            0.0, 0.0, 3.0, 4.0,
+        ];
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_batch() {
+        // Batch=2, same kernel, verify batches are independent
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            vec![2, 1, 2, 2],
+        ));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 4], vec![1, 1, 2, 2]));
+        let opts = ConvTransposeOptions::new([1, 1], [0, 0], [0, 0], [1, 1], 1);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 1, 3, 3]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Batch 0: only top-left is 1, so output = kernel at top-left
+        assert_eq!(&out[..9], &[1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+        // Batch 1: only bottom-right is 1, so output = kernel at bottom-right
+        assert_eq!(&out[9..], &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]);
     }
 }
