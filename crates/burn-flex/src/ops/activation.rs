@@ -1398,10 +1398,8 @@ mod tests {
         // input last dim is 4, and gamma is [2, 4] — last dim matches d_model
         // but rank is 2. The old check (only last-dim == d_model) would have
         // accepted this and then indexed wrong data in the row kernel.
-        let t: Tensor<Flex, 2> = Tensor::from_data(
-            [[1.0f32, 2.0, 3.0, 4.0]],
-            (&Default::default(), DType::F32),
-        );
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data([[1.0f32, 2.0, 3.0, 4.0]], (&Default::default(), DType::F32));
         let gamma: Tensor<Flex, 2> = Tensor::from_data(
             [[1.0f32, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0]],
             (&Default::default(), DType::F32),
