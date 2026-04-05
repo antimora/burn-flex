@@ -90,7 +90,8 @@ same shape.
 ## Evidence
 
 See `crates/burn-flex-bench-candle/` in the burn-flex repo for a runnable
-bench crate that compares burn-flex against candle-core 0.9 on CPU (pure
+bench crate that compares burn-flex against candle-core (version pinned
+in `Cargo.toml`, currently 0.10) on CPU (pure
 Rust, no BLAS/Accelerate/MKL). The relevant benches are:
 
 ```sh
