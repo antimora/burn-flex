@@ -154,6 +154,43 @@ fn batch_index_to_offset(b: usize, broadcast_shape: &[usize], strides: &[usize])
     offset
 }
 
+/// Compute element-level batch strides for a tensor in a broadcast context.
+/// Uses the actual layout strides so non-contiguous (transposed/sliced) tensors
+/// work without a copy. Dimensions that are broadcast (size 1) get stride 0.
+fn broadcast_batch_elem_strides(
+    batch_shape: &[usize],
+    layout_strides: &[isize],
+    broadcast_len: usize,
+) -> Vec<isize> {
+    let batch_ndim = batch_shape.len();
+    let mut result = vec![0isize; broadcast_len];
+
+    for i in 0..broadcast_len {
+        let batch_idx = i as isize - (broadcast_len as isize - batch_ndim as isize);
+        if batch_idx >= 0 {
+            let bi = batch_idx as usize;
+            if batch_shape[bi] > 1 {
+                result[i] = layout_strides[bi];
+            }
+        }
+    }
+
+    result
+}
+
+/// Convert a flat batch index to an element offset using element-level strides.
+#[inline]
+fn batch_elem_offset(b: usize, broadcast_shape: &[usize], elem_strides: &[isize]) -> isize {
+    let mut offset: isize = 0;
+    let mut remaining = b;
+    for i in (0..broadcast_shape.len()).rev() {
+        let idx = remaining % broadcast_shape[i];
+        offset += idx as isize * elem_strides[i];
+        remaining /= broadcast_shape[i];
+    }
+    offset
+}
+
 // ============================================================================
 // f32 matmul
 // ============================================================================
@@ -223,15 +260,20 @@ fn matmul_2d_strided_f32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     output
 }
 
-/// Perform a single batched gemm call for f32.
+/// Perform a single strided gemm call for f32.
+/// Accepts arbitrary lhs/rhs strides so transposed views need not be copied.
 #[inline]
-unsafe fn gemm_single_f32(
+unsafe fn gemm_strided_f32(
     out: *mut f32,
     lhs: *const f32,
     rhs: *const f32,
     m: usize,
     n: usize,
     k: usize,
+    lhs_row_stride: isize,
+    lhs_col_stride: isize,
+    rhs_row_stride: isize,
+    rhs_col_stride: isize,
     parallelism: gemm::Parallelism,
 ) {
     unsafe {
@@ -244,11 +286,11 @@ unsafe fn gemm_single_f32(
             n as isize,
             false,
             lhs,
-            1,
-            k as isize,
+            lhs_col_stride,
+            lhs_row_stride,
             rhs,
-            1,
-            n as isize,
+            rhs_col_stride,
+            rhs_row_stride,
             0.0f32,
             1.0f32,
             false,
@@ -260,12 +302,8 @@ unsafe fn gemm_single_f32(
 }
 
 /// Batched matmul for f32: [B..., M, K] x [B..., K, N] -> [B..., M, N]
-/// Supports broadcasting on batch dimensions.
+/// Supports broadcasting on batch dimensions and strided (non-contiguous) inputs.
 fn matmul_batched_f32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    // For batched, we need contiguous layout to iterate over batches
-    let lhs = lhs.to_contiguous();
-    let rhs = rhs.to_contiguous();
-
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
     let lhs_rank = lhs_shape.num_dims();
@@ -278,12 +316,21 @@ fn matmul_batched_f32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_batch: Vec<usize> = lhs_shape[..lhs_rank - 2].to_vec();
     let rhs_batch: Vec<usize> = rhs_shape[..rhs_rank - 2].to_vec();
 
-    // Compute broadcast batch dimensions
-    let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
-
+    // Compute broadcast batch shape
+    let (broadcast_shape, _, _) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
     let batch_size: usize = broadcast_shape.iter().product();
-    let lhs_matrix_size = checked_size(m, k);
-    let rhs_matrix_size = checked_size(k, n);
+    let broadcast_len = broadcast_shape.len();
+
+    // Element-level batch strides from actual layout (handles non-contiguous inputs)
+    let lhs_batch_strides =
+        broadcast_batch_elem_strides(&lhs_batch, lhs.layout().strides(), broadcast_len);
+    let rhs_batch_strides =
+        broadcast_batch_elem_strides(&rhs_batch, rhs.layout().strides(), broadcast_len);
+
+    // Inner 2D strides (handles transposed views)
+    let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
+    let (rhs_row_stride, rhs_col_stride) = get_2d_strides(rhs.layout());
+
     let out_matrix_size = checked_size(m, n);
 
     let mut out_dims = broadcast_shape.clone();
@@ -295,6 +342,8 @@ fn matmul_batched_f32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
 
     let lhs_data: &[f32] = lhs.storage();
     let rhs_data: &[f32] = rhs.storage();
+    let lhs_start = lhs.layout().start_offset() as isize;
+    let rhs_start = rhs.layout().start_offset() as isize;
     let out_data: &mut [f32] = output.storage_mut();
 
     let per_matrix_ops = m.saturating_mul(n).saturating_mul(k);
@@ -306,79 +355,83 @@ fn matmul_batched_f32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     #[cfg(feature = "rayon")]
     {
         let total_ops = batch_size.saturating_mul(per_matrix_ops);
-
-        // Heuristic: batch parallelism is better when we have enough batches
-        // to saturate cores (>=4), even for large matrices. This avoids
-        // repeated thread spawn/sync overhead.
         let prefer_batch_parallel = batch_size >= 4 && total_ops >= BATCH_PARALLEL_THRESHOLD;
 
         if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
-            // Large matrices, small batch: use per-matrix parallelism
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
-                let lhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                let rhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                let lhs_off =
+                    lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                let rhs_off =
+                    rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
                 let out_offset = b * out_matrix_size;
 
                 unsafe {
-                    gemm_single_f32(
+                    gemm_strided_f32(
                         out_data[out_offset..].as_mut_ptr(),
-                        lhs_data[lhs_offset..].as_ptr(),
-                        rhs_data[rhs_offset..].as_ptr(),
+                        lhs_data.as_ptr().offset(lhs_off),
+                        rhs_data.as_ptr().offset(rhs_off),
                         m,
                         n,
                         k,
+                        lhs_row_stride,
+                        lhs_col_stride,
+                        rhs_row_stride,
+                        rhs_col_stride,
                         parallelism,
                     );
                 }
             }
         } else if total_ops >= BATCH_PARALLEL_THRESHOLD && batch_size > 1 {
-            // Small matrices but enough total work: parallelize batch loop
             use rayon::prelude::*;
 
-            // Split output into chunks, one per batch
             let out_chunks: Vec<&mut [f32]> = out_data.chunks_mut(out_matrix_size).collect();
 
             out_chunks
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(b, out_chunk)| {
-                    let lhs_offset =
-                        batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                    let rhs_offset =
-                        batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                    let lhs_off =
+                        lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                    let rhs_off =
+                        rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
 
                     unsafe {
-                        gemm_single_f32(
+                        gemm_strided_f32(
                             out_chunk.as_mut_ptr(),
-                            lhs_data[lhs_offset..].as_ptr(),
-                            rhs_data[rhs_offset..].as_ptr(),
+                            lhs_data.as_ptr().offset(lhs_off),
+                            rhs_data.as_ptr().offset(rhs_off),
                             m,
                             n,
                             k,
+                            lhs_row_stride,
+                            lhs_col_stride,
+                            rhs_row_stride,
+                            rhs_col_stride,
                             gemm::Parallelism::None,
                         );
                     }
                 });
         } else {
-            // Small total work: single-threaded
             for b in 0..batch_size {
-                let lhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                let rhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                let lhs_off =
+                    lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                let rhs_off =
+                    rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
                 let out_offset = b * out_matrix_size;
 
                 unsafe {
-                    gemm_single_f32(
+                    gemm_strided_f32(
                         out_data[out_offset..].as_mut_ptr(),
-                        lhs_data[lhs_offset..].as_ptr(),
-                        rhs_data[rhs_offset..].as_ptr(),
+                        lhs_data.as_ptr().offset(lhs_off),
+                        rhs_data.as_ptr().offset(rhs_off),
                         m,
                         n,
                         k,
+                        lhs_row_stride,
+                        lhs_col_stride,
+                        rhs_row_stride,
+                        rhs_col_stride,
                         gemm::Parallelism::None,
                     );
                 }
@@ -388,22 +441,24 @@ fn matmul_batched_f32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
 
     #[cfg(not(feature = "rayon"))]
     {
-        let _ = per_matrix_ops; // silence unused warning
+        let _ = per_matrix_ops;
         for b in 0..batch_size {
-            let lhs_offset =
-                batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-            let rhs_offset =
-                batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+            let lhs_off = lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+            let rhs_off = rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
             let out_offset = b * out_matrix_size;
 
             unsafe {
-                gemm_single_f32(
+                gemm_strided_f32(
                     out_data[out_offset..].as_mut_ptr(),
-                    lhs_data[lhs_offset..].as_ptr(),
-                    rhs_data[rhs_offset..].as_ptr(),
+                    lhs_data.as_ptr().offset(lhs_off),
+                    rhs_data.as_ptr().offset(rhs_off),
                     m,
                     n,
                     k,
+                    lhs_row_stride,
+                    lhs_col_stride,
+                    rhs_row_stride,
+                    rhs_col_stride,
                     gemm::Parallelism::None,
                 );
             }
@@ -477,15 +532,19 @@ fn matmul_2d_strided_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     output
 }
 
-/// Perform a single batched gemm call for f64.
+/// Perform a single strided gemm call for f64.
 #[inline]
-unsafe fn gemm_single_f64(
+unsafe fn gemm_strided_f64(
     out: *mut f64,
     lhs: *const f64,
     rhs: *const f64,
     m: usize,
     n: usize,
     k: usize,
+    lhs_row_stride: isize,
+    lhs_col_stride: isize,
+    rhs_row_stride: isize,
+    rhs_col_stride: isize,
     parallelism: gemm::Parallelism,
 ) {
     unsafe {
@@ -498,11 +557,11 @@ unsafe fn gemm_single_f64(
             n as isize,
             false,
             lhs,
-            1,
-            k as isize,
+            lhs_col_stride,
+            lhs_row_stride,
             rhs,
-            1,
-            n as isize,
+            rhs_col_stride,
+            rhs_row_stride,
             0.0f64,
             1.0f64,
             false,
@@ -514,9 +573,6 @@ unsafe fn gemm_single_f64(
 }
 
 fn matmul_batched_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    let lhs = lhs.to_contiguous();
-    let rhs = rhs.to_contiguous();
-
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
     let lhs_rank = lhs_shape.num_dims();
@@ -529,12 +585,18 @@ fn matmul_batched_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_batch: Vec<usize> = lhs_shape[..lhs_rank - 2].to_vec();
     let rhs_batch: Vec<usize> = rhs_shape[..rhs_rank - 2].to_vec();
 
-    // Compute broadcast batch dimensions
-    let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
-
+    let (broadcast_shape, _, _) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
     let batch_size: usize = broadcast_shape.iter().product();
-    let lhs_matrix_size = checked_size(m, k);
-    let rhs_matrix_size = checked_size(k, n);
+    let broadcast_len = broadcast_shape.len();
+
+    let lhs_batch_strides =
+        broadcast_batch_elem_strides(&lhs_batch, lhs.layout().strides(), broadcast_len);
+    let rhs_batch_strides =
+        broadcast_batch_elem_strides(&rhs_batch, rhs.layout().strides(), broadcast_len);
+
+    let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
+    let (rhs_row_stride, rhs_col_stride) = get_2d_strides(rhs.layout());
+
     let out_matrix_size = checked_size(m, n);
 
     let mut out_dims = broadcast_shape.clone();
@@ -546,6 +608,8 @@ fn matmul_batched_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
 
     let lhs_data: &[f64] = lhs.storage();
     let rhs_data: &[f64] = rhs.storage();
+    let lhs_start = lhs.layout().start_offset() as isize;
+    let rhs_start = rhs.layout().start_offset() as isize;
     let out_data: &mut [f64] = output.storage_mut();
 
     let per_matrix_ops = m.saturating_mul(n).saturating_mul(k);
@@ -558,20 +622,24 @@ fn matmul_batched_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
         if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
-                let lhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                let rhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                let lhs_off =
+                    lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                let rhs_off =
+                    rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
                 let out_offset = b * out_matrix_size;
 
                 unsafe {
-                    gemm_single_f64(
+                    gemm_strided_f64(
                         out_data[out_offset..].as_mut_ptr(),
-                        lhs_data[lhs_offset..].as_ptr(),
-                        rhs_data[rhs_offset..].as_ptr(),
+                        lhs_data.as_ptr().offset(lhs_off),
+                        rhs_data.as_ptr().offset(rhs_off),
                         m,
                         n,
                         k,
+                        lhs_row_stride,
+                        lhs_col_stride,
+                        rhs_row_stride,
+                        rhs_col_stride,
                         parallelism,
                     );
                 }
@@ -585,39 +653,47 @@ fn matmul_batched_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(b, out_chunk)| {
-                    let lhs_offset =
-                        batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                    let rhs_offset =
-                        batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                    let lhs_off =
+                        lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                    let rhs_off =
+                        rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
 
                     unsafe {
-                        gemm_single_f64(
+                        gemm_strided_f64(
                             out_chunk.as_mut_ptr(),
-                            lhs_data[lhs_offset..].as_ptr(),
-                            rhs_data[rhs_offset..].as_ptr(),
+                            lhs_data.as_ptr().offset(lhs_off),
+                            rhs_data.as_ptr().offset(rhs_off),
                             m,
                             n,
                             k,
+                            lhs_row_stride,
+                            lhs_col_stride,
+                            rhs_row_stride,
+                            rhs_col_stride,
                             gemm::Parallelism::None,
                         );
                     }
                 });
         } else {
             for b in 0..batch_size {
-                let lhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                let rhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                let lhs_off =
+                    lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                let rhs_off =
+                    rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
                 let out_offset = b * out_matrix_size;
 
                 unsafe {
-                    gemm_single_f64(
+                    gemm_strided_f64(
                         out_data[out_offset..].as_mut_ptr(),
-                        lhs_data[lhs_offset..].as_ptr(),
-                        rhs_data[rhs_offset..].as_ptr(),
+                        lhs_data.as_ptr().offset(lhs_off),
+                        rhs_data.as_ptr().offset(rhs_off),
                         m,
                         n,
                         k,
+                        lhs_row_stride,
+                        lhs_col_stride,
+                        rhs_row_stride,
+                        rhs_col_stride,
                         gemm::Parallelism::None,
                     );
                 }
@@ -627,22 +703,24 @@ fn matmul_batched_f64(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
 
     #[cfg(not(feature = "rayon"))]
     {
-        let _ = per_matrix_ops; // silence unused warning
+        let _ = per_matrix_ops;
         for b in 0..batch_size {
-            let lhs_offset =
-                batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-            let rhs_offset =
-                batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+            let lhs_off = lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+            let rhs_off = rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
             let out_offset = b * out_matrix_size;
 
             unsafe {
-                gemm_single_f64(
+                gemm_strided_f64(
                     out_data[out_offset..].as_mut_ptr(),
-                    lhs_data[lhs_offset..].as_ptr(),
-                    rhs_data[rhs_offset..].as_ptr(),
+                    lhs_data.as_ptr().offset(lhs_off),
+                    rhs_data.as_ptr().offset(rhs_off),
                     m,
                     n,
                     k,
+                    lhs_row_stride,
+                    lhs_col_stride,
+                    rhs_row_stride,
+                    rhs_col_stride,
                     gemm::Parallelism::None,
                 );
             }
@@ -716,15 +794,19 @@ fn matmul_2d_strided_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     output
 }
 
-/// Perform a single batched gemm call for f16.
+/// Perform a single strided gemm call for f16.
 #[inline]
-unsafe fn gemm_single_f16(
+unsafe fn gemm_strided_f16(
     out: *mut f16,
     lhs: *const f16,
     rhs: *const f16,
     m: usize,
     n: usize,
     k: usize,
+    lhs_row_stride: isize,
+    lhs_col_stride: isize,
+    rhs_row_stride: isize,
+    rhs_col_stride: isize,
     parallelism: gemm::Parallelism,
 ) {
     unsafe {
@@ -737,11 +819,11 @@ unsafe fn gemm_single_f16(
             n as isize,
             false,
             lhs,
-            1,
-            k as isize,
+            lhs_col_stride,
+            lhs_row_stride,
             rhs,
-            1,
-            n as isize,
+            rhs_col_stride,
+            rhs_row_stride,
             half::f16::from_f32(0.0),
             half::f16::from_f32(1.0),
             false,
@@ -753,9 +835,6 @@ unsafe fn gemm_single_f16(
 }
 
 fn matmul_batched_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
-    let lhs = lhs.to_contiguous();
-    let rhs = rhs.to_contiguous();
-
     let lhs_shape = lhs.layout().shape();
     let rhs_shape = rhs.layout().shape();
     let lhs_rank = lhs_shape.num_dims();
@@ -768,11 +847,18 @@ fn matmul_batched_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     let lhs_batch: Vec<usize> = lhs_shape[..lhs_rank - 2].to_vec();
     let rhs_batch: Vec<usize> = rhs_shape[..rhs_rank - 2].to_vec();
 
-    let (broadcast_shape, lhs_strides, rhs_strides) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
-
+    let (broadcast_shape, _, _) = broadcast_batch_dims(&lhs_batch, &rhs_batch);
     let batch_size: usize = broadcast_shape.iter().product();
-    let lhs_matrix_size = checked_size(m, k);
-    let rhs_matrix_size = checked_size(k, n);
+    let broadcast_len = broadcast_shape.len();
+
+    let lhs_batch_strides =
+        broadcast_batch_elem_strides(&lhs_batch, lhs.layout().strides(), broadcast_len);
+    let rhs_batch_strides =
+        broadcast_batch_elem_strides(&rhs_batch, rhs.layout().strides(), broadcast_len);
+
+    let (lhs_row_stride, lhs_col_stride) = get_2d_strides(lhs.layout());
+    let (rhs_row_stride, rhs_col_stride) = get_2d_strides(rhs.layout());
+
     let out_matrix_size = checked_size(m, n);
 
     let mut out_dims = broadcast_shape.clone();
@@ -784,6 +870,8 @@ fn matmul_batched_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
 
     let lhs_data: &[f16] = lhs.storage();
     let rhs_data: &[f16] = rhs.storage();
+    let lhs_start = lhs.layout().start_offset() as isize;
+    let rhs_start = rhs.layout().start_offset() as isize;
     let out_data: &mut [f16] = output.storage_mut();
 
     let per_matrix_ops = m.saturating_mul(n).saturating_mul(k);
@@ -796,19 +884,23 @@ fn matmul_batched_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
         if per_matrix_ops >= PARALLEL_THRESHOLD && !prefer_batch_parallel {
             let parallelism = gemm::Parallelism::Rayon(0);
             for b in 0..batch_size {
-                let lhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                let rhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                let lhs_off =
+                    lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                let rhs_off =
+                    rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
                 let out_offset = b * out_matrix_size;
                 unsafe {
-                    gemm_single_f16(
+                    gemm_strided_f16(
                         out_data[out_offset..].as_mut_ptr(),
-                        lhs_data[lhs_offset..].as_ptr(),
-                        rhs_data[rhs_offset..].as_ptr(),
+                        lhs_data.as_ptr().offset(lhs_off),
+                        rhs_data.as_ptr().offset(rhs_off),
                         m,
                         n,
                         k,
+                        lhs_row_stride,
+                        lhs_col_stride,
+                        rhs_row_stride,
+                        rhs_col_stride,
                         parallelism,
                     );
                 }
@@ -822,37 +914,45 @@ fn matmul_batched_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(b, out_chunk)| {
-                    let lhs_offset =
-                        batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                    let rhs_offset =
-                        batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                    let lhs_off =
+                        lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                    let rhs_off =
+                        rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
                     unsafe {
-                        gemm_single_f16(
+                        gemm_strided_f16(
                             out_chunk.as_mut_ptr(),
-                            lhs_data[lhs_offset..].as_ptr(),
-                            rhs_data[rhs_offset..].as_ptr(),
+                            lhs_data.as_ptr().offset(lhs_off),
+                            rhs_data.as_ptr().offset(rhs_off),
                             m,
                             n,
                             k,
+                            lhs_row_stride,
+                            lhs_col_stride,
+                            rhs_row_stride,
+                            rhs_col_stride,
                             gemm::Parallelism::None,
                         );
                     }
                 });
         } else {
             for b in 0..batch_size {
-                let lhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-                let rhs_offset =
-                    batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+                let lhs_off =
+                    lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+                let rhs_off =
+                    rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
                 let out_offset = b * out_matrix_size;
                 unsafe {
-                    gemm_single_f16(
+                    gemm_strided_f16(
                         out_data[out_offset..].as_mut_ptr(),
-                        lhs_data[lhs_offset..].as_ptr(),
-                        rhs_data[rhs_offset..].as_ptr(),
+                        lhs_data.as_ptr().offset(lhs_off),
+                        rhs_data.as_ptr().offset(rhs_off),
                         m,
                         n,
                         k,
+                        lhs_row_stride,
+                        lhs_col_stride,
+                        rhs_row_stride,
+                        rhs_col_stride,
                         gemm::Parallelism::None,
                     );
                 }
@@ -864,19 +964,21 @@ fn matmul_batched_f16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
     {
         let _ = per_matrix_ops;
         for b in 0..batch_size {
-            let lhs_offset =
-                batch_index_to_offset(b, &broadcast_shape, &lhs_strides) * lhs_matrix_size;
-            let rhs_offset =
-                batch_index_to_offset(b, &broadcast_shape, &rhs_strides) * rhs_matrix_size;
+            let lhs_off = lhs_start + batch_elem_offset(b, &broadcast_shape, &lhs_batch_strides);
+            let rhs_off = rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
             let out_offset = b * out_matrix_size;
             unsafe {
-                gemm_single_f16(
+                gemm_strided_f16(
                     out_data[out_offset..].as_mut_ptr(),
-                    lhs_data[lhs_offset..].as_ptr(),
-                    rhs_data[rhs_offset..].as_ptr(),
+                    lhs_data.as_ptr().offset(lhs_off),
+                    rhs_data.as_ptr().offset(rhs_off),
                     m,
                     n,
                     k,
+                    lhs_row_stride,
+                    lhs_col_stride,
+                    rhs_row_stride,
+                    rhs_col_stride,
                     gemm::Parallelism::None,
                 );
             }
@@ -1609,6 +1711,184 @@ mod tests {
         let values: Vec<i64> = result.into_data().to_vec().unwrap();
 
         assert_eq!(values, vec![19, 22, 43, 50]);
+    }
+
+    #[test]
+    fn test_matmul_batched_transposed_rhs() {
+        // q.matmul(k.swap_dims(1, 2)) -- the attention QK^T pattern
+        // q: [B, M, K], k: [B, K, N] but presented as swap_dims(1,2) of [B, N, K]
+        let q_data = TensorData::new(
+            vec![
+                1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, // batch 0: [2, 3]
+                7.0, 8.0, 9.0, 10.0, 11.0, 12.0, // batch 1: [2, 3]
+            ],
+            vec![2, 2, 3],
+        );
+        // k in [B, N, K] layout, will be transposed to [B, K, N]
+        let k_data = TensorData::new(
+            vec![
+                1.0f32, 0.0, 0.0, 0.0, 1.0, 0.0, // batch 0: [2, 3]
+                1.0, 1.0, 1.0, 2.0, 2.0, 2.0, // batch 1: [2, 3]
+            ],
+            vec![2, 2, 3],
+        );
+
+        let q = FlexTensor::from_data(q_data.clone());
+        let k = FlexTensor::from_data(k_data.clone());
+        let k_t = k.transpose(1, 2); // [B, 3, 2] -- strided view, not contiguous
+
+        // Verify k_t is non-contiguous
+        assert!(
+            k_t.layout().contiguous_offsets().is_none(),
+            "k_t should be a non-contiguous view"
+        );
+
+        let result = matmul(q, k_t);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2, 2]);
+
+        // Compute same thing with contiguous k already transposed
+        let q2 = FlexTensor::from_data(q_data);
+        let k_contig = FlexTensor::from_data(k_data).transpose(1, 2).to_contiguous();
+        let result_contig = matmul(q2, k_contig);
+
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+        let expected: Vec<f32> = result_contig.into_data().to_vec().unwrap();
+        assert_eq!(values, expected);
+    }
+
+    #[test]
+    fn test_matmul_batched_transposed_lhs() {
+        // Transposed lhs in batched matmul
+        // a: [2, 2, 3] transposed to [2, 3, 2], so M=3, K=2
+        // b: [2, 2, 2], K=2, N=2
+        // result: [2, 3, 2]
+        let a_data = TensorData::new(
+            vec![
+                1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, // batch 0: [2, 3]
+                7.0, 8.0, 9.0, 10.0, 11.0, 12.0, // batch 1: [2, 3]
+            ],
+            vec![2, 2, 3],
+        );
+        let b_data = TensorData::new(
+            vec![
+                1.0f32, 0.0, 0.0, 1.0, // batch 0: [2, 2]
+                2.0, 0.0, 0.0, 2.0, // batch 1: [2, 2]
+            ],
+            vec![2, 2, 2],
+        );
+
+        let a = FlexTensor::from_data(a_data.clone());
+        let a_t = a.transpose(1, 2); // [2, 3, 2]
+        let b = FlexTensor::from_data(b_data.clone());
+
+        let result = matmul(a_t, b);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 3, 2]);
+
+        // Compare with contiguous version
+        let a2 = FlexTensor::from_data(a_data).transpose(1, 2).to_contiguous();
+        let b2 = FlexTensor::from_data(b_data);
+        let expected_result = matmul(a2, b2);
+
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+        let expected: Vec<f32> = expected_result.into_data().to_vec().unwrap();
+        for (v, e) in values.iter().zip(expected.iter()) {
+            assert!((v - e).abs() < 1e-5, "mismatch: {v} vs {e}");
+        }
+    }
+
+    #[test]
+    fn test_matmul_batched_both_transposed() {
+        // Both inputs transposed in batched matmul
+        // a: [2,3,2] transposed to [2,2,3], b: [2,2,3] transposed to [2,3,2]
+        // matmul [2,2,3] x [2,3,2] -> [2,2,2]
+        let a_data = TensorData::new(
+            vec![
+                1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, // batch 0: [3, 2]
+                7.0, 8.0, 9.0, 10.0, 11.0, 12.0, // batch 1: [3, 2]
+            ],
+            vec![2, 3, 2],
+        );
+
+        let b_data2 = TensorData::new(
+            vec![
+                1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, // batch 0: [2, 3]
+                7.0, 8.0, 9.0, 10.0, 11.0, 12.0, // batch 1: [2, 3]
+            ],
+            vec![2, 2, 3],
+        );
+
+        let a = FlexTensor::from_data(a_data.clone());
+        let a_t = a.transpose(1, 2); // [2, 2, 3]
+        let b = FlexTensor::from_data(b_data2.clone());
+        let b_t = b.transpose(1, 2); // [2, 3, 2]
+
+        let result = matmul(a_t, b_t);
+        assert_eq!(result.layout().shape().to_vec(), vec![2, 2, 2]);
+
+        // Compare with contiguous versions
+        let a2 = FlexTensor::from_data(a_data).transpose(1, 2).to_contiguous();
+        let b2 = FlexTensor::from_data(b_data2).transpose(1, 2).to_contiguous();
+        let expected_result = matmul(a2, b2);
+
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+        let expected: Vec<f32> = expected_result.into_data().to_vec().unwrap();
+        for (v, e) in values.iter().zip(expected.iter()) {
+            assert!((v - e).abs() < 1e-5, "mismatch: {v} vs {e}");
+        }
+    }
+
+    #[test]
+    fn test_matmul_batched_transposed_f64() {
+        // Same pattern as f32 but for f64 to verify that path too
+        let q_data = TensorData::new(
+            vec![1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            vec![2, 2, 2],
+        );
+        let k_data = TensorData::new(
+            vec![1.0f64, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 2.0],
+            vec![2, 2, 2],
+        );
+
+        let q = FlexTensor::from_data(q_data.clone());
+        let k = FlexTensor::from_data(k_data.clone());
+        let k_t = k.transpose(1, 2);
+
+        let result = matmul(q, k_t);
+
+        let q2 = FlexTensor::from_data(q_data);
+        let k2 = FlexTensor::from_data(k_data).transpose(1, 2).to_contiguous();
+        let expected_result = matmul(q2, k2);
+
+        let values: Vec<f64> = result.into_data().to_vec().unwrap();
+        let expected: Vec<f64> = expected_result.into_data().to_vec().unwrap();
+        assert_eq!(values, expected);
+    }
+
+    #[test]
+    fn test_matmul_batched_transposed_f16() {
+        let f = |v: f32| f16::from_f32(v);
+        let q_data = TensorData::new(
+            vec![f(1.0), f(2.0), f(3.0), f(4.0), f(5.0), f(6.0), f(7.0), f(8.0)],
+            vec![2, 2, 2],
+        );
+        let k_data = TensorData::new(
+            vec![f(1.0), f(0.0), f(0.0), f(1.0), f(2.0), f(0.0), f(0.0), f(2.0)],
+            vec![2, 2, 2],
+        );
+
+        let q = FlexTensor::from_data(q_data.clone());
+        let k = FlexTensor::from_data(k_data.clone());
+        let k_t = k.transpose(1, 2);
+
+        let result = matmul(q, k_t);
+
+        let q2 = FlexTensor::from_data(q_data);
+        let k2 = FlexTensor::from_data(k_data).transpose(1, 2).to_contiguous();
+        let expected_result = matmul(q2, k2);
+
+        let values: Vec<f16> = result.into_data().to_vec().unwrap();
+        let expected: Vec<f16> = expected_result.into_data().to_vec().unwrap();
+        assert_eq!(values, expected);
     }
 
     #[test]
