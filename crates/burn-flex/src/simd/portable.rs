@@ -508,6 +508,344 @@ fn bool_not_inplace_u8_par(a: &mut [u8]) {
 }
 
 // ============================================================================
+// Mask select (mask_where / mask_fill) via bitwise blend
+// ============================================================================
+
+/// Conditional select: `out[i] = if mask[i] != 0 { value[i] } else { tensor[i] }`
+///
+/// Operates on f32 data reinterpreted as u32 for bitwise blend.
+/// Uses SIMD bitwise ops: `(mask & value) | (!mask & tensor)`.
+#[inline]
+pub fn mask_where_f32(tensor: &[f32], mask: &[u8], value: &[f32], out: &mut [f32]) {
+    debug_assert_eq!(tensor.len(), mask.len());
+    debug_assert_eq!(tensor.len(), value.len());
+    debug_assert_eq!(tensor.len(), out.len());
+
+    let t = bytemuck::cast_slice::<f32, u32>(tensor);
+    let v = bytemuck::cast_slice::<f32, u32>(value);
+    let o = bytemuck::cast_slice_mut::<f32, u32>(out);
+
+    #[cfg(feature = "rayon")]
+    if tensor.len() >= PARALLEL_THRESHOLD {
+        mask_where_u32_par(t, mask, v, o);
+        return;
+    }
+
+    mask_blend_u32(t, mask, v, o);
+}
+
+/// Conditional select for f64.
+#[inline]
+pub fn mask_where_f64(tensor: &[f64], mask: &[u8], value: &[f64], out: &mut [f64]) {
+    debug_assert_eq!(tensor.len(), mask.len());
+    debug_assert_eq!(tensor.len(), value.len());
+    debug_assert_eq!(tensor.len(), out.len());
+
+    let t = bytemuck::cast_slice::<f64, u64>(tensor);
+    let v = bytemuck::cast_slice::<f64, u64>(value);
+    let o = bytemuck::cast_slice_mut::<f64, u64>(out);
+
+    #[cfg(feature = "rayon")]
+    if tensor.len() >= PARALLEL_THRESHOLD {
+        mask_where_u64_par(t, mask, v, o);
+        return;
+    }
+
+    mask_blend_u64(t, mask, v, o);
+}
+
+/// Conditional select for i64.
+#[inline]
+pub fn mask_where_i64(tensor: &[i64], mask: &[u8], value: &[i64], out: &mut [i64]) {
+    debug_assert_eq!(tensor.len(), mask.len());
+    debug_assert_eq!(tensor.len(), value.len());
+    debug_assert_eq!(tensor.len(), out.len());
+
+    let t = bytemuck::cast_slice::<i64, u64>(tensor);
+    let v = bytemuck::cast_slice::<i64, u64>(value);
+    let o = bytemuck::cast_slice_mut::<i64, u64>(out);
+
+    #[cfg(feature = "rayon")]
+    if tensor.len() >= PARALLEL_THRESHOLD {
+        mask_where_u64_par(t, mask, v, o);
+        return;
+    }
+
+    mask_blend_u64(t, mask, v, o);
+}
+
+/// Conditional select for u8 (bool tensors).
+#[inline]
+pub fn mask_where_u8(tensor: &[u8], mask: &[u8], value: &[u8], out: &mut [u8]) {
+    debug_assert_eq!(tensor.len(), mask.len());
+    debug_assert_eq!(tensor.len(), value.len());
+    debug_assert_eq!(tensor.len(), out.len());
+
+    #[cfg(feature = "rayon")]
+    if tensor.len() >= PARALLEL_THRESHOLD {
+        mask_where_u8_par(tensor, mask, value, out);
+        return;
+    }
+
+    mask_where_u8_seq(tensor, mask, value, out);
+}
+
+/// Conditional fill: `out[i] = if mask[i] != 0 { fill_value } else { tensor[i] }`
+#[inline]
+pub fn mask_fill_f32(tensor: &[f32], mask: &[u8], fill_value: f32, out: &mut [f32]) {
+    debug_assert_eq!(tensor.len(), mask.len());
+    debug_assert_eq!(tensor.len(), out.len());
+
+    let t = bytemuck::cast_slice::<f32, u32>(tensor);
+    let o = bytemuck::cast_slice_mut::<f32, u32>(out);
+    let fill_bits = fill_value.to_bits();
+
+    #[cfg(feature = "rayon")]
+    if tensor.len() >= PARALLEL_THRESHOLD {
+        mask_fill_u32_par(t, mask, fill_bits, o);
+        return;
+    }
+
+    mask_blend_fill_u32(t, mask, fill_bits, o);
+}
+
+/// Conditional fill for f64.
+#[inline]
+pub fn mask_fill_f64(tensor: &[f64], mask: &[u8], fill_value: f64, out: &mut [f64]) {
+    debug_assert_eq!(tensor.len(), mask.len());
+    debug_assert_eq!(tensor.len(), out.len());
+
+    let t = bytemuck::cast_slice::<f64, u64>(tensor);
+    let o = bytemuck::cast_slice_mut::<f64, u64>(out);
+    let fill_bits = fill_value.to_bits();
+
+    #[cfg(feature = "rayon")]
+    if tensor.len() >= PARALLEL_THRESHOLD {
+        mask_fill_u64_par(t, mask, fill_bits, o);
+        return;
+    }
+
+    mask_blend_fill_u64(t, mask, fill_bits, o);
+}
+
+/// Conditional fill for i64.
+#[inline]
+pub fn mask_fill_i64(tensor: &[i64], mask: &[u8], fill_value: i64, out: &mut [i64]) {
+    debug_assert_eq!(tensor.len(), mask.len());
+    debug_assert_eq!(tensor.len(), out.len());
+
+    let t = bytemuck::cast_slice::<i64, u64>(tensor);
+    let o = bytemuck::cast_slice_mut::<i64, u64>(out);
+    let fill_bits = fill_value as u64;
+
+    #[cfg(feature = "rayon")]
+    if tensor.len() >= PARALLEL_THRESHOLD {
+        mask_fill_u64_par(t, mask, fill_bits, o);
+        return;
+    }
+
+    mask_blend_fill_u64(t, mask, fill_bits, o);
+}
+
+/// Conditional fill for u8 (bool tensors).
+#[inline]
+pub fn mask_fill_u8(tensor: &[u8], mask: &[u8], fill_value: u8, out: &mut [u8]) {
+    debug_assert_eq!(tensor.len(), mask.len());
+    debug_assert_eq!(tensor.len(), out.len());
+
+    #[cfg(feature = "rayon")]
+    if tensor.len() >= PARALLEL_THRESHOLD {
+        mask_fill_u8_par(tensor, mask, fill_value, out);
+        return;
+    }
+
+    mask_fill_u8_seq(tensor, mask, fill_value, out);
+}
+
+// -- Branchless bitwise blend kernels --
+//
+// These use a tight branchless loop that LLVM autovectorizes with native
+// u8->u32/u64 widening instructions (NEON ushll, AVX2 vpmovzxbd).
+//
+// Mask values must be exactly 0 or 1 (Burn bool tensor invariant).
+// wrapping_sub(0, 0)=0x00, wrapping_sub(0, 1)=0xFF..FF. Other values
+// produce partial masks and corrupt output.
+
+#[inline]
+fn mask_blend_u32(tensor: &[u32], mask: &[u8], value: &[u32], out: &mut [u32]) {
+    for i in 0..tensor.len() {
+        let m = 0u32.wrapping_sub(mask[i] as u32);
+        out[i] = (value[i] & m) | (tensor[i] & !m);
+    }
+}
+
+#[inline]
+fn mask_blend_fill_u32(tensor: &[u32], mask: &[u8], fill_bits: u32, out: &mut [u32]) {
+    for i in 0..tensor.len() {
+        let m = 0u32.wrapping_sub(mask[i] as u32);
+        out[i] = (fill_bits & m) | (tensor[i] & !m);
+    }
+}
+
+#[inline]
+fn mask_blend_u64(tensor: &[u64], mask: &[u8], value: &[u64], out: &mut [u64]) {
+    for i in 0..tensor.len() {
+        let m = 0u64.wrapping_sub(mask[i] as u64);
+        out[i] = (value[i] & m) | (tensor[i] & !m);
+    }
+}
+
+#[inline]
+fn mask_blend_fill_u64(tensor: &[u64], mask: &[u8], fill_bits: u64, out: &mut [u64]) {
+    for i in 0..tensor.len() {
+        let m = 0u64.wrapping_sub(mask[i] as u64);
+        out[i] = (fill_bits & m) | (tensor[i] & !m);
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn mask_where_u32_par(tensor: &[u32], mask: &[u8], value: &[u32], out: &mut [u32]) {
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(tensor.len());
+            mask_blend_u32(
+                &tensor[start..end],
+                &mask[start..end],
+                &value[start..end],
+                out_chunk,
+            );
+        });
+}
+
+#[cfg(feature = "rayon")]
+fn mask_fill_u32_par(tensor: &[u32], mask: &[u8], fill_bits: u32, out: &mut [u32]) {
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(tensor.len());
+            mask_blend_fill_u32(&tensor[start..end], &mask[start..end], fill_bits, out_chunk);
+        });
+}
+
+#[cfg(feature = "rayon")]
+fn mask_where_u64_par(tensor: &[u64], mask: &[u8], value: &[u64], out: &mut [u64]) {
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(tensor.len());
+            mask_blend_u64(
+                &tensor[start..end],
+                &mask[start..end],
+                &value[start..end],
+                out_chunk,
+            );
+        });
+}
+
+#[cfg(feature = "rayon")]
+fn mask_fill_u64_par(tensor: &[u64], mask: &[u8], fill_bits: u64, out: &mut [u64]) {
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(tensor.len());
+            mask_blend_fill_u64(&tensor[start..end], &mask[start..end], fill_bits, out_chunk);
+        });
+}
+
+// -- u8 SIMD kernels (for bool tensors) --
+
+#[macerator::with_simd]
+fn mask_where_u8_seq<S: Simd>(tensor: &[u8], mask: &[u8], value: &[u8], out: &mut [u8]) {
+    let lanes = S::lanes8();
+    let len = tensor.len();
+    let simd_len = len / lanes * lanes;
+
+    // SIMD subtract wraps: 0-0=0x00, 0-1=0xFF
+    let zeros = 0u8.splat::<S>();
+
+    let mut i = 0;
+    while i < simd_len {
+        unsafe {
+            let vm_raw = vload_unaligned::<S, u8>(mask.as_ptr().add(i));
+            let vm = zeros - vm_raw; // 0->0x00, 1->0xFF
+            let vt = vload_unaligned::<S, u8>(tensor.as_ptr().add(i));
+            let vv = vload_unaligned::<S, u8>(value.as_ptr().add(i));
+            let selected = (vm & vv) | (!vm & vt);
+            vstore_unaligned::<S, u8>(out.as_mut_ptr().add(i), selected);
+        }
+        i += lanes;
+    }
+
+    for j in simd_len..len {
+        let m = 0u8.wrapping_sub(mask[j]);
+        out[j] = (m & value[j]) | (!m & tensor[j]);
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn mask_where_u8_par(tensor: &[u8], mask: &[u8], value: &[u8], out: &mut [u8]) {
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(tensor.len());
+            mask_where_u8_seq(
+                &tensor[start..end],
+                &mask[start..end],
+                &value[start..end],
+                out_chunk,
+            );
+        });
+}
+
+#[macerator::with_simd]
+fn mask_fill_u8_seq<S: Simd>(tensor: &[u8], mask: &[u8], fill_value: u8, out: &mut [u8]) {
+    let lanes = S::lanes8();
+    let len = tensor.len();
+    let simd_len = len / lanes * lanes;
+    let vfill = fill_value.splat::<S>();
+    let zeros = 0u8.splat::<S>();
+
+    let mut i = 0;
+    while i < simd_len {
+        unsafe {
+            let vm_raw = vload_unaligned::<S, u8>(mask.as_ptr().add(i));
+            let vm = zeros - vm_raw; // 0->0x00, 1->0xFF
+            let vt = vload_unaligned::<S, u8>(tensor.as_ptr().add(i));
+            let selected = (vm & vfill) | (!vm & vt);
+            vstore_unaligned::<S, u8>(out.as_mut_ptr().add(i), selected);
+        }
+        i += lanes;
+    }
+
+    for j in simd_len..len {
+        let m = 0u8.wrapping_sub(mask[j]);
+        out[j] = (m & fill_value) | (!m & tensor[j]);
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn mask_fill_u8_par(tensor: &[u8], mask: &[u8], fill_value: u8, out: &mut [u8]) {
+    out.par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(tensor.len());
+            mask_fill_u8_seq(
+                &tensor[start..end],
+                &mask[start..end],
+                fill_value,
+                out_chunk,
+            );
+        });
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -673,5 +1011,193 @@ mod tests {
         let mut a = [1.0f32, 2.0, 4.0, 0.5, 10.0];
         recip_inplace_f32(&mut a);
         assert_eq!(a, [1.0, 0.5, 0.25, 2.0, 0.1]);
+    }
+
+    // ================================================================
+    // mask_where / mask_fill tests
+    // ================================================================
+
+    #[test]
+    fn test_mask_where_f32_basic() {
+        let tensor = [1.0f32, 2.0, 3.0, 4.0];
+        let mask = [1u8, 0, 1, 0];
+        let value = [10.0f32, 20.0, 30.0, 40.0];
+        let mut out = [0.0f32; 4];
+        mask_where_f32(&tensor, &mask, &value, &mut out);
+        assert_eq!(out, [10.0, 2.0, 30.0, 4.0]);
+    }
+
+    #[test]
+    fn test_mask_where_f32_all_true() {
+        let tensor = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let mask = [1u8; 9];
+        let value = [10.0f32, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0];
+        let mut out = [0.0f32; 9];
+        mask_where_f32(&tensor, &mask, &value, &mut out);
+        assert_eq!(out, value);
+    }
+
+    #[test]
+    fn test_mask_where_f32_all_false() {
+        let tensor = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let mask = [0u8; 9];
+        let value = [10.0f32, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0];
+        let mut out = [0.0f32; 9];
+        mask_where_f32(&tensor, &mask, &value, &mut out);
+        assert_eq!(out, tensor);
+    }
+
+    #[test]
+    fn test_mask_where_f64_basic() {
+        let tensor = [1.0f64, 2.0, 3.0];
+        let mask = [0u8, 1, 0];
+        let value = [10.0f64, 20.0, 30.0];
+        let mut out = [0.0f64; 3];
+        mask_where_f64(&tensor, &mask, &value, &mut out);
+        assert_eq!(out, [1.0, 20.0, 3.0]);
+    }
+
+    #[test]
+    fn test_mask_where_i64_basic() {
+        let tensor = [10i64, 20, 30, 40, 50];
+        let mask = [1u8, 0, 1, 0, 1];
+        let value = [-1i64, -2, -3, -4, -5];
+        let mut out = [0i64; 5];
+        mask_where_i64(&tensor, &mask, &value, &mut out);
+        assert_eq!(out, [-1, 20, -3, 40, -5]);
+    }
+
+    #[test]
+    fn test_mask_where_u8_basic() {
+        let tensor = [0u8, 1, 0, 1];
+        let mask = [1u8, 1, 0, 0];
+        let value = [1u8, 0, 1, 0];
+        let mut out = [0u8; 4];
+        mask_where_u8(&tensor, &mask, &value, &mut out);
+        assert_eq!(out, [1, 0, 0, 1]);
+    }
+
+    #[test]
+    fn test_mask_fill_f32_basic() {
+        let tensor = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+        let mask = [1u8, 0, 1, 0, 1, 0, 1];
+        let mut out = [0.0f32; 7];
+        mask_fill_f32(&tensor, &mask, -1.0, &mut out);
+        assert_eq!(out, [-1.0, 2.0, -1.0, 4.0, -1.0, 6.0, -1.0]);
+    }
+
+    #[test]
+    fn test_mask_fill_f64_basic() {
+        let tensor = [1.0f64, 2.0, 3.0];
+        let mask = [0u8, 1, 0];
+        let mut out = [0.0f64; 3];
+        mask_fill_f64(&tensor, &mask, 99.0, &mut out);
+        assert_eq!(out, [1.0, 99.0, 3.0]);
+    }
+
+    #[test]
+    fn test_mask_fill_i64_basic() {
+        let tensor = [10i64, 20, 30, 40];
+        let mask = [1u8, 0, 0, 1];
+        let mut out = [0i64; 4];
+        mask_fill_i64(&tensor, &mask, -1, &mut out);
+        assert_eq!(out, [-1, 20, 30, -1]);
+    }
+
+    #[test]
+    fn test_mask_fill_u8_basic() {
+        let tensor = [0u8, 1, 0, 1, 0];
+        let mask = [1u8, 1, 0, 0, 1];
+        let mut out = [0u8; 5];
+        mask_fill_u8(&tensor, &mask, 1, &mut out);
+        assert_eq!(out, [1, 1, 0, 1, 1]);
+    }
+
+    #[test]
+    fn test_mask_where_f32_nan() {
+        let tensor = [f32::NAN, 2.0, 3.0, f32::NAN];
+        let mask = [1u8, 0, 1, 0];
+        let value = [10.0f32, 20.0, 30.0, 40.0];
+        let mut out = [0.0f32; 4];
+        mask_where_f32(&tensor, &mask, &value, &mut out);
+        // mask=1 picks value, mask=0 picks tensor (including NaN)
+        assert_eq!(out[0], 10.0);
+        assert_eq!(out[1], 2.0);
+        assert_eq!(out[2], 30.0);
+        assert!(out[3].is_nan());
+    }
+
+    // Lane-boundary tests: sizes that exercise SIMD + scalar tail on all ISAs.
+    // 17 elements for f32 = 4 NEON iters + 1 tail, or 2 AVX2 iters + 1 tail.
+
+    #[test]
+    fn test_mask_where_f32_lane_boundary() {
+        let n = 17;
+        let tensor: Vec<f32> = (0..n).map(|i| i as f32).collect();
+        let value: Vec<f32> = (0..n).map(|i| (i as f32) * 10.0).collect();
+        let mask: Vec<u8> = (0..n).map(|i| (i % 2) as u8).collect();
+        let mut out = vec![0.0f32; n];
+        mask_where_f32(&tensor, &mask, &value, &mut out);
+        for i in 0..n {
+            let expected = if i % 2 != 0 { value[i] } else { tensor[i] };
+            assert_eq!(out[i], expected, "mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn test_mask_fill_f32_lane_boundary() {
+        let n = 17;
+        let tensor: Vec<f32> = (0..n).map(|i| i as f32).collect();
+        let mask: Vec<u8> = (0..n).map(|i| (i % 3 == 0) as u8).collect();
+        let mut out = vec![0.0f32; n];
+        mask_fill_f32(&tensor, &mask, -1.0, &mut out);
+        for i in 0..n {
+            let expected = if i % 3 == 0 { -1.0 } else { tensor[i] };
+            assert_eq!(out[i], expected, "mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn test_mask_where_u8_lane_boundary() {
+        // 33 elements for u8: exercises 2 NEON iters + 1 tail, or 1 AVX2 iter + 1 tail
+        let n = 33;
+        let tensor: Vec<u8> = (0..n).map(|i| (i % 2) as u8).collect();
+        let value: Vec<u8> = (0..n).map(|i| ((i + 1) % 2) as u8).collect();
+        let mask: Vec<u8> = (0..n).map(|i| (i % 3 == 0) as u8).collect();
+        let mut out = vec![0u8; n];
+        mask_where_u8(&tensor, &mask, &value, &mut out);
+        for i in 0..n {
+            let expected = if i % 3 == 0 { value[i] } else { tensor[i] };
+            assert_eq!(out[i], expected, "mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn test_mask_where_f64_lane_boundary() {
+        // 9 elements for f64: 4 NEON iters + 1 tail (2 lanes), or 2 AVX2 iters + 1 tail (4 lanes)
+        let n = 9;
+        let tensor: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let value: Vec<f64> = (0..n).map(|i| (i as f64) * -1.0).collect();
+        let mask: Vec<u8> = (0..n).map(|i| (i % 2) as u8).collect();
+        let mut out = vec![0.0f64; n];
+        mask_where_f64(&tensor, &mask, &value, &mut out);
+        for i in 0..n {
+            let expected = if i % 2 != 0 { value[i] } else { tensor[i] };
+            assert_eq!(out[i], expected, "mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn test_mask_where_empty() {
+        let mut out = vec![0.0f32; 0];
+        mask_where_f32(&[], &[], &[], &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_mask_fill_empty() {
+        let mut out = vec![0.0f32; 0];
+        mask_fill_f32(&[], &[], 1.0, &mut out);
+        assert!(out.is_empty());
     }
 }
