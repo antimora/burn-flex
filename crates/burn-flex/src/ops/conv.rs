@@ -1719,8 +1719,7 @@ mod tests {
             .collect();
 
         let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![1, c_in, in_w]));
-        let weight =
-            FlexTensor::from_data(TensorData::new(w_data.clone(), vec![c_out, c_in, kw]));
+        let weight = FlexTensor::from_data(TensorData::new(w_data.clone(), vec![c_out, c_in, kw]));
         let options = ConvOptions::new([stride], [0], [1], 1);
         let result = conv1d_f32(x, weight, None, &options);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
@@ -1733,8 +1732,8 @@ mod tests {
                 let mut expected = 0.0f32;
                 for ci in 0..c_in {
                     for k in 0..kw {
-                        expected +=
-                            w_data[co * c_in * kw + ci * kw + k] * x_data[ci * in_w + o * stride + k];
+                        expected += w_data[co * c_in * kw + ci * kw + k]
+                            * x_data[ci * in_w + o * stride + k];
                     }
                 }
                 let actual = out[co * out_w + o];
@@ -1764,8 +1763,7 @@ mod tests {
             .collect();
 
         let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![1, c_in, in_w]));
-        let weight =
-            FlexTensor::from_data(TensorData::new(w_data.clone(), vec![c_out, c_in, kw]));
+        let weight = FlexTensor::from_data(TensorData::new(w_data.clone(), vec![c_out, c_in, kw]));
         let options = ConvOptions::new([stride], [0], [1], 1);
         let result = conv1d_f32(x, weight, None, &options);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
@@ -1775,8 +1773,8 @@ mod tests {
                 let mut expected = 0.0f32;
                 for ci in 0..c_in {
                     for k in 0..kw {
-                        expected +=
-                            w_data[co * c_in * kw + ci * kw + k] * x_data[ci * in_w + o * stride + k];
+                        expected += w_data[co * c_in * kw + ci * kw + k]
+                            * x_data[ci * in_w + o * stride + k];
                     }
                 }
                 let actual = out[co * out_w + o];
