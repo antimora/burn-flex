@@ -414,9 +414,8 @@ fn matmul_batched_gemm<T: GemmScalar>(lhs: FlexTensor, rhs: FlexTensor) -> FlexT
         } else if total_ops >= BATCH_PARALLEL_THRESHOLD && batch_size > 1 {
             use rayon::prelude::*;
 
-            let out_chunks: Vec<&mut [T]> = out_data.chunks_mut(out_matrix_size).collect();
-            out_chunks
-                .into_par_iter()
+            out_data
+                .par_chunks_mut(out_matrix_size)
                 .enumerate()
                 .for_each(|(b, out_chunk)| {
                     run_one(out_chunk.as_mut_ptr(), b, gemm::Parallelism::None);
