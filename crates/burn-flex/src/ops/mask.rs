@@ -10,7 +10,7 @@ use crate::{FlexTensor, Layout};
 /// The caller must write every element before reading.
 #[cfg(feature = "simd")]
 #[inline]
-fn uninit_vec<T>(len: usize) -> Vec<T> {
+fn uninit_vec<T: Copy>(len: usize) -> Vec<T> {
     let mut v = Vec::with_capacity(len);
     #[allow(clippy::uninit_vec)]
     unsafe {

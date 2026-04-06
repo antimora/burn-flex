@@ -782,7 +782,8 @@ fn mask_where_u8_seq<S: Simd>(tensor: &[u8], mask: &[u8], value: &[u8], out: &mu
     }
 
     for j in simd_len..len {
-        out[j] = if mask[j] != 0 { value[j] } else { tensor[j] };
+        let m = 0u8.wrapping_sub(mask[j]);
+        out[j] = (m & value[j]) | (!m & tensor[j]);
     }
 }
 
@@ -823,7 +824,8 @@ fn mask_fill_u8_seq<S: Simd>(tensor: &[u8], mask: &[u8], fill_value: u8, out: &m
     }
 
     for j in simd_len..len {
-        out[j] = if mask[j] != 0 { fill_value } else { tensor[j] };
+        let m = 0u8.wrapping_sub(mask[j]);
+        out[j] = (m & fill_value) | (!m & tensor[j]);
     }
 }
 
