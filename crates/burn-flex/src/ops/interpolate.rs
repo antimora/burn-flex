@@ -268,7 +268,9 @@ where
                 .enumerate()
                 .for_each(|(bc_idx, out_plane)| {
                     let in_base = bc_idx * in_hw;
-                    gather_plane(input, in_base, out_plane, in_width, out_width, &y_map, &x_map);
+                    gather_plane(
+                        input, in_base, out_plane, in_width, out_width, &y_map, &x_map,
+                    );
                 });
         } else {
             for bc_idx in 0..bc {
@@ -871,7 +873,9 @@ where
             .enumerate()
             .for_each(|(bc_idx, grad_plane)| {
                 let grad_base = bc_idx * out_hw;
-                scatter_plane(grad_data, grad_base, grad_plane, in_width, out_width, &y_map, &x_map);
+                scatter_plane(
+                    grad_data, grad_base, grad_plane, in_width, out_width, &y_map, &x_map,
+                );
             });
     } else {
         for bc_idx in 0..bc {
