@@ -1,7 +1,7 @@
 //! Matrix multiplication via gemm crate.
 //!
 //! Optimizations:
-//! - Uses strided gemm to avoid copying transposed tensors
+//! - Strided gemm for f32/f64/f16 avoids copying non-contiguous tensors
 //! - Enables parallelism for large matrices (with rayon feature)
 //! - Batched matmul parallelized across batch dimension
 
@@ -13,6 +13,7 @@ use burn_std::{Bytes, Shape, bf16, f16};
 use crate::{FlexTensor, Layout};
 
 /// Types that can be used with gemm-based matmul.
+/// Only implement for types that `gemm::gemm` dispatches on via TypeId (f32, f64, f16).
 trait GemmScalar: Element + bytemuck::Pod {
     fn zero() -> Self;
     fn one() -> Self;
@@ -36,7 +37,8 @@ impl GemmScalar for f16 {
 /// Checked multiplication for matrix sizes, panics on overflow.
 #[inline]
 fn checked_size(a: usize, b: usize) -> usize {
-    a.checked_mul(b).expect("matmul: matrix size overflow")
+    a.checked_mul(b)
+        .unwrap_or_else(|| panic!("matmul: matrix size overflow: {a} * {b}"))
 }
 
 /// Threshold for enabling parallelism (M*N*K operations).
@@ -184,6 +186,7 @@ fn broadcast_batch_elem_strides(
     broadcast_len: usize,
 ) -> Vec<isize> {
     let batch_ndim = batch_shape.len();
+    debug_assert!(broadcast_len >= batch_ndim);
     let mut result = vec![0isize; broadcast_len];
 
     for i in 0..broadcast_len {
@@ -263,7 +266,7 @@ fn matmul_2d_strided<T: GemmScalar>(lhs: FlexTensor, rhs: FlexTensor) -> FlexTen
     output
 }
 
-/// Single strided gemm call. Wraps `gemm::gemm` with GemmScalar zero/one.
+/// Strided gemm call for one matrix. Wraps `gemm::gemm` with GemmScalar zero/one.
 #[inline]
 unsafe fn gemm_call<T: GemmScalar>(
     m: usize, n: usize, k: usize,
@@ -431,7 +434,7 @@ fn matmul_bf16(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
 }
 
 // ============================================================================
-// Integer matmul (naive with SIMD)
+// Integer matmul (naive, with optional SIMD for i32)
 // ============================================================================
 
 /// Integer matrix multiplication dispatch.
@@ -1287,6 +1290,48 @@ mod tests {
         let values: Vec<f16> = result.into_data().to_vec().unwrap();
         let expected: Vec<f16> = expected_result.into_data().to_vec().unwrap();
         assert_eq!(values, expected);
+    }
+
+    #[test]
+    fn test_matmul_batched_broadcast_transposed() {
+        // Broadcast + non-contiguous: lhs [1, 2, 3] transposed to [1, 3, 2] broadcasts
+        // against rhs [4, 2, 2]. Tests the interplay between broadcast stride 0 and
+        // non-trivial inner strides.
+        let lhs_data = TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], // [1, 2, 3]
+            vec![1, 2, 3],
+        );
+        let rhs_data = TensorData::new(
+            vec![
+                1.0f32, 0.0, 0.0, 1.0, // batch 0: identity [2, 2]
+                2.0, 0.0, 0.0, 2.0, // batch 1: scaled [2, 2]
+                1.0, 1.0, 1.0, 1.0, // batch 2: ones [2, 2]
+                0.0, 1.0, 1.0, 0.0, // batch 3: swap [2, 2]
+            ],
+            vec![4, 2, 2],
+        );
+
+        let lhs = FlexTensor::from_data(lhs_data.clone());
+        let lhs_t = lhs.transpose(1, 2); // [1, 3, 2], non-contiguous, broadcasts on batch
+        let rhs = FlexTensor::from_data(rhs_data.clone());
+
+        let result = matmul(lhs_t, rhs);
+        assert_eq!(result.layout().shape().to_vec(), vec![4, 3, 2]);
+
+        // Compare with contiguous broadcast version
+        let lhs2 = FlexTensor::from_data(lhs_data).transpose(1, 2).to_contiguous();
+        // Manually broadcast: repeat lhs 4 times
+        let lhs2_data: Vec<f32> = lhs2.into_data().to_vec().unwrap();
+        let broadcast_lhs: Vec<f32> = lhs2_data.iter().copied().cycle().take(lhs2_data.len() * 4).collect();
+        let lhs_broadcast = FlexTensor::from_data(TensorData::new(broadcast_lhs, vec![4, 3, 2]));
+        let rhs2 = FlexTensor::from_data(rhs_data);
+        let expected_result = matmul(lhs_broadcast, rhs2);
+
+        let values: Vec<f32> = result.into_data().to_vec().unwrap();
+        let expected: Vec<f32> = expected_result.into_data().to_vec().unwrap();
+        for (v, e) in values.iter().zip(expected.iter()) {
+            assert!((v - e).abs() < 1e-5, "mismatch: {v} vs {e}");
+        }
     }
 
     #[test]
