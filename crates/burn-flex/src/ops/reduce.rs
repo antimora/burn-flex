@@ -612,7 +612,12 @@ fn min_impl<E: Element + bytemuck::Pod + PartialOrd>(tensor: &FlexTensor) -> Fle
 
 /// Argmax along a dimension, returning indices as isize (INDEX_DTYPE).
 pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
+    let ndims = tensor.layout().shape().num_dims();
     assert_dim_fits_isize(tensor.layout().shape()[dim], dim);
+    #[cfg(feature = "simd")]
+    if tensor.dtype() == DType::F32 && dim == ndims - 1 {
+        return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::max_f32).1;
+    }
     match tensor.dtype() {
         DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b).1,
         DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b).1,
@@ -628,7 +633,12 @@ pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
 
 /// Argmin along a dimension, returning indices as isize (INDEX_DTYPE).
 pub fn argmin(tensor: FlexTensor, dim: usize) -> FlexTensor {
+    let ndims = tensor.layout().shape().num_dims();
     assert_dim_fits_isize(tensor.layout().shape()[dim], dim);
+    #[cfg(feature = "simd")]
+    if tensor.dtype() == DType::F32 && dim == ndims - 1 {
+        return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::min_f32).1;
+    }
     match tensor.dtype() {
         DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b).1,
         DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b).1,
@@ -1150,10 +1160,15 @@ pub fn mean(tensor: FlexTensor) -> FlexTensor {
 
 /// Max along a dimension, returning only values.
 pub fn max_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
+    let ndims = tensor.layout().shape().num_dims();
     assert!(
         tensor.layout().shape()[dim] > 0,
         "max_dim: dimension {dim} has size 0"
     );
+    #[cfg(feature = "simd")]
+    if tensor.dtype() == DType::F32 && dim == ndims - 1 {
+        return extremum_dim_f32_last_simd(&tensor, dim, kernels::max_f32);
+    }
     match tensor.dtype() {
         DType::F32 => extremum_dim::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
         DType::F64 => extremum_dim::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
@@ -1173,10 +1188,15 @@ pub fn max_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 
 /// Min along a dimension, returning only values.
 pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
+    let ndims = tensor.layout().shape().num_dims();
     assert!(
         tensor.layout().shape()[dim] > 0,
         "min_dim: dimension {dim} has size 0"
     );
+    #[cfg(feature = "simd")]
+    if tensor.dtype() == DType::F32 && dim == ndims - 1 {
+        return extremum_dim_f32_last_simd(&tensor, dim, kernels::min_f32);
+    }
     match tensor.dtype() {
         DType::F32 => extremum_dim::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
         DType::F64 => extremum_dim::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
@@ -1196,12 +1216,17 @@ pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
 
 /// Max along a dimension with indices, returning (values, indices) in a single pass.
 pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
+    let ndims = tensor.layout().shape().num_dims();
     let dim_len = tensor.layout().shape()[dim];
     assert!(
         dim_len > 0,
         "max_dim_with_indices: dimension {dim} has size 0"
     );
     assert_dim_fits_isize(dim_len, dim);
+    #[cfg(feature = "simd")]
+    if tensor.dtype() == DType::F32 && dim == ndims - 1 {
+        return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::max_f32);
+    }
     match tensor.dtype() {
         DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
         DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
@@ -1224,12 +1249,17 @@ pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
 
 /// Min along a dimension with indices, returning (values, indices) in a single pass.
 pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, FlexTensor) {
+    let ndims = tensor.layout().shape().num_dims();
     let dim_len = tensor.layout().shape()[dim];
     assert!(
         dim_len > 0,
         "min_dim_with_indices: dimension {dim} has size 0"
     );
     assert_dim_fits_isize(dim_len, dim);
+    #[cfg(feature = "simd")]
+    if tensor.dtype() == DType::F32 && dim == ndims - 1 {
+        return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::min_f32);
+    }
     match tensor.dtype() {
         DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
         DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
@@ -1260,6 +1290,113 @@ pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
 // enough to justify thread-pool dispatch.
 #[cfg(feature = "rayon")]
 const EXTREMUM_PARALLEL_THRESHOLD: usize = 32 * 1024;
+
+/// SIMD fast path for f32 last-dim extremum (values only).
+/// Uses macerator SIMD reduction per contiguous row, with NaN propagation.
+#[cfg(feature = "simd")]
+fn extremum_dim_f32_last_simd(
+    tensor: &FlexTensor,
+    dim: usize,
+    simd_reduce: fn(&[f32]) -> f32,
+) -> FlexTensor {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let dim_size = shape[dim];
+    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let data: &[f32] = tensor.storage();
+    let start = tensor.layout().start_offset();
+
+    let mut out_shape: Vec<usize> = shape.to_vec();
+    out_shape[dim] = 1;
+
+    let reduce_row = |outer: usize| -> f32 {
+        let row_start = start + outer * dim_size;
+        let row = &data[row_start..row_start + dim_size];
+        let ext = simd_reduce(row);
+        // SIMD max/min instructions don't reliably propagate NaN across all
+        // architectures. A single scan to check for NaN is cheap (just is_nan()
+        // per element, no state tracking) and early-exits on the first NaN.
+        if row.iter().any(|v| v.is_nan()) {
+            f32::NAN
+        } else {
+            ext
+        }
+    };
+
+    #[cfg(feature = "rayon")]
+    let values: Vec<f32> = if outer_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+        (0..outer_size).into_par_iter().map(reduce_row).collect()
+    } else {
+        (0..outer_size).map(reduce_row).collect()
+    };
+
+    #[cfg(not(feature = "rayon"))]
+    let values: Vec<f32> = (0..outer_size).map(reduce_row).collect();
+
+    FlexTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape)),
+        DType::F32,
+    )
+}
+
+/// SIMD fast path for f32 last-dim extremum with indices.
+/// Pass 1: SIMD reduction to find the extremum value per row.
+/// Pass 2: combined scan for the first NaN or first match of the extremum.
+#[cfg(feature = "simd")]
+fn extremum_dim_with_indices_f32_last_simd(
+    tensor: &FlexTensor,
+    dim: usize,
+    simd_reduce: fn(&[f32]) -> f32,
+) -> (FlexTensor, FlexTensor) {
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let dim_size = shape[dim];
+    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let data: &[f32] = tensor.storage();
+    let start = tensor.layout().start_offset();
+
+    let mut out_shape: Vec<usize> = shape.to_vec();
+    out_shape[dim] = 1;
+
+    let find_row = |outer: usize| -> (f32, isize) {
+        let row_start = start + outer * dim_size;
+        let row = &data[row_start..row_start + dim_size];
+        let ext = simd_reduce(row);
+        // Single scan: return first NaN (with NaN value) or first match of ext.
+        for (i, &v) in row.iter().enumerate() {
+            if v.is_nan() {
+                return (f32::NAN, i as isize);
+            }
+            if v == ext {
+                return (ext, i as isize);
+            }
+        }
+        (ext, 0)
+    };
+
+    #[cfg(feature = "rayon")]
+    let (values, indices): (Vec<f32>, Vec<isize>) = if outer_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+        (0..outer_size).into_par_iter().map(find_row).unzip()
+    } else {
+        (0..outer_size).map(find_row).unzip()
+    };
+
+    #[cfg(not(feature = "rayon"))]
+    let (values, indices): (Vec<f32>, Vec<isize>) = (0..outer_size).map(find_row).unzip();
+
+    let val_tensor = FlexTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape.clone())),
+        DType::F32,
+    );
+    let idx_tensor = FlexTensor::new(
+        Bytes::from_elems(indices),
+        Layout::contiguous(Shape::from(out_shape)),
+        INDEX_DTYPE,
+    );
+    (val_tensor, idx_tensor)
+}
 
 /// Find extremum value along a dimension. `is_better(new, current) -> bool`.
 fn extremum_dim<E, F>(tensor: &FlexTensor, dim: usize, is_better: F) -> FlexTensor
