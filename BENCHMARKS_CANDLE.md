@@ -219,17 +219,18 @@ the divan noise floor (<100 µs).
 | mean (full)     | 1024² | 48.5 µs     | 48.0 µs | tied      |
 | max (full)      | 1024² | **129 µs**  | 520 µs  | **4.0×**  |
 | min (full)      | 1024² | **129 µs**  | 520 µs  | **4.0×**  |
-| sum_dim last    | 1024² | 78.2 µs     | 40.4 µs | 0.52×     |
+| sum_dim last    | 1024² | 44.7 µs     | 42.1 µs | tied      |
 | sum_dim first   | 1024² | **78.4 µs** | 1.20 ms | **15.3×** |
-| mean_dim last   | 1024² | 77.6 µs     | 40.8 µs | 0.53×     |
+| mean_dim last   | 1024² | 42.1 µs     | 42.7 µs | tied      |
 | max_dim last    | 1024² | **92 µs**   | 545 µs  | **5.9×**  |
 | max_dim first   | 1024² | **199 µs**  | 986 µs  | **5.0×**  |
 | argmax_dim last | 1024² | **86 µs**   | 556 µs  | **6.5×**  |
 
 Three big wins: **4× faster full-tensor max/min**, **15× faster non-last-dim sum**, and **5-6×
 faster max_dim/argmax_dim** (was 4× slower before rayon + SIMD, fixed in
-[antimora/burn-flex#47](https://github.com/antimora/burn-flex/pull/47)). One real loss: **sum_dim /
-mean_dim last-axis** is 2× slower on flex, listed in the perf bug list.
+[antimora/burn-flex#47](https://github.com/antimora/burn-flex/pull/47)). Last-axis sum_dim/mean_dim
+now ties candle after the 4-accumulator SIMD rewrite in
+[antimora/burn-flex#50](https://github.com/antimora/burn-flex/pull/50).
 
 ### Elementwise (1D, 1M elements, f32)
 
@@ -303,10 +304,8 @@ Surfaced by the broader coverage pass. Ordered by impact on real workloads.
    [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
 2. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
 3. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
-4. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
-   the fused-layer_norm dependency path.
-5. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
-6. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
+4. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
+5. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
    pointwise; flex's im2col adds overhead.
 
 Fixed since the first pass:
@@ -318,6 +317,8 @@ Fixed since the first pass:
   [antimora/burn-flex#46](https://github.com/antimora/burn-flex/pull/46).
 - sort_last at 1024² (was 7.8× slower; now 1.3× faster), fixed in
   [antimora/burn-flex#45](https://github.com/antimora/burn-flex/pull/45).
+- sum_dim/mean_dim last-axis at 1024² (was 2× slower; now tied), fixed in
+  [antimora/burn-flex#50](https://github.com/antimora/burn-flex/pull/50).
 
 ---
 
