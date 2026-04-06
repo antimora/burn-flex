@@ -970,7 +970,10 @@ fn conv3d_direct_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + 
     #[cfg(not(feature = "rayon"))]
     let parallelism = gemm::Parallelism::None;
 
-    let total_output = batch_size * channels_out * out_w;
+    let total_output = batch_size
+        .checked_mul(channels_out)
+        .and_then(|x| x.checked_mul(out_w))
+        .expect("conv direct: output dimensions overflow");
     let mut output = vec![zero; total_output];
 
     let batch_x_len = channels_in * in_w;
@@ -1001,7 +1004,7 @@ fn conv3d_direct_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + 
                             x_base.add(k),
                             rhs_cs,
                             rhs_rs,
-                            zero,
+                            one,
                             one,
                             false,
                             false,
@@ -1034,7 +1037,7 @@ fn conv3d_direct_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + 
                             x_base.add(k),
                             rhs_cs,
                             rhs_rs,
-                            zero,
+                            one,
                             one,
                             false,
                             false,
@@ -1694,6 +1697,94 @@ mod tests {
         assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 3]);
         let out: Vec<f32> = result.into_data().to_vec().unwrap();
         assert_eq!(out, vec![6.0, 9.0, 12.0]);
+    }
+
+    #[test]
+    fn test_conv1d_direct_path() {
+        // c_in=64 >= 32, kernel=3, stride=2, out_w=49 <= 800 -> hits direct path
+        let c_in = 64;
+        let c_out = 32;
+        let in_w = 100;
+        let kw = 3;
+        let stride = 2;
+        let out_w = (in_w - kw) / stride + 1; // 49
+
+        // Deterministic input and weights
+        let x_data: Vec<f32> = (0..c_in * in_w)
+            .map(|i| ((i % 100) as f32 / 100.0) - 0.5)
+            .collect();
+        let w_data: Vec<f32> = (0..c_out * c_in * kw)
+            .map(|i| ((i % 50) as f32 / 50.0) - 0.5)
+            .collect();
+
+        let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![1, c_in, in_w]));
+        let weight =
+            FlexTensor::from_data(TensorData::new(w_data.clone(), vec![c_out, c_in, kw]));
+        let options = ConvOptions::new([stride], [0], [1], 1);
+        let result = conv1d_f32(x, weight, None, &options);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        assert_eq!(out.len(), c_out * out_w);
+
+        // Verify against naive reference implementation
+        for co in 0..c_out {
+            for o in 0..out_w {
+                let mut expected = 0.0f32;
+                for ci in 0..c_in {
+                    for k in 0..kw {
+                        expected +=
+                            w_data[co * c_in * kw + ci * kw + k] * x_data[ci * in_w + o * stride + k];
+                    }
+                }
+                let actual = out[co * out_w + o];
+                assert!(
+                    (actual - expected).abs() < 1e-3,
+                    "mismatch at co={co}, o={o}: expected {expected}, got {actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_conv1d_direct_path_kw2() {
+        // Test with kw=2 (L5/L6 shapes use kw=2)
+        let c_in = 64;
+        let c_out = 32;
+        let in_w = 50;
+        let kw = 2;
+        let stride = 2;
+        let out_w = (in_w - kw) / stride + 1; // 24
+
+        let x_data: Vec<f32> = (0..c_in * in_w)
+            .map(|i| ((i % 100) as f32 / 100.0) - 0.5)
+            .collect();
+        let w_data: Vec<f32> = (0..c_out * c_in * kw)
+            .map(|i| ((i % 50) as f32 / 50.0) - 0.5)
+            .collect();
+
+        let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![1, c_in, in_w]));
+        let weight =
+            FlexTensor::from_data(TensorData::new(w_data.clone(), vec![c_out, c_in, kw]));
+        let options = ConvOptions::new([stride], [0], [1], 1);
+        let result = conv1d_f32(x, weight, None, &options);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        for co in 0..c_out {
+            for o in 0..out_w {
+                let mut expected = 0.0f32;
+                for ci in 0..c_in {
+                    for k in 0..kw {
+                        expected +=
+                            w_data[co * c_in * kw + ci * kw + k] * x_data[ci * in_w + o * stride + k];
+                    }
+                }
+                let actual = out[co * out_w + o];
+                assert!(
+                    (actual - expected).abs() < 1e-3,
+                    "mismatch at co={co}, o={o}: expected {expected}, got {actual}"
+                );
+            }
+        }
     }
 
     #[test]
