@@ -1065,19 +1065,30 @@ fn conv_transpose3d_impl<T: bytemuck::Pod + Clone + Copy + Send + Sync + burn_ba
     let x_data: &[T] = x.storage();
     let w_data: &[T] = weight.storage();
 
-    let k_spatial = kernel_d * kernel_h * kernel_w;
-    let in_spatial = in_d * in_h * in_w;
+    let k_spatial = [kernel_d, kernel_h, kernel_w]
+        .iter()
+        .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+        .expect("conv_transpose: kernel dimensions would overflow");
+    let in_spatial = [in_d, in_h, in_w]
+        .iter()
+        .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+        .expect("conv_transpose: input spatial dimensions would overflow");
     let out_spatial = out_d * out_h * out_w;
-    let col_ch = out_channels_per_group * k_spatial;
+    let col_ch = out_channels_per_group
+        .checked_mul(k_spatial)
+        .expect("conv_transpose: columns dimensions would overflow");
+    let columns_len = col_ch
+        .checked_mul(in_spatial)
+        .expect("conv_transpose: columns buffer size would overflow");
 
     let output_size = [batch_size, out_channels, out_d, out_h, out_w]
         .iter()
         .try_fold(1usize, |acc, &x| acc.checked_mul(x))
-        .expect("conv_transpose: output dimensions would overflow index calculations");
+        .expect("conv_transpose: output dimensions would overflow");
     let mut output = vec![zero; output_size];
 
     // Reuse columns buffer across (batch, group) iterations; GEMM overwrites it fully.
-    let mut columns = vec![zero; col_ch * in_spatial];
+    let mut columns = vec![zero; columns_len];
 
     for b in 0..batch_size {
         for g in 0..groups {
@@ -1727,5 +1738,44 @@ mod tests {
         // oc=0: 1 * [[1,2],[3,4]] = [1,2,3,4]
         // oc=1: 3 * [[5,6],[7,8]] = [15,18,21,24]
         assert_eq!(out, vec![1.0, 2.0, 3.0, 4.0, 15.0, 18.0, 21.0, 24.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d_padding_out() {
+        // padding_out adds extra rows/cols to the output to disambiguate shapes when stride > 1.
+        // Input: [1, 1, 2, 2], Weight: [1, 1, 2, 2], stride=2, padding=0, padding_out=[1, 1]
+        // Without padding_out: out = (2-1)*2 + 2 = 4
+        // With padding_out=1:  out = (2-1)*2 + 2 + 1 = 5
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0, 4.0],
+            vec![1, 1, 2, 2],
+        ));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32; 4], vec![1, 1, 2, 2]));
+        let opts = ConvTransposeOptions::new([2, 2], [0, 0], [1, 1], [1, 1], 1);
+        let result = conv_transpose2d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 5, 5]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // The extra row/col is zero-padded at the end.
+        // First 4x4 block matches the no-padding_out result, last row/col are 0.
+        assert_eq!(out[24], 0.0); // bottom-right corner
+        assert_eq!(out[0], 1.0); // top-left: input (0,0) * weight (0,0)
+    }
+
+    #[test]
+    fn test_conv_transpose1d_simple() {
+        // Exercises the 1D path which delegates to 3D with two size-1 dims.
+        // Input: [1, 1, 3], Weight: [1, 1, 2], stride=1, padding=0
+        // Output size: (3-1)*1 + 2 = 4
+        let x = FlexTensor::from_data(TensorData::new(
+            vec![1.0f32, 2.0, 3.0],
+            vec![1, 1, 3],
+        ));
+        let w = FlexTensor::from_data(TensorData::new(vec![1.0f32, 1.0], vec![1, 1, 2]));
+        let opts = ConvTransposeOptions::new([1], [0], [0], [1], 1);
+        let result = conv_transpose1d_f32(x, w, None, &opts);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 1, 4]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Scatter: x[0]*w -> out[0:2], x[1]*w -> out[1:3], x[2]*w -> out[2:4]
+        assert_eq!(out, vec![1.0, 3.0, 5.0, 3.0]);
     }
 }
