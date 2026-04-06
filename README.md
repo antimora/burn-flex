@@ -34,8 +34,8 @@ is thread-safe by design.
   - wasm32: SIMD128
   - Embedded/other: Scalar fallback
 - **Matrix Multiplication**: Optimized via [gemm](https://crates.io/crates/gemm) with native f16
-  support. Strided batched matmul passes layout strides directly to gemm, so transposed views
-  (e.g. `q.matmul(k.swap_dims(-2,-1))`) run at contiguous speed with no copy.
+  support. Strided batched matmul passes layout strides directly to gemm, so transposed views (e.g.
+  `q.matmul(k.swap_dims(-2,-1))`) run at contiguous speed with no copy.
 - **FFT**: Forward (rfft) and inverse (irfft) real FFT via Cooley-Tukey with complex packing,
   compile-time twiddle tables, SIMD butterflies, and unrolled small kernels. Works in `no_std`.
 - **Parallel Execution**: Optional rayon for large tensors
@@ -130,11 +130,12 @@ candle's CPU API.
 | index_select dim=0     | 1024²                    | **1.4x**  |
 | softmax (fused)        | `[16, 150, 150]`         | **1.5x**  |
 | sort last dim          | 1024²                    | **1.3x**  |
+| mask_where             | 1024²                    | **1.1x**  |
 
 **Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
 
-**Remaining regressions** (4 ops): transposed-view matmul at small seqs, `mask_where`,
-`nearest2d`, small conv1d layers.
+**Remaining regressions** (3 ops): transposed-view matmul at small seqs, `nearest2d`, small conv1d
+layers.
 
 Detailed per-op numbers, methodology, and the prioritized regression list are in
 [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row
