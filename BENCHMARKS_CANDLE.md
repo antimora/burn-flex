@@ -55,10 +55,7 @@ layer_norm); gelu uses burn-tensor's trait hook that both backends have.
 Flex decomposed is `burn_tensor::activation::softmax` — a 5-op decomposition into
 `max_dim + sub + exp + sum_dim + div` with full-tensor intermediates. The fused path runs
 `burn_flex::ops::activation::softmax`, a three-pass row kernel (max, exp+sum, normalize) dispatched
-through macerator once per chunk of rows. See
-[UPSTREAM_ISSUE.md](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md) for the proposal to add a
-`softmax` hook to burn's `ActivationOps` trait so the fused path is available without a
-crate-specific wrapper.
+through macerator once per chunk of rows.
 
 ### layer_norm (last axis)
 
@@ -194,11 +191,12 @@ bug list below.
 | resnet_l3 1×256×14² k3        | **1.47 ms** | 2.20 ms | **1.49×**    |
 | resnet_l4 1×512×7² k3         | **2.35 ms** | 3.08 ms | **1.31×**    |
 | 1×1 pointwise 1×256×56² → 64  | 2.23 ms     | 1.52 ms | 0.68×        |
-| conv_transpose 1×128×16² → 64 | **12.5 ms** | 1.45 ms | **0.12×** ⚠️ |
-| conv_transpose 1×64×32² → 32  | **10.6 ms** | 1.30 ms | **0.12×** ⚠️ |
+| conv_transpose 1×128×16² → 64 | **602 µs**  | 1.37 ms | **2.27×** |
+| conv_transpose 1×64×32² → 32  | **838 µs**  | 1.72 ms | **2.05×** |
 
-Flex wins every standard 3×3 conv2d layer; 1×1 pointwise is where candle's direct gemm is sharper.
-`conv_transpose2d` is a major outlier (8× slower) and is listed in the perf bug list.
+Flex wins every standard 3×3 conv2d layer and conv_transpose2d (2x faster after GEMM + col2im
+rewrite in [antimora/burn-flex#46](https://github.com/antimora/burn-flex/pull/46)); 1×1 pointwise
+is where candle's direct gemm is sharper.
 
 ### Pool2d
 
@@ -302,30 +300,29 @@ adding rayon fan-out across rows (fixed in
 
 Surfaced by the broader coverage pass. Ordered by impact on real workloads.
 
-1. **conv_transpose2d: 8× slower** (12.5 ms vs 1.45 ms). Largest single gap. Affects any model with
-   an upsampling decoder (segmentation, GAN, super-resolution).
-2. **max_dim / argmax_dim: ~4× slower** (3.4 ms vs ~900 µs at 1024²). On the classifier output path
+1. **max_dim / argmax_dim: ~4× slower** (3.4 ms vs ~900 µs at 1024²). On the classifier output path
    for any model with an argmax head.
-3. **matmul on transposed-view input at small seqs: 4× slower than candle, 6× slower than flex's own
+2. **matmul on transposed-view input at small seqs: 4× slower than candle, 6× slower than flex's own
    contiguous path**. `Q @ K.swap_dims(1,2)` at `[16, 50, 64]` takes 340 µs on flex vs 52 µs for the
    contiguous-input form. Affects any attention kernel written in the idiomatic transpose form.
-4. **conv1d L3–L6 (small wav2vec2 shapes): 1.2–1.5× slower**. Already tracked at
+3. **conv1d L3-L6 (small wav2vec2 shapes): 1.2-1.5× slower**. Already tracked at
    [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
-5. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
-6. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
-7. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
+4. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
+5. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
+6. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
    the fused-layer_norm dependency path.
-8. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
-9. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
+7. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
+8. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
    pointwise; flex's im2col adds overhead.
 
 Fixed since the first pass:
+- conv_transpose2d (was 8× slower; now 2× faster), fixed in
+  [antimora/burn-flex#46](https://github.com/antimora/burn-flex/pull/46).
 - sort_last at 1024² (was 7.8× slower; now 1.3× faster), fixed in
   [antimora/burn-flex#45](https://github.com/antimora/burn-flex/pull/45).
 
-Items 1–3 together cover decoder models, classifiers, and any attention not written in the
-pre-transposed-K form. Fixing them would move flex into a "wins everywhere" state against candle on
-this hardware.
+Items 1-2 together cover classifiers and any attention not written in the pre-transposed-K form.
+Fixing them would move flex into a "wins everywhere" state against candle on this hardware.
 
 ---
 
@@ -342,6 +339,4 @@ See also:
 
 - [`crates/burn-flex-bench-candle/README.md`](crates/burn-flex-bench-candle/README.md) for the crate
   layout and how to extend the benches.
-- [`crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md`](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md)
-  for the proposal to add fused softmax/layer_norm hooks to burn-backend.
 - [BENCHMARKS.md](BENCHMARKS.md) for the flex vs burn-ndarray comparison.

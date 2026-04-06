@@ -103,56 +103,37 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 
 ### Performance vs candle-core (Apple M3 Max, pure-Rust, no BLAS)
 
-Direct per-op comparison against [candle-core](https://github.com/huggingface/candle) on CPU,
-pure-Rust on both sides. Numbers are median of 100 samples via divan on wav2vec2-large shapes.
+Per-op comparison against [candle-core](https://github.com/huggingface/candle), pure-Rust on both
+sides. Medians of 100 samples via divan. Eleven bench files cover every flex op that intersects with
+candle's CPU API.
 
-| Op                      | Shape                      | Flex         | Candle   | Flex vs Candle |
-| ----------------------- | -------------------------- | ------------ | -------- | -------------- |
-| softmax (fused)         | `[16, 150, 150]` attn      | **134 µs**   | 194 µs   | **1.45×**      |
-| layer_norm (fused)      | `[50, 1024]` hidden        | **19 µs**    | 68 µs    | **3.59×**      |
-| layer_norm (fused)      | `[150, 1024]` hidden       | **55 µs**    | 88 µs    | **1.60×**      |
-| matmul (square)         | 128×128                    | **44 µs**    | 103 µs   | **2.35×**      |
-| matmul (square)         | 1024×1024                  | 2.56 ms      | 2.69 ms  | 1.05×          |
-| matmul (qkv_proj)       | `[150, 1024]×[1024, 3072]` | 660 µs       | 678 µs   | tied           |
-| gelu                    | `[150, 4096]` ffn          | 1.14 ms      | 1.13 ms  | tied           |
-| conv1d (L0)             | wav2vec2 k=10 s=5          | **511 µs**   | 3.60 ms  | **7.04×**      |
-| conv1d (total 7 layers) | wav2vec2 feature extractor | **16.55 ms** | 18.27 ms | **1.10×**      |
+**Flex wins** (selected):
 
-Aggregated across softmax + layer_norm + conv, flex saves ~4.7 ms per wav2vec2-large forward pass at
-3s audio compared to candle on this hardware. The softmax and layer_norm wins come from fused row
-kernels in [`burn-flex/src/ops/activation.rs`](crates/burn-flex/src/ops/activation.rs) that bypass
-the decomposed 5-6-op default path in burn-tensor / burn-nn; there is an
-[upstream proposal](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md) to add fused `softmax` and
-`layer_norm` hooks to burn-backend so any CPU backend can plug in.
+| Op                     | Representative shape     | Ratio     |
+| ---------------------- | ------------------------ | --------- |
+| sum along non-last dim | 1024²                    | **15.3x** |
+| batched matmul         | `[32, 128, 128]`         | **13.0x** |
+| cumsum last dim        | 256²                     | **10.4x** |
+| conv1d (L0, wav2vec2)  | 1x1x16000, k=10 s=5      | **7.0x**  |
+| full-tensor max/min    | 1024²                    | **4.0x**  |
+| layer_norm (fused)     | `[50, 1024]`             | **3.6x**  |
+| cat along last dim     | 2x1024²                  | **2.7x**  |
+| max_pool2d k=3 s=2     | 8x64x56²                 | **2.6x**  |
+| matmul (small square)  | 128x128                  | **2.4x**  |
+| conv_transpose2d       | 1x128x16² -> 64, k=4 s=2 | **2.3x**  |
+| gather last dim        | 1024²                    | **2.1x**  |
+| conv2d (ResNet layer)  | 1x128x28², k=3           | **1.9x**  |
+| softmax (fused)        | `[16, 150, 150]`         | **1.5x**  |
+| sort last dim          | 1024²                    | **1.3x**  |
 
-#### Broader op coverage
+**Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
 
-Eleven bench files now cover every flex op that intersects with candle's CPU API (elementwise,
-reduce, shape ops, batched matmul, conv2d, pool2d, indexing, cumsum, sort, interpolate). Selected
-highlights on the same hardware:
+**Remaining regressions** (8 ops): `max_dim`/`argmax_dim` (4x slower), transposed-view matmul at
+small seqs, `index_select`, `mask_where`, last-axis `sum_dim`, 1x1 pointwise conv2d, `nearest2d`.
 
-| Op                                | Shape                                  | Flex         | Candle   | Flex vs Candle |
-| --------------------------------- | -------------------------------------- | ------------ | -------- | -------------- |
-| batched matmul (attention)        | `[32, 128, 128] @ [32, 128, 128]`      | **253 µs**   | 3.29 ms  | **13.0×**      |
-| batched matmul (AV, 3s)           | `[16, 150, 150] @ [16, 150, 64]`       | **173 µs**   | 1.59 ms  | **9.19×**      |
-| conv2d ResNet layer 2             | 1×128×28² k=3                          | **1.03 ms**  | 1.90 ms  | **1.85×**      |
-| max_pool2d k=3 s=2                | 8×64×56²                               | **684 µs**   | 1.81 ms  | **2.64×**      |
-| cumsum last dim                   | 256×256                                | **42 µs**    | 436 µs   | **10.4×**      |
-| sort last dim                     | 1024²                                  | **1.18 ms**  | 1.55 ms  | **1.30×**      |
-| full-tensor max / min             | 1024²                                  | **129 µs**   | 520 µs   | **4.0×**       |
-| sum along non-last dim            | 1024²                                  | **78 µs**    | 1.20 ms  | **15.3×**      |
-| gather last dim                   | 1024², half-index                      | **244 µs**   | 511 µs   | **2.09×**      |
-| cat along last dim                | 2×1024²                                | **121 µs**   | 322 µs   | **2.66×**      |
-| basic elementwise (add/mul/...)   | 1M f32                                 | 112 µs       | 112 µs   | tied (BW-bound)|
-
-Ties cover all basic elementwise arithmetic, transcendentals, view ops (transpose/reshape/narrow),
-square matmul, and gelu. Nine specific regressions vs candle are documented and prioritized as a
-perf bug list in [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md#perf-bug-list-prioritized). The biggest
-remaining are `conv_transpose2d` (8× slower, upsampling decoders) and `max_dim`/`argmax_dim`
-(4× slower, affects classifier output paths).
-
-See [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md) for the full breakdown including conv1d L1-L6, all
-transformer shapes, per-forward-pass estimates, and the complete bench output.
+Detailed per-op numbers, methodology, and the prioritized regression list are in
+[BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row
+kernels that bypass the decomposed 5-6-op default path.
 
 ### Status
 
