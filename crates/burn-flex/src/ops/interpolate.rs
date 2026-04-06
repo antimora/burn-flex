@@ -199,7 +199,7 @@ fn nearest_index_map(in_size: usize, out_size: usize) -> Vec<usize> {
 }
 
 /// Nearest neighbor interpolation.
-/// Maps output coordinates to input using floor(ratio * out_coord).
+/// Maps output coordinates to input using floor(ratio * out_coord) via precomputed lookup tables.
 fn interpolate_nearest_impl<T>(
     x: FlexTensor,
     output_size: [usize; 2],
@@ -229,7 +229,7 @@ where
     let in_hw = in_height * in_width;
     let out_hw = out_height * out_width;
 
-    /// Per-plane nearest gather using precomputed index maps.
+    // Per-plane nearest gather using precomputed index maps.
     #[inline]
     fn gather_plane<T: Copy>(
         input: &[T],
@@ -257,10 +257,10 @@ where
         }
 
         let bc = batch * channels;
-        let use_seq = out_numel < 256 * 1024;
 
+        // Each (batch, channel) plane is independent, so parallelize across planes.
         #[cfg(feature = "rayon")]
-        if !use_seq {
+        if out_numel >= super::PARALLEL_THRESHOLD {
             use rayon::prelude::*;
 
             output
@@ -288,20 +288,18 @@ where
             }
         }
         #[cfg(not(feature = "rayon"))]
-        {
-            for bc_idx in 0..bc {
-                let in_base = bc_idx * in_hw;
-                let out_start = bc_idx * out_hw;
-                gather_plane(
-                    input,
-                    in_base,
-                    &mut output[out_start..out_start + out_hw],
-                    in_width,
-                    out_width,
-                    &y_map,
-                    &x_map,
-                );
-            }
+        for bc_idx in 0..bc {
+            let in_base = bc_idx * in_hw;
+            let out_start = bc_idx * out_hw;
+            gather_plane(
+                input,
+                in_base,
+                &mut output[out_start..out_start + out_hw],
+                in_width,
+                out_width,
+                &y_map,
+                &x_map,
+            );
         }
         output
     };
@@ -839,7 +837,7 @@ where
     let in_hw = in_height * in_width;
     let out_hw = out_height * out_width;
 
-    /// Scatter-add gradients from one output plane into one input gradient plane.
+    // Scatter-add gradients from one output plane into one input gradient plane.
     #[inline]
     fn scatter_plane<T: Float + Copy>(
         grad_data: &[T],
@@ -861,11 +859,10 @@ where
 
     let mut input_grad = vec![T::zero(); in_numel];
     let bc = batch * channels;
-    let use_seq = in_numel < 256 * 1024;
 
     // Each (batch, channel) plane is independent, so parallelize across planes.
     #[cfg(feature = "rayon")]
-    if !use_seq {
+    if in_numel >= super::PARALLEL_THRESHOLD {
         use rayon::prelude::*;
 
         input_grad
@@ -893,20 +890,18 @@ where
         }
     }
     #[cfg(not(feature = "rayon"))]
-    {
-        for bc_idx in 0..bc {
-            let grad_base = bc_idx * out_hw;
-            let in_start = bc_idx * in_hw;
-            scatter_plane(
-                grad_data,
-                grad_base,
-                &mut input_grad[in_start..in_start + in_hw],
-                in_width,
-                out_width,
-                &y_map,
-                &x_map,
-            );
-        }
+    for bc_idx in 0..bc {
+        let grad_base = bc_idx * out_hw;
+        let in_start = bc_idx * in_hw;
+        scatter_plane(
+            grad_data,
+            grad_base,
+            &mut input_grad[in_start..in_start + in_hw],
+            in_width,
+            out_width,
+            &y_map,
+            &x_map,
+        );
     }
 
     FlexTensor::new(
