@@ -158,10 +158,10 @@ pub fn sum_rows_f32(src: &[f32], dst: &mut [f32], num_rows: usize, row_len: usiz
         num_rows * row_len,
         src.len()
     );
-    for row in 0..num_rows {
+    for (row, dst_val) in dst.iter_mut().enumerate() {
         let row_start = row * row_len;
         let row_data = &src[row_start..row_start + row_len];
-        dst[row] = macerator_sum(row_data);
+        *dst_val = macerator_sum(row_data);
     }
 }
 
