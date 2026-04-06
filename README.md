@@ -126,13 +126,14 @@ candle's CPU API.
 | conv_transpose2d       | 1x128x16² -> 64, k=4 s=2 | **2.3x**  |
 | gather last dim        | 1024²                    | **2.1x**  |
 | conv2d (ResNet layer)  | 1x128x28², k=3           | **1.9x**  |
+| index_select dim=0     | 1024²                    | **1.4x**  |
 | softmax (fused)        | `[16, 150, 150]`         | **1.5x**  |
 | sort last dim          | 1024²                    | **1.3x**  |
 
 **Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
 
-**Remaining regressions** (6 ops): transposed-view matmul at small seqs, `index_select`,
-`mask_where`, 1x1 pointwise conv2d, `nearest2d`, small conv1d layers.
+**Remaining regressions** (5 ops): transposed-view matmul at small seqs, `mask_where`, 1x1
+pointwise conv2d, `nearest2d`, small conv1d layers.
 
 Detailed per-op numbers, methodology, and the prioritized regression list are in
 [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row

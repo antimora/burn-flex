@@ -274,11 +274,11 @@ Flex's strided-unary path handles transposed inputs 1.65× faster than candle, a
 | ----- | ------------------ | ---------- | ------ | --------- |
 | 1024² | gather last dim    | **244 µs** | 511 µs | **2.09×** |
 | 1024² | scatter_add last   | 548 µs     | 622 µs | 1.13×     |
-| 1024² | index_select dim 0 | 100 µs     | 36 µs  | 0.36× ⚠️  |
+| 1024² | index_select dim 0 | **27 µs**  | 37 µs  | **1.37×** |
 | 1024² | where_cond         | 248 µs     | 122 µs | 0.49× ⚠️  |
 
-Flex wins gather (the hottest indexing op in language models) by 2×; loses `index_select` and
-`mask_where` by ~2×.
+Flex wins gather by 2× and `index_select` by 1.4× (was 2.8× slower before the rayon threshold +
+uninit buffer fix); loses `mask_where` by ~2×.
 
 ### Cumsum, sort, nearest2d
 
@@ -302,10 +302,9 @@ Surfaced by the broader coverage pass. Ordered by impact on real workloads.
 
 1. **conv1d L3-L6 (small wav2vec2 shapes): 1.2-1.5× slower**. Already tracked at
    [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
-2. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
-3. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
-4. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
-5. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
+2. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
+3. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
+4. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
    pointwise; flex's im2col adds overhead.
 
 Fixed since the first pass:
@@ -319,6 +318,8 @@ Fixed since the first pass:
   [antimora/burn-flex#45](https://github.com/antimora/burn-flex/pull/45).
 - sum_dim/mean_dim last-axis at 1024² (was 2× slower; now tied), fixed in
   [antimora/burn-flex#50](https://github.com/antimora/burn-flex/pull/50).
+- index_select at 1024² (was 2.8× slower; now 1.4× faster), fixed in
+  [antimora/burn-flex#51](https://github.com/antimora/burn-flex/pull/51).
 
 ---
 
