@@ -109,33 +109,33 @@ candle's CPU API.
 
 **Flex wins** (selected):
 
-| Op | Representative shape | Ratio |
-| --- | --- | --- |
-| sum along non-last dim | 1024² | **15.3x** |
-| batched matmul | `[32, 128, 128]` | **13.0x** |
-| cumsum last dim | 256² | **10.4x** |
-| conv1d (L0, wav2vec2) | 1x1x16000, k=10 s=5 | **7.0x** |
-| full-tensor max/min | 1024² | **4.0x** |
-| layer_norm (fused) | `[50, 1024]` | **3.6x** |
-| cat along last dim | 2x1024² | **2.7x** |
-| max_pool2d k=3 s=2 | 8x64x56² | **2.6x** |
-| matmul (small square) | 128x128 | **2.4x** |
-| conv_transpose2d | 1x128x16² -> 64, k=4 s=2 | **2.3x** |
-| gather last dim | 1024² | **2.1x** |
-| conv2d (ResNet layer) | 1x128x28², k=3 | **1.9x** |
-| softmax (fused) | `[16, 150, 150]` | **1.5x** |
-| sort last dim | 1024² | **1.3x** |
+| Op                     | Representative shape     | Ratio     |
+| ---------------------- | ------------------------ | --------- |
+| sum along non-last dim | 1024²                    | **15.3x** |
+| batched matmul         | `[32, 128, 128]`         | **13.0x** |
+| cumsum last dim        | 256²                     | **10.4x** |
+| conv1d (L0, wav2vec2)  | 1x1x16000, k=10 s=5      | **7.0x**  |
+| full-tensor max/min    | 1024²                    | **4.0x**  |
+| layer_norm (fused)     | `[50, 1024]`             | **3.6x**  |
+| cat along last dim     | 2x1024²                  | **2.7x**  |
+| max_pool2d k=3 s=2     | 8x64x56²                 | **2.6x**  |
+| matmul (small square)  | 128x128                  | **2.4x**  |
+| conv_transpose2d       | 1x128x16² -> 64, k=4 s=2 | **2.3x**  |
+| gather last dim        | 1024²                    | **2.1x**  |
+| conv2d (ResNet layer)  | 1x128x28², k=3           | **1.9x**  |
+| softmax (fused)        | `[16, 150, 150]`         | **1.5x**  |
+| sort last dim          | 1024²                    | **1.3x**  |
 
 **Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
 
 **Remaining regressions** (8 ops): `max_dim`/`argmax_dim` (4x slower), transposed-view matmul at
 small seqs, `index_select`, `mask_where`, last-axis `sum_dim`, 1x1 pointwise conv2d, `nearest2d`.
-Documented in the [perf bug list](BENCHMARKS_CANDLE.md#perf-bug-list-prioritized).
 
-The softmax and layer_norm wins come from fused row kernels that bypass the decomposed 5-6-op
-default path; there is an [upstream proposal](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md) to
-add fused hooks to burn-backend. See [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md) for the full
-breakdown.
+Detailed per-op numbers, methodology, and the prioritized regression list are in
+[BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row
+kernels that bypass the decomposed 5-6-op default path; there is an
+[upstream proposal](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md) to add fused hooks to
+burn-backend.
 
 ### Status
 
