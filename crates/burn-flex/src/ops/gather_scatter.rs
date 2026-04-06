@@ -600,22 +600,47 @@ fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
     };
     let output_size = output_rows * output_cols;
 
+    // Minimum bytes of output before we consider rayon. Below this, a
+    // single-threaded loop is faster because there is not enough work to
+    // amortize the work-stealing dispatch overhead.
     #[cfg(feature = "rayon")]
-    const PARALLEL_THRESHOLD: usize = 256 * 1024;
+    const PARALLEL_THRESHOLD_BYTES: usize = 4 * 1024 * 1024;
+
+    // Minimum elements per rayon task. Without batching, par_chunks_mut
+    // creates one task per row (e.g. 512 single-row tasks of 4 KB each)
+    // whose dispatch overhead dominates the actual copy.
+    #[cfg(feature = "rayon")]
+    const MIN_ELEMS_PER_TASK: usize = 64 * 1024;
 
     if dim == 0 {
-        let mut result = vec![E::default(); output_size];
+        // SAFETY: the output has exactly num_indices * tensor_cols elements.
+        // Both the parallel and serial paths below write every element exactly
+        // once via non-overlapping row copies, so no element is left uninitialized.
+        let mut result = Vec::with_capacity(output_size);
+        #[allow(clippy::uninit_vec)]
+        unsafe {
+            result.set_len(output_size)
+        };
 
         #[cfg(feature = "rayon")]
-        if output_size >= PARALLEL_THRESHOLD {
-            result
-                .par_chunks_mut(tensor_cols)
-                .enumerate()
-                .for_each(|(i, dst_row)| {
-                    let src_row_idx = checked_index(indices_data[i], dim_size);
-                    let src_start = src_row_idx * tensor_cols;
-                    dst_row.copy_from_slice(&tensor_data[src_start..src_start + tensor_cols]);
-                });
+        if output_size * size_of::<E>() >= PARALLEL_THRESHOLD_BYTES {
+            // Batch multiple rows per rayon task so each task copies at
+            // least MIN_ELEMS_PER_TASK elements.
+            let rows_per_chunk = (MIN_ELEMS_PER_TASK / tensor_cols).max(1);
+            let elems_per_chunk = rows_per_chunk * tensor_cols;
+            result.par_chunks_mut(elems_per_chunk).enumerate().for_each(
+                |(chunk_idx, dst_chunk)| {
+                    let start_row = chunk_idx * rows_per_chunk;
+                    let chunk_rows = dst_chunk.len() / tensor_cols;
+                    for i in 0..chunk_rows {
+                        let src_row_idx = checked_index(indices_data[start_row + i], dim_size);
+                        let src_start = src_row_idx * tensor_cols;
+                        let dst_start = i * tensor_cols;
+                        dst_chunk[dst_start..dst_start + tensor_cols]
+                            .copy_from_slice(&tensor_data[src_start..src_start + tensor_cols]);
+                    }
+                },
+            );
         } else {
             for (i, &idx) in indices_data.iter().enumerate() {
                 let src_row_idx = checked_index(idx, dim_size);
@@ -639,19 +664,28 @@ fn select_2d<E: Element + Pod + Default + Copy + Send + Sync>(
 
         result
     } else {
+        // dim == 1: gather individual elements per row (not contiguous).
+        // Zero-init is fine here since the inner loop is per-element anyway.
         let mut result = vec![E::default(); output_size];
 
         #[cfg(feature = "rayon")]
-        if output_size >= PARALLEL_THRESHOLD {
-            result
-                .par_chunks_mut(output_cols)
-                .enumerate()
-                .for_each(|(row, dst_row)| {
-                    for (j, &idx) in indices_data.iter().enumerate() {
-                        let src_col = checked_index(idx, dim_size);
-                        dst_row[j] = tensor_data[row * tensor_cols + src_col];
+        if output_size * size_of::<E>() >= PARALLEL_THRESHOLD_BYTES {
+            let rows_per_chunk = (MIN_ELEMS_PER_TASK / output_cols).max(1);
+            let elems_per_chunk = rows_per_chunk * output_cols;
+            result.par_chunks_mut(elems_per_chunk).enumerate().for_each(
+                |(chunk_idx, dst_chunk)| {
+                    let start_row = chunk_idx * rows_per_chunk;
+                    let chunk_rows = dst_chunk.len() / output_cols;
+                    for r in 0..chunk_rows {
+                        let row = start_row + r;
+                        let dst_base = r * output_cols;
+                        for (j, &idx) in indices_data.iter().enumerate() {
+                            let src_col = checked_index(idx, dim_size);
+                            dst_chunk[dst_base + j] = tensor_data[row * tensor_cols + src_col];
+                        }
                     }
-                });
+                },
+            );
         } else {
             for row in 0..output_rows {
                 for (j, &idx) in indices_data.iter().enumerate() {
