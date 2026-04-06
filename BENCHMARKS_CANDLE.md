@@ -195,7 +195,7 @@ with no copy. Fixed in [antimora/burn-flex#49](https://github.com/antimora/burn-
 
 Flex wins every conv2d layer and conv_transpose2d. The 1×1 pointwise fast path skips im2col
 entirely and calls gemm directly on the NCHW input with correct strides, avoiding the transpose
-buffer (fixed in [antimora/burn-flex#44](https://github.com/antimora/burn-flex/issues/44)).
+buffer (fixed in [antimora/burn-flex#52](https://github.com/antimora/burn-flex/pull/52)).
 Conv_transpose2d is 2x faster after GEMM + col2im rewrite in
 [antimora/burn-flex#46](https://github.com/antimora/burn-flex/pull/46).
 
@@ -321,7 +321,7 @@ Fixed since the first pass:
 - index_select at 1024² (was 2.8× slower; now 1.4× faster), fixed in
   [antimora/burn-flex#51](https://github.com/antimora/burn-flex/pull/51).
 - conv2d 1×1 pointwise (was 1.5× slower; now 3.4× faster), fixed in
-  [antimora/burn-flex#44](https://github.com/antimora/burn-flex/issues/44).
+  [antimora/burn-flex#52](https://github.com/antimora/burn-flex/pull/52).
 
 ---
 

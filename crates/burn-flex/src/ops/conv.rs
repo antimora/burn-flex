@@ -693,6 +693,12 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
     let k = channels_per_group;
     let n = spatial;
 
+    // Validate output size won't overflow
+    let total_output = [batch_size, channels_out, spatial]
+        .iter()
+        .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+        .expect("conv 1x1: output tensor dimensions would overflow index calculations");
+
     let x_data: &[T] = x.storage();
     let w_data: &[T] = weight.storage();
 
@@ -709,7 +715,7 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
     #[cfg(not(feature = "rayon"))]
     let parallelism = gemm::Parallelism::None;
 
-    let mut output = vec![zero; batch_size * channels_out * spatial];
+    let mut output = vec![zero; total_output];
 
     {
         #[cfg(feature = "rayon")]
@@ -1385,6 +1391,64 @@ mod tests {
         // Each output = 4 * 1.0 * 0.5 + bias = 2.0 + bias
         assert!((out[0] - 12.0).abs() < 1e-5); // First channel: 2.0 + 10.0
         assert!((out[4] - 22.0).abs() < 1e-5); // Second channel: 2.0 + 20.0
+    }
+
+    #[test]
+    fn test_conv2d_1x1_groups() {
+        // 1x1 conv with groups=2: 4 input channels split into 2 groups of 2
+        // Weight: [4, 2, 1, 1] (4 output channels, 2 per group)
+        let x_data: Vec<f32> = (0..16).map(|x| x as f32).collect();
+        let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 4, 2, 2]));
+
+        // Group 0: out channels 0-1 from in channels 0-1
+        // Group 1: out channels 2-3 from in channels 2-3
+        let mut w_data = vec![0.0f32; 8]; // 4 * 2 = 8
+        w_data[0] = 1.0; // out_ch 0 = 1.0 * in_ch 0
+        w_data[1] = 0.0;
+        w_data[2] = 0.0;
+        w_data[3] = 1.0; // out_ch 1 = 1.0 * in_ch 1
+        w_data[4] = 1.0; // out_ch 2 = 1.0 * in_ch 2
+        w_data[5] = 1.0; // out_ch 2 += 1.0 * in_ch 3
+        w_data[6] = 0.0;
+        w_data[7] = 0.0; // out_ch 3 = 0
+        let weight = FlexTensor::from_data(TensorData::new(w_data, vec![4, 2, 1, 1]));
+
+        let options = ConvOptions::new([1, 1], [0, 0], [1, 1], 2);
+        let result = conv2d_f32(x, weight, None, &options);
+
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 4, 2, 2]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // out_ch 0 = in_ch 0: [0, 1, 2, 3]
+        assert_eq!(&out[0..4], &[0.0, 1.0, 2.0, 3.0]);
+        // out_ch 1 = in_ch 1: [4, 5, 6, 7]
+        assert_eq!(&out[4..8], &[4.0, 5.0, 6.0, 7.0]);
+        // out_ch 2 = in_ch 2 + in_ch 3: [8+12, 9+13, 10+14, 11+15]
+        assert_eq!(&out[8..12], &[20.0, 22.0, 24.0, 26.0]);
+        // out_ch 3 = 0
+        assert_eq!(&out[12..16], &[0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_conv2d_1x1_groups_with_bias() {
+        // 1x1 grouped conv with bias
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32; 16], vec![1, 4, 2, 2]));
+        let w_data = vec![0.5f32; 8]; // 4 out channels, 2 per group
+        let weight = FlexTensor::from_data(TensorData::new(w_data, vec![4, 2, 1, 1]));
+        let bias = FlexTensor::from_data(TensorData::new(
+            vec![10.0f32, 20.0, 30.0, 40.0],
+            vec![4],
+        ));
+
+        let options = ConvOptions::new([1, 1], [0, 0], [1, 1], 2);
+        let result = conv2d_f32(x, weight, Some(bias), &options);
+
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        // Each output = 2 * 1.0 * 0.5 + bias = 1.0 + bias
+        assert!((out[0] - 11.0).abs() < 1e-5); // ch 0: 1.0 + 10.0
+        assert!((out[4] - 21.0).abs() < 1e-5); // ch 1: 1.0 + 20.0
+        assert!((out[8] - 31.0).abs() < 1e-5); // ch 2: 1.0 + 30.0
+        assert!((out[12] - 41.0).abs() < 1e-5); // ch 3: 1.0 + 40.0
     }
 
     #[test]
