@@ -55,10 +55,7 @@ layer_norm); gelu uses burn-tensor's trait hook that both backends have.
 Flex decomposed is `burn_tensor::activation::softmax` — a 5-op decomposition into
 `max_dim + sub + exp + sum_dim + div` with full-tensor intermediates. The fused path runs
 `burn_flex::ops::activation::softmax`, a three-pass row kernel (max, exp+sum, normalize) dispatched
-through macerator once per chunk of rows. See
-[UPSTREAM_ISSUE.md](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md) for the proposal to add a
-`softmax` hook to burn's `ActivationOps` trait so the fused path is available without a
-crate-specific wrapper.
+through macerator once per chunk of rows.
 
 ### layer_norm (last axis)
 
@@ -342,6 +339,4 @@ See also:
 
 - [`crates/burn-flex-bench-candle/README.md`](crates/burn-flex-bench-candle/README.md) for the crate
   layout and how to extend the benches.
-- [`crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md`](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md)
-  for the proposal to add fused softmax/layer_norm hooks to burn-backend.
 - [BENCHMARKS.md](BENCHMARKS.md) for the flex vs burn-ndarray comparison.

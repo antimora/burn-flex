@@ -133,9 +133,7 @@ small seqs, `index_select`, `mask_where`, last-axis `sum_dim`, 1x1 pointwise con
 
 Detailed per-op numbers, methodology, and the prioritized regression list are in
 [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row
-kernels that bypass the decomposed 5-6-op default path; there is an
-[upstream proposal](crates/burn-flex-bench-candle/UPSTREAM_ISSUE.md) to add fused hooks to
-burn-backend.
+kernels that bypass the decomposed 5-6-op default path.
 
 ### Status
 
