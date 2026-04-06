@@ -1218,7 +1218,10 @@ mod tests {
             let expected_start = row_idx as usize * cols;
             let actual = &out[i * cols..(i + 1) * cols];
             let expected = &data[expected_start..expected_start + cols];
-            assert_eq!(actual, expected, "mismatch at output row {i} (src row {row_idx})");
+            assert_eq!(
+                actual, expected,
+                "mismatch at output row {i} (src row {row_idx})"
+            );
         }
     }
 }
