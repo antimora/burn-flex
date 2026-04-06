@@ -847,9 +847,10 @@ conv3d_1x1_typed!(
 
 /// Decide whether to use the direct conv path instead of tiled im2col + GEMM.
 ///
-/// The direct path passes strided pointers directly to gemm, eliminating the
-/// im2col buffer. This wins when spatial_out is small enough that im2col
-/// allocation and fill overhead is significant relative to compute.
+/// The direct path decomposes the conv into kw gemm calls with strided pointers
+/// into NCHW data, eliminating both the NHWC conversion and im2col buffer.
+/// This wins when spatial_out is small enough that im2col allocation and fill
+/// overhead is significant relative to compute.
 fn should_use_direct_conv(x_shape: &[usize], w_shape: &[usize], options: &ConvOptions<3>) -> bool {
     // Only for groups=1, no padding, dilation=1 (the wav2vec2 case).
     if options.groups != 1 || options.padding != [0, 0, 0] || options.dilation != [1, 1, 1] {
@@ -949,7 +950,7 @@ fn conv3d_direct_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + 
     let w_data: &[T] = weight.storage();
 
     // Weight layout: [c_out, c_in, kw] contiguous (kd=kh=1).
-    // For kernel position k: W_k[c_out, c_in] = w_data[c_out * c_in * kw + c_in * kw + k]
+    // For kernel position k: W_k[co, c] = w_data[co * c_in * kw + c * kw + k]
     let lhs_rs = (channels_in * kernel_w) as isize;
     let lhs_cs = kernel_w as isize;
 
