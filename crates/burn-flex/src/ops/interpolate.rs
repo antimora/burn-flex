@@ -188,8 +188,18 @@ fn map_coord(out_coord: usize, ratio: f64, align_corners: bool) -> f64 {
     }
 }
 
+/// Precompute nearest-neighbor source index lookup table.
+/// Returns a Vec where `map[out_coord]` is the corresponding input coordinate.
+fn nearest_index_map(in_size: usize, out_size: usize) -> Vec<usize> {
+    let ratio = in_size as f64 / out_size as f64;
+    let max = in_size - 1;
+    (0..out_size)
+        .map(|o| ((o as f64 * ratio).floor() as usize).min(max))
+        .collect()
+}
+
 /// Nearest neighbor interpolation.
-/// Maps output coordinates to input using floor(ratio * out_coord).
+/// Maps output coordinates to input using floor(ratio * out_coord) via precomputed lookup tables.
 fn interpolate_nearest_impl<T>(
     x: FlexTensor,
     output_size: [usize; 2],
@@ -212,62 +222,86 @@ where
     );
     let [out_height, out_width] = output_size;
 
-    let y_ratio = in_height as f64 / out_height as f64;
-    let x_ratio = in_width as f64 / out_width as f64;
+    let y_map = nearest_index_map(in_height, out_height);
+    let x_map = nearest_index_map(in_width, out_width);
 
     let out_numel = batch * channels * out_height * out_width;
     let in_hw = in_height * in_width;
     let out_hw = out_height * out_width;
 
+    // Per-plane nearest gather using precomputed index maps.
+    #[inline]
+    fn gather_plane<T: Copy>(
+        input: &[T],
+        in_base: usize,
+        output: &mut [T],
+        in_width: usize,
+        out_width: usize,
+        y_map: &[usize],
+        x_map: &[usize],
+    ) {
+        for (oh, &ih) in y_map.iter().enumerate() {
+            let in_row = in_base + ih * in_width;
+            let out_row_start = oh * out_width;
+            for (ow, &iw) in x_map.iter().enumerate() {
+                output[out_row_start + ow] = input[in_row + iw];
+            }
+        }
+    }
+
     let output = {
+        let mut output: Vec<T> = Vec::with_capacity(out_numel);
+        #[allow(clippy::uninit_vec)]
+        unsafe {
+            output.set_len(out_numel);
+        }
+
+        let bc = batch * channels;
+
+        // Each (batch, channel) plane is independent, so parallelize across planes.
         #[cfg(feature = "rayon")]
-        {
+        if out_numel >= super::PARALLEL_THRESHOLD {
             use rayon::prelude::*;
 
-            let mut output = vec![T::zero(); out_numel];
-            let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
-
-            (0..batch).into_par_iter().for_each(|b| {
-                (0..channels).into_par_iter().for_each(|c| {
-                    let in_base = b * channels * in_hw + c * in_hw;
-                    let out_base = b * channels * out_hw + c * out_hw;
-
-                    for oh in 0..out_height {
-                        let ih = ((oh as f64 * y_ratio).floor() as usize).min(in_height - 1);
-                        for ow in 0..out_width {
-                            let iw = ((ow as f64 * x_ratio).floor() as usize).min(in_width - 1);
-                            let out_idx = out_base + oh * out_width + ow;
-                            let val = input[in_base + ih * in_width + iw];
-                            unsafe {
-                                out_ptr.write(out_idx, val);
-                            }
-                        }
-                    }
-                });
-            });
             output
+                .par_chunks_mut(out_hw)
+                .enumerate()
+                .for_each(|(bc_idx, out_plane)| {
+                    let in_base = bc_idx * in_hw;
+                    gather_plane(
+                        input, in_base, out_plane, in_width, out_width, &y_map, &x_map,
+                    );
+                });
+        } else {
+            for bc_idx in 0..bc {
+                let in_base = bc_idx * in_hw;
+                let out_start = bc_idx * out_hw;
+                gather_plane(
+                    input,
+                    in_base,
+                    &mut output[out_start..out_start + out_hw],
+                    in_width,
+                    out_width,
+                    &y_map,
+                    &x_map,
+                );
+            }
         }
         #[cfg(not(feature = "rayon"))]
-        {
-            let mut output = vec![T::zero(); out_numel];
-
-            for b in 0..batch {
-                for c in 0..channels {
-                    let in_base = b * channels * in_hw + c * in_hw;
-                    let out_base = b * channels * out_hw + c * out_hw;
-
-                    for oh in 0..out_height {
-                        let ih = ((oh as f64 * y_ratio).floor() as usize).min(in_height - 1);
-                        for ow in 0..out_width {
-                            let iw = ((ow as f64 * x_ratio).floor() as usize).min(in_width - 1);
-                            output[out_base + oh * out_width + ow] =
-                                input[in_base + ih * in_width + iw];
-                        }
-                    }
-                }
-            }
-            output
+        for bc_idx in 0..bc {
+            let in_base = bc_idx * in_hw;
+            let out_start = bc_idx * out_hw;
+            gather_plane(
+                input,
+                in_base,
+                &mut output[out_start..out_start + out_hw],
+                in_width,
+                out_width,
+                &y_map,
+                &x_map,
+            );
         }
+        output
     };
 
     FlexTensor::new(
@@ -780,7 +814,7 @@ fn interpolate_nearest_backward_impl<T>(
     _align_corners: bool,
 ) -> FlexTensor
 where
-    T: Float + burn_backend::Element + bytemuck::Pod,
+    T: Float + burn_backend::Element + bytemuck::Pod + Send + Sync,
 {
     let grad = grad.to_contiguous();
     let grad_data = grad.storage::<T>();
@@ -796,31 +830,79 @@ where
     );
     let [out_height, out_width] = output_size;
 
-    let y_ratio = in_height as f64 / out_height as f64;
-    let x_ratio = in_width as f64 / out_width as f64;
+    let y_map = nearest_index_map(in_height, out_height);
+    let x_map = nearest_index_map(in_width, out_width);
 
     let in_numel = batch * channels * in_height * in_width;
-    let mut input_grad = vec![T::zero(); in_numel];
-
     let in_hw = in_height * in_width;
     let out_hw = out_height * out_width;
 
-    // Backward requires accumulation, so sequential for correctness
-    for b in 0..batch {
-        for c in 0..channels {
-            let in_base = b * channels * in_hw + c * in_hw;
-            let out_base = b * channels * out_hw + c * out_hw;
-
-            for oh in 0..out_height {
-                let ih = ((oh as f64 * y_ratio).floor() as usize).min(in_height - 1);
-                for ow in 0..out_width {
-                    let iw = ((ow as f64 * x_ratio).floor() as usize).min(in_width - 1);
-                    input_grad[in_base + ih * in_width + iw] = input_grad
-                        [in_base + ih * in_width + iw]
-                        + grad_data[out_base + oh * out_width + ow];
-                }
+    // Scatter-add gradients from one output plane into one input gradient plane.
+    #[inline]
+    fn scatter_plane<T: Float + Copy>(
+        grad_data: &[T],
+        grad_base: usize,
+        input_grad: &mut [T],
+        in_width: usize,
+        out_width: usize,
+        y_map: &[usize],
+        x_map: &[usize],
+    ) {
+        for (oh, &ih) in y_map.iter().enumerate() {
+            let grad_row = grad_base + oh * out_width;
+            for (ow, &iw) in x_map.iter().enumerate() {
+                input_grad[ih * in_width + iw] =
+                    input_grad[ih * in_width + iw] + grad_data[grad_row + ow];
             }
         }
+    }
+
+    let mut input_grad = vec![T::zero(); in_numel];
+    let bc = batch * channels;
+
+    // Each (batch, channel) plane is independent, so parallelize across planes.
+    // Gate on output size since the work is proportional to iterating output pixels.
+    #[cfg(feature = "rayon")]
+    if bc * out_hw >= super::PARALLEL_THRESHOLD {
+        use rayon::prelude::*;
+
+        input_grad
+            .par_chunks_mut(in_hw)
+            .enumerate()
+            .for_each(|(bc_idx, grad_plane)| {
+                let grad_base = bc_idx * out_hw;
+                scatter_plane(
+                    grad_data, grad_base, grad_plane, in_width, out_width, &y_map, &x_map,
+                );
+            });
+    } else {
+        for bc_idx in 0..bc {
+            let grad_base = bc_idx * out_hw;
+            let in_start = bc_idx * in_hw;
+            scatter_plane(
+                grad_data,
+                grad_base,
+                &mut input_grad[in_start..in_start + in_hw],
+                in_width,
+                out_width,
+                &y_map,
+                &x_map,
+            );
+        }
+    }
+    #[cfg(not(feature = "rayon"))]
+    for bc_idx in 0..bc {
+        let grad_base = bc_idx * out_hw;
+        let in_start = bc_idx * in_hw;
+        scatter_plane(
+            grad_data,
+            grad_base,
+            &mut input_grad[in_start..in_start + in_hw],
+            in_width,
+            out_width,
+            &y_map,
+            &x_map,
+        );
     }
 
     FlexTensor::new(
