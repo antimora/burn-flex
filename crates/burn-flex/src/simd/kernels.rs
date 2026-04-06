@@ -44,10 +44,14 @@ fn macerator_sum<S: Simd, F: VAdd + Sum + ReduceAdd>(mut xs: &[F]) -> F {
         xs = &xs[stride..];
     }
 
-    // Combine accumulators and sum scalar remainder
-    let sum = (s0 + s1) + (s2 + s3);
-    let result = sum.reduce_add();
-    result + xs.iter().copied().sum()
+    // Combine 4 accumulators into one, then drain remaining full vectors
+    let mut sum = (s0 + s1) + (s2 + s3);
+    while xs.len() >= lanes {
+        sum += unsafe { vload_unaligned(xs.as_ptr()) };
+        xs = &xs[lanes..];
+    }
+
+    sum.reduce_add() + xs.iter().copied().sum()
 }
 
 // ============================================================================
@@ -147,10 +151,17 @@ pub fn scatter_add_batched<S: Simd, F: VAdd + AddAssign>(
 /// Used for last-dim reductions.
 #[inline]
 pub fn sum_rows_f32(src: &[f32], dst: &mut [f32], num_rows: usize, row_len: usize) {
-    for (row, dst_val) in dst.iter_mut().enumerate().take(num_rows) {
+    debug_assert_eq!(dst.len(), num_rows, "dst length must equal num_rows");
+    debug_assert!(
+        src.len() >= num_rows * row_len,
+        "src too short: need {} elements, got {}",
+        num_rows * row_len,
+        src.len()
+    );
+    for row in 0..num_rows {
         let row_start = row * row_len;
         let row_data = &src[row_start..row_start + row_len];
-        *dst_val = macerator_sum(row_data);
+        dst[row] = macerator_sum(row_data);
     }
 }
 
