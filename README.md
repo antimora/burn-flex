@@ -34,7 +34,8 @@ is thread-safe by design.
   - wasm32: SIMD128
   - Embedded/other: Scalar fallback
 - **Matrix Multiplication**: Optimized via [gemm](https://crates.io/crates/gemm) with native f16
-  support
+  support. Strided batched matmul passes layout strides directly to gemm, so transposed views
+  (e.g. `q.matmul(k.swap_dims(-2,-1))`) run at contiguous speed with no copy.
 - **FFT**: Forward (rfft) and inverse (irfft) real FFT via Cooley-Tukey with complex packing,
   compile-time twiddle tables, SIMD butterflies, and unrolled small kernels. Works in `no_std`.
 - **Parallel Execution**: Optional rayon for large tensors

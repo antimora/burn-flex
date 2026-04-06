@@ -168,18 +168,17 @@ Max. Ratios use candle / flex (>1.0 means flex is faster).
 
 | Shape                                         | Flex       | Candle  | Ratio     |
 | --------------------------------------------- | ---------- | ------- | --------- |
-| QK^T `[16, 50, 64] @ [16, 64, 50]`            | **52 µs**  | 74 µs   | **1.40×** |
-| QK^T `[16, 150, 64] @ [16, 64, 150]`          | **190 µs** | 1.61 ms | **8.47×** |
-| AV `[16, 50, 50] @ [16, 50, 64]`              | 58 µs      | 58 µs   | tied      |
-| AV `[16, 150, 150] @ [16, 150, 64]`           | **173 µs** | 1.59 ms | **9.19×** |
-| batched_128 `[32, 128, 128] @ [32, 128, 128]` | **253 µs** | 3.29 ms | **13.0×** |
+| QK^T `[16, 50, 64] @ [16, 64, 50]`            | **54 µs**  | 74 µs   | **1.37×** |
+| QK^T `[16, 150, 64] @ [16, 64, 150]`          | **189 µs** | 1.63 ms | **8.62×** |
+| QK^T transposed-view (seq=50)                  | **58 µs**  | 84 µs   | **1.45×** |
+| QK^T transposed-view (seq=150)                 | **185 µs** | 1.64 ms | **8.86×** |
+| AV `[16, 50, 50] @ [16, 50, 64]`              | **54 µs**  | 66 µs   | **1.22×** |
+| AV `[16, 150, 150] @ [16, 150, 64]`           | **163 µs** | 1.61 ms | **9.88×** |
+| batched_128 `[32, 128, 128] @ [32, 128, 128]` | **268 µs** | 3.31 ms | **12.4×** |
 
-Flex's batched matmul delegates to gemm crate per-batch; candle's 3D matmul path does not call a
-blocked gemm at 3D, so it loses dramatically as batch×inner gets larger.
-
-Caveat: the view-input form `q.matmul(k.swap_dims(1,2))` currently regresses flex at small seqs (340
-µs at seq=50 vs 83 µs for candle, and vs 52 µs for flex's own contiguous path). Tracked in the perf
-bug list below.
+Flex's batched matmul passes actual layout strides to gemm, so transposed views (the
+`q.matmul(k.swap_dims(1,2))` attention pattern) run at the same speed as contiguous inputs
+with no copy. Fixed in [antimora/burn-flex#49](https://github.com/antimora/burn-flex/pull/49).
 
 ### Conv2d + conv_transpose2d (ResNet shapes)
 
@@ -300,29 +299,25 @@ adding rayon fan-out across rows (fixed in
 
 Surfaced by the broader coverage pass. Ordered by impact on real workloads.
 
-1. **matmul on transposed-view input at small seqs: 4× slower than candle, 6× slower than flex's own
-   contiguous path**. `Q @ K.swap_dims(1,2)` at `[16, 50, 64]` takes 340 µs on flex vs 52 µs for the
-   contiguous-input form. Affects any attention kernel written in the idiomatic transpose form.
-2. **conv1d L3-L6 (small wav2vec2 shapes): 1.2-1.5× slower**. Already tracked at
+1. **conv1d L3-L6 (small wav2vec2 shapes): 1.2-1.5× slower**. Already tracked at
    [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
-3. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
-4. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
-5. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
+2. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
+3. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
+4. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
    the fused-layer_norm dependency path.
-6. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
-7. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
+5. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
+6. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
    pointwise; flex's im2col adds overhead.
 
 Fixed since the first pass:
+- batched matmul on transposed-view input (was 4x slower at small seqs; now 1.4x faster), fixed in
+  [antimora/burn-flex#49](https://github.com/antimora/burn-flex/pull/49).
 - max_dim / argmax_dim at 1024² (was 4× slower; now 5-6× faster), fixed in
   [antimora/burn-flex#47](https://github.com/antimora/burn-flex/pull/47).
 - conv_transpose2d (was 8× slower; now 2× faster), fixed in
   [antimora/burn-flex#46](https://github.com/antimora/burn-flex/pull/46).
 - sort_last at 1024² (was 7.8× slower; now 1.3× faster), fixed in
   [antimora/burn-flex#45](https://github.com/antimora/burn-flex/pull/45).
-
-Item 1 covers any attention not written in the pre-transposed-K form. Fixing it would move flex into
-a "wins everywhere" state against candle on this hardware.
 
 ---
 
