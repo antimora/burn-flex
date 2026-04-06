@@ -291,7 +291,7 @@ slower before the branchless bitwise blend + uninit buffer fix in
 | cumsum last dim, 1024²        | **696 µs**  | 4.68 ms | **6.72×** |
 | sort last dim, 256²           | 202 µs      | 186 µs  | tied      |
 | sort last dim, 1024²          | **1.18 ms** | 1.55 ms | **1.30×** |
-| nearest2d upsample 64² → 128² | 56 µs       | 30 µs   | 0.54×     |
+| nearest2d upsample 64² → 128² | **24 µs**   | 31 µs   | **1.29×** |
 
 Cumsum is one of the biggest flex wins (6–10×). Sort-last-dim now beats candle at 1024² after adding
 rayon fan-out across rows (fixed in
@@ -305,7 +305,6 @@ Surfaced by the broader coverage pass. Ordered by impact on real workloads.
 
 1. **conv1d L3-L6 (small wav2vec2 shapes): 1.2-1.5× slower**. Already tracked at
    [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
-2. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
 
 Fixed since the first pass:
 
@@ -325,6 +324,8 @@ Fixed since the first pass:
   [antimora/burn-flex#52](https://github.com/antimora/burn-flex/pull/52).
 - mask_where / where_cond at 1024² (was 2× slower; now tied/faster), fixed in
   [antimora/burn-flex#41](https://github.com/antimora/burn-flex/issues/41).
+- nearest2d interpolation (was 2× slower; now 1.3× faster), fixed in
+  [antimora/burn-flex#43](https://github.com/antimora/burn-flex/issues/43).
 
 ---
 
