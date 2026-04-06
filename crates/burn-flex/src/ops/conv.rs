@@ -1766,10 +1766,7 @@ mod tests {
         // Exercises the 1D path which delegates to 3D with two size-1 dims.
         // Input: [1, 1, 3], Weight: [1, 1, 2], stride=1, padding=0
         // Output size: (3-1)*1 + 2 = 4
-        let x = FlexTensor::from_data(TensorData::new(
-            vec![1.0f32, 2.0, 3.0],
-            vec![1, 1, 3],
-        ));
+        let x = FlexTensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0], vec![1, 1, 3]));
         let w = FlexTensor::from_data(TensorData::new(vec![1.0f32, 1.0], vec![1, 1, 2]));
         let opts = ConvTransposeOptions::new([1], [0], [0], [1], 1);
         let result = conv_transpose1d_f32(x, w, None, &opts);
