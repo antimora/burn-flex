@@ -958,7 +958,10 @@ fn reduce_first_dim_f32(
     }
 }
 
-/// Reduce last dimension with SIMD (most common case).
+/// Reduce last dimension with SIMD.
+///
+/// For contiguous Sum: batches all rows in a single kernel call using
+/// 4-accumulator SIMD to hide add latency.
 #[inline]
 fn reduce_last_dim_f32(
     data: &[f32],
@@ -974,9 +977,20 @@ fn reduce_last_dim_f32(
     } else {
         dim_size as isize
     };
-    let mut result = Vec::with_capacity(outer_size.max(1));
 
-    for outer in 0..outer_size.max(1) {
+    let rows = outer_size.max(1);
+
+    // Contiguous Sum: batch all rows in one kernel call to avoid per-row overhead.
+    #[cfg(feature = "simd")]
+    if matches!(op, ReduceOp::Sum) && outer_stride == dim_size as isize {
+        let mut result = vec![0.0f32; rows];
+        kernels::sum_rows_f32(&data[start_offset..], &mut result, rows, dim_size);
+        return result;
+    }
+
+    // Fallback: non-contiguous strides or Prod.
+    let mut result = Vec::with_capacity(rows);
+    for outer in 0..rows {
         let row_start = (start_offset as isize + outer as isize * outer_stride) as usize;
         let row = &data[row_start..row_start + dim_size];
 
@@ -995,7 +1009,6 @@ fn reduce_last_dim_f32(
         };
         result.push(val);
     }
-
     result
 }
 

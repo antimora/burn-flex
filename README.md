@@ -131,8 +131,8 @@ candle's CPU API.
 
 **Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
 
-**Remaining regressions** (7 ops): transposed-view matmul at small seqs, `index_select`,
-`mask_where`, last-axis `sum_dim`, 1x1 pointwise conv2d, `nearest2d`, small conv1d layers.
+**Remaining regressions** (6 ops): transposed-view matmul at small seqs, `index_select`,
+`mask_where`, 1x1 pointwise conv2d, `nearest2d`, small conv1d layers.
 
 Detailed per-op numbers, methodology, and the prioritized regression list are in
 [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row
