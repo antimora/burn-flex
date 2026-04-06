@@ -59,7 +59,10 @@ pub mod binary;
 mod bool;
 pub mod cat;
 pub mod comparison;
+#[macro_use]
+mod conv_common;
 pub mod conv;
+pub mod conv_transpose;
 pub mod cumulative;
 pub mod deform_conv;
 pub mod expand;
