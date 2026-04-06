@@ -619,16 +619,16 @@ pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
     }
     match tensor.dtype() {
         DType::F32 => {
-            extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b).1
+            extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a > b)).1
         }
         DType::F64 => {
-            extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b).1
+            extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a > b)).1
         }
         DType::F16 => {
             extremum_dim_with_indices_half::<f16, _>(
                 &tensor,
                 dim,
-                |a, b| a.is_nan() || a > b,
+                |a, b| !b.is_nan() && (a.is_nan() || a > b),
                 f16::to_f32,
                 f16::from_f32,
             )
@@ -638,7 +638,7 @@ pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
             extremum_dim_with_indices_half::<bf16, _>(
                 &tensor,
                 dim,
-                |a, b| a.is_nan() || a > b,
+                |a, b| !b.is_nan() && (a.is_nan() || a > b),
                 bf16::to_f32,
                 bf16::from_f32,
             )
@@ -661,16 +661,16 @@ pub fn argmin(tensor: FlexTensor, dim: usize) -> FlexTensor {
     }
     match tensor.dtype() {
         DType::F32 => {
-            extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b).1
+            extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a < b)).1
         }
         DType::F64 => {
-            extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b).1
+            extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a < b)).1
         }
         DType::F16 => {
             extremum_dim_with_indices_half::<f16, _>(
                 &tensor,
                 dim,
-                |a, b| a.is_nan() || a < b,
+                |a, b| !b.is_nan() && (a.is_nan() || a < b),
                 f16::to_f32,
                 f16::from_f32,
             )
@@ -680,7 +680,7 @@ pub fn argmin(tensor: FlexTensor, dim: usize) -> FlexTensor {
             extremum_dim_with_indices_half::<bf16, _>(
                 &tensor,
                 dim,
-                |a, b| a.is_nan() || a < b,
+                |a, b| !b.is_nan() && (a.is_nan() || a < b),
                 bf16::to_f32,
                 bf16::from_f32,
             )
@@ -1211,19 +1211,19 @@ pub fn max_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         return extremum_dim_f32_last_simd(&tensor, dim, kernels::max_f32);
     }
     match tensor.dtype() {
-        DType::F32 => extremum_dim::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
-        DType::F64 => extremum_dim::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
+        DType::F32 => extremum_dim::<f32, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a > b)),
+        DType::F64 => extremum_dim::<f64, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a > b)),
         DType::F16 => extremum_dim_half::<f16, _>(
             &tensor,
             dim,
-            |a, b| a.is_nan() || a > b,
+            |a, b| !b.is_nan() && (a.is_nan() || a > b),
             f16::to_f32,
             f16::from_f32,
         ),
         DType::BF16 => extremum_dim_half::<bf16, _>(
             &tensor,
             dim,
-            |a, b| a.is_nan() || a > b,
+            |a, b| !b.is_nan() && (a.is_nan() || a > b),
             bf16::to_f32,
             bf16::from_f32,
         ),
@@ -1250,19 +1250,19 @@ pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         return extremum_dim_f32_last_simd(&tensor, dim, kernels::min_f32);
     }
     match tensor.dtype() {
-        DType::F32 => extremum_dim::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
-        DType::F64 => extremum_dim::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
+        DType::F32 => extremum_dim::<f32, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a < b)),
+        DType::F64 => extremum_dim::<f64, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a < b)),
         DType::F16 => extremum_dim_half::<f16, _>(
             &tensor,
             dim,
-            |a, b| a.is_nan() || a < b,
+            |a, b| !b.is_nan() && (a.is_nan() || a < b),
             f16::to_f32,
             f16::from_f32,
         ),
         DType::BF16 => extremum_dim_half::<bf16, _>(
             &tensor,
             dim,
-            |a, b| a.is_nan() || a < b,
+            |a, b| !b.is_nan() && (a.is_nan() || a < b),
             bf16::to_f32,
             bf16::from_f32,
         ),
@@ -1291,19 +1291,19 @@ pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
         return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::max_f32);
     }
     match tensor.dtype() {
-        DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
-        DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
+        DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a > b)),
+        DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a > b)),
         DType::F16 => extremum_dim_with_indices_half::<f16, _>(
             &tensor,
             dim,
-            |a, b| a.is_nan() || a > b,
+            |a, b| !b.is_nan() && (a.is_nan() || a > b),
             f16::to_f32,
             f16::from_f32,
         ),
         DType::BF16 => extremum_dim_with_indices_half::<bf16, _>(
             &tensor,
             dim,
-            |a, b| a.is_nan() || a > b,
+            |a, b| !b.is_nan() && (a.is_nan() || a > b),
             bf16::to_f32,
             bf16::from_f32,
         ),
@@ -1335,19 +1335,19 @@ pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
         return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::min_f32);
     }
     match tensor.dtype() {
-        DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
-        DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
+        DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a < b)),
+        DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| !b.is_nan() && (a.is_nan() || a < b)),
         DType::F16 => extremum_dim_with_indices_half::<f16, _>(
             &tensor,
             dim,
-            |a, b| a.is_nan() || a < b,
+            |a, b| !b.is_nan() && (a.is_nan() || a < b),
             f16::to_f32,
             f16::from_f32,
         ),
         DType::BF16 => extremum_dim_with_indices_half::<bf16, _>(
             &tensor,
             dim,
-            |a, b| a.is_nan() || a < b,
+            |a, b| !b.is_nan() && (a.is_nan() || a < b),
             bf16::to_f32,
             bf16::from_f32,
         ),
@@ -1388,7 +1388,7 @@ fn extremum_dim_f32_last_simd(
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let dim_size = shape[dim];
-    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let outer_size: usize = shape[..dim].iter().product();
     let data: &[f32] = tensor.storage();
     let start = tensor.layout().start_offset();
 
@@ -1442,7 +1442,7 @@ fn extremum_dim_with_indices_f32_last_simd(
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let dim_size = shape[dim];
-    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let outer_size: usize = shape[..dim].iter().product();
     let data: &[f32] = tensor.storage();
     let start = tensor.layout().start_offset();
 
@@ -1499,7 +1499,7 @@ fn extremum_indices_f32_last_simd(
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let dim_size = shape[dim];
-    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let outer_size: usize = shape[..dim].iter().product();
     let data: &[f32] = tensor.storage();
     let start = tensor.layout().start_offset();
 
@@ -1549,8 +1549,8 @@ where
     let dim_size = shape[dim];
     let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
-    let inner_size: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+    let outer_size: usize = shape[..dim].iter().product::<usize>();
+    let inner_size: usize = shape[dim + 1..].iter().product::<usize>();
     let out_size = outer_size * inner_size;
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1604,8 +1604,8 @@ where
     let dim_size = shape[dim];
     let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
-    let inner_size: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+    let outer_size: usize = shape[..dim].iter().product::<usize>();
+    let inner_size: usize = shape[dim + 1..].iter().product::<usize>();
     let out_size = outer_size * inner_size;
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1670,8 +1670,8 @@ where
     let dim_size = shape[dim];
     let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
-    let inner_size: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+    let outer_size: usize = shape[..dim].iter().product::<usize>();
+    let inner_size: usize = shape[dim + 1..].iter().product::<usize>();
     let out_size = outer_size * inner_size;
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
@@ -1727,8 +1727,8 @@ where
     let dim_size = shape[dim];
     let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
-    let inner_size: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+    let outer_size: usize = shape[..dim].iter().product::<usize>();
+    let inner_size: usize = shape[dim + 1..].iter().product::<usize>();
     let out_size = outer_size * inner_size;
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
