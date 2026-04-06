@@ -20,7 +20,8 @@ is thread-safe by design.
 - **Arc-based Copy-on-Write**: O(1) tensor cloning with automatic COW semantics. In-place mutation
   when uniquely owned.
 - **Convolutions**: Unified 3D implementation with im2col + gemm. Conv1d/2d delegate to conv3d.
-  Supports groups, dilation, padding.
+  Direct conv path for small spatial 1D convs (decomposes into kw gemm calls on NCHW data, skipping
+  NHWC conversion and im2col). 1x1 pointwise fast path. Supports groups, dilation, padding.
 - **Attention**: Auto-selecting between two gemm-backed strategies based on sequence length. Short
   sequences (score matrix seq_q \* seq_kv <= 256K elements) use naive attention with two large gemm
   calls for lower overhead. Larger shapes use tiled flash attention with online softmax for
@@ -115,7 +116,8 @@ candle's CPU API.
 | sum along non-last dim | 1024²                    | **15.3x** |
 | batched matmul         | `[32, 128, 128]`         | **13.0x** |
 | cumsum last dim        | 256²                     | **10.4x** |
-| conv1d (L0, wav2vec2)  | 1x1x16000, k=10 s=5      | **7.0x**  |
+| conv1d (L0, wav2vec2)  | 1x1x16000, k=10 s=5      | **7.8x**  |
+| conv1d (L6, wav2vec2)  | 1x512x99, k=2 s=2        | **1.7x**  |
 | argmax along dim       | 1024²                    | **6.5x**  |
 | max_dim / min_dim      | 1024²                    | **5.9x**  |
 | full-tensor max/min    | 1024²                    | **4.0x**  |
@@ -135,7 +137,7 @@ candle's CPU API.
 
 **Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
 
-**Remaining regressions** (2 ops): transposed-view matmul at small seqs, small conv1d layers.
+**No remaining regressions** across all benchmarked ops.
 
 Detailed per-op numbers, methodology, and the prioritized regression list are in
 [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row

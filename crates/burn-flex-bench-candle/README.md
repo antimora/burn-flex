@@ -55,12 +55,11 @@ Seven strided conv1d layers that downsample raw audio 320x.
 | L6    | 1x512x99,    k=2,  s=2   | 1.453 ms  | 468 us    | candle 3.10x   |
 | **Total** |                      | **22.25 ms** | **18.46 ms** | candle 1.21x |
 
-#### After weight-transpose fix (2026-04-05, current)
+#### After weight-transpose fix (2026-04-05)
 
-A single ~15-line change in `conv3d_impl` rewrote the `(c_in, K) → (K, c_in)`
-weight transpose as a simple per-`c_out` 2D transpose with a tight `K`-inner
-loop that LLVM can autovectorize. For small-shape conv this loop was the
-dominant cost, roughly 80% of L6's runtime. See `crates/burn-flex/src/ops/conv.rs`.
+A single ~15-line change in `conv3d_impl` rewrote the `(c_in, K) -> (K, c_in)`
+weight transpose as a tight `K`-inner loop that LLVM autovectorizes. This was
+the dominant cost for small-shape conv.
 
 | Layer | burn-flex | candle    | Winner         | vs baseline  |
 |-------|-----------|-----------|----------------|--------------|
@@ -73,17 +72,24 @@ dominant cost, roughly 80% of L6's runtime. See `crates/burn-flex/src/ops/conv.r
 | L6    | 768 us    | 479 us    | candle 1.60x   | **-47%**     |
 | **Total** | **16.27 ms** | **18.20 ms** | **flex 1.12x** | **-27%** |
 
-burn-flex now **beats candle overall on the full wav2vec2 feature extractor**
-and wins L0/L2 outright (tying L1). The remaining gap is concentrated on the
-smallest shapes L3-L6, where candle's dedicated direct-conv path (no im2col,
-fused vec_dot-per-output) beats our tiled im2col+gemm at 1.2-1.6x per layer.
-Closing that gap requires a register-blocked microkernel inside a direct
-conv path; tracked separately at
+#### After direct conv path (2026-04-06, current)
+
+For L2-L6, decompose the convolution into `kw` gemm calls operating directly
+on NCHW data with strided pointers. This eliminates both the NHWC conversion
+and im2col buffer entirely. Fixed in
 [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
 
-## Next steps
+| Layer | burn-flex | candle    | Winner         | vs baseline  |
+|-------|-----------|-----------|----------------|--------------|
+| L0    | 505 us    | 3.93 ms   | **flex 7.8x**  | ~unchanged   |
+| L1    | 6.65 ms   | 6.48 ms   | tie            | **-18%**     |
+| L2    | 2.40 ms   | 3.55 ms   | **flex 1.48x** | **-44%**     |
+| L3    | 1.68 ms   | 2.02 ms   | **flex 1.20x** | **-52%**     |
+| L4    | 1.31 ms   | 1.30 ms   | tie            | **-52%**     |
+| L5    | 447 us    | 722 us    | **flex 1.62x** | **-73%**     |
+| L6    | 306 us    | 530 us    | **flex 1.73x** | **-79%**     |
+| **Total** | **13.34 ms** | **18.54 ms** | **flex 1.39x** | **-40%** |
 
-- Run the conv1d bench on 3s-audio shapes (seq_len scales linearly) to see
-  how the L3-L6 gap evolves at larger `L_out`.
-- Implement the register-blocked conv direct path (issue #34) and re-run
-  the conv1d bench to confirm L3-L6 match or beat candle.
+burn-flex now **beats candle on every conv1d layer** except L1 (tied) and L4
+(tied). The biggest wins are on the smallest layers where im2col overhead was
+most significant relative to compute.

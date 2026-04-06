@@ -122,20 +122,18 @@ its massive input (16000 samples) and wide output channels (512).
 
 | Layer     | Shape                  | Flex         | Candle       | Winner         |
 | --------- | ---------------------- | ------------ | ------------ | -------------- |
-| L0        | `1×1×16000`, k=10, s=5 | **511 µs**   | 3.60 ms      | **flex 7.04×** |
-| L1        | `1×512×3199`, k=3, s=2 | 6.78 ms      | 6.51 ms      | candle 1.04×   |
-| L2        | `1×512×1599`, k=3, s=2 | **3.32 ms**  | 3.59 ms      | **flex 1.08×** |
-| L3        | `1×512×799`, k=3, s=2  | 2.46 ms      | 2.07 ms      | candle 1.19×   |
-| L4        | `1×512×399`, k=3, s=2  | 1.70 ms      | 1.28 ms      | candle 1.33×   |
-| L5        | `1×512×199`, k=2, s=2  | 974 µs       | 732 µs       | candle 1.33×   |
-| L6        | `1×512×99`, k=2, s=2   | 777 µs       | 494 µs       | candle 1.57×   |
-| **Total** |                        | **16.55 ms** | **18.27 ms** | **flex 1.10×** |
+| L0        | `1×1×16000`, k=10, s=5 | **505 µs**   | 3.93 ms      | **flex 7.78×** |
+| L1        | `1×512×3199`, k=3, s=2 | 6.65 ms      | 6.48 ms      | tied           |
+| L2        | `1×512×1599`, k=3, s=2 | **2.40 ms**  | 3.55 ms      | **flex 1.48×** |
+| L3        | `1×512×799`, k=3, s=2  | **1.68 ms**  | 2.02 ms      | **flex 1.20×** |
+| L4        | `1×512×399`, k=3, s=2  | 1.31 ms      | 1.30 ms      | tied           |
+| L5        | `1×512×199`, k=2, s=2  | **447 µs**   | 722 µs       | **flex 1.62×** |
+| L6        | `1×512×99`, k=2, s=2   | **306 µs**   | 530 µs       | **flex 1.73×** |
+| **Total** |                        | **13.34 ms** | **18.54 ms** | **flex 1.39×** |
 
-L0 is saved by [a weight-transpose fix](crates/burn-flex/src/ops/conv.rs) that rewrote the
-`(c_in, K) → (K, c_in)` transpose as a tight `K`-inner loop that LLVM autovectorizes; for
-wide-output conv that loop had been the dominant cost. L3-L6 is the remaining gap: candle has a
-direct vec_dot-per-output path that beats tiled im2col+gemm on small spatial shapes. Overall, flex
-wins the full feature extractor by ~10% because L0's 3 ms savings dwarfs the L3-L6 loss. Tracked at
+L0 uses the 1×1 fast path. L2-L6 use the direct conv path that decomposes the convolution into `kw`
+separate gemm calls operating directly on NCHW data with strided pointers, eliminating both the NHWC
+conversion and im2col buffer. Fixed in
 [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
 
 ---
@@ -147,12 +145,12 @@ transformer layer runs softmax + 2× layer_norm × 24 layers.
 
 | Component                                  | Flex         | Candle       | Delta per forward |
 | ------------------------------------------ | ------------ | ------------ | ----------------- |
-| Conv1d feature extractor (7 layers)        | 16.55 ms     | 18.27 ms     | **−1.72 ms**      |
+| Conv1d feature extractor (7 layers)        | 13.34 ms     | 18.54 ms     | **−5.20 ms**      |
 | Softmax × 24 layers `[16, 150, 150]`       | 3.22 ms      | 4.66 ms      | **−1.44 ms**      |
 | Layer_norm × 48 calls `[150, 1024]`        | 2.64 ms      | 4.22 ms      | **−1.58 ms**      |
-| **Subtotal (softmax + layer_norm + conv)** | **22.41 ms** | **27.15 ms** | **−4.74 ms**      |
+| **Subtotal (softmax + layer_norm + conv)** | **19.20 ms** | **27.42 ms** | **−8.22 ms**      |
 
-The rest of the forward pass (matmul, gelu, attention) is tied or a small flex win, so the 4.7 ms
+The rest of the forward pass (matmul, gelu, attention) is tied or a small flex win, so the 8.2 ms
 wallclock savings from just these three op families drives the overall wav2vec2-large inference
 advantage vs candle on the same hardware.
 
@@ -303,11 +301,10 @@ rayon fan-out across rows (fixed in
 
 Surfaced by the broader coverage pass. Ordered by impact on real workloads.
 
-1. **conv1d L3-L6 (small wav2vec2 shapes): 1.2-1.5× slower**. Already tracked at
-   [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
-
 Fixed since the first pass:
 
+- conv1d L3-L6 small wav2vec2 shapes (was 1.2-1.6x slower; now 1.2-1.7x faster), fixed in
+  [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
 - batched matmul on transposed-view input (was 4x slower at small seqs; now 1.4x faster), fixed in
   [antimora/burn-flex#49](https://github.com/antimora/burn-flex/pull/49).
 - max_dim / argmax_dim at 1024² (was 4× slower; now 5-6× faster), fixed in
