@@ -701,7 +701,7 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
     // X is [channels_per_group, spatial] row-major (directly from NCHW layout)
     // C is [out_channels_per_group, spatial] row-major
     #[cfg(feature = "rayon")]
-    let parallelism = if m * n * k >= 192 * 192 * 192 {
+    let parallelism = if m.saturating_mul(n).saturating_mul(k) >= 192 * 192 * 192 {
         gemm::Parallelism::Rayon(0)
     } else {
         gemm::Parallelism::None
