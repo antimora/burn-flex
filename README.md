@@ -123,6 +123,7 @@ candle's CPU API.
 | cat along last dim     | 2x1024²                  | **2.7x**  |
 | max_pool2d k=3 s=2     | 8x64x56²                 | **2.6x**  |
 | matmul (small square)  | 128x128                  | **2.4x**  |
+| conv2d 1x1 pointwise   | 1x256x56², k=1           | **3.4x**  |
 | conv_transpose2d       | 1x128x16² -> 64, k=4 s=2 | **2.3x**  |
 | gather last dim        | 1024²                    | **2.1x**  |
 | conv2d (ResNet layer)  | 1x128x28², k=3           | **1.9x**  |
@@ -132,8 +133,8 @@ candle's CPU API.
 
 **Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
 
-**Remaining regressions** (5 ops): transposed-view matmul at small seqs, `mask_where`, 1x1
-pointwise conv2d, `nearest2d`, small conv1d layers.
+**Remaining regressions** (4 ops): transposed-view matmul at small seqs, `mask_where`,
+`nearest2d`, small conv1d layers.
 
 Detailed per-op numbers, methodology, and the prioritized regression list are in
 [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row
