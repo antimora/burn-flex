@@ -20,18 +20,30 @@ trait GemmScalar: Element + bytemuck::Pod {
 }
 
 impl GemmScalar for f32 {
-    fn zero() -> Self { 0.0 }
-    fn one() -> Self { 1.0 }
+    fn zero() -> Self {
+        0.0
+    }
+    fn one() -> Self {
+        1.0
+    }
 }
 
 impl GemmScalar for f64 {
-    fn zero() -> Self { 0.0 }
-    fn one() -> Self { 1.0 }
+    fn zero() -> Self {
+        0.0
+    }
+    fn one() -> Self {
+        1.0
+    }
 }
 
 impl GemmScalar for f16 {
-    fn zero() -> Self { f16::from_f32(0.0) }
-    fn one() -> Self { f16::from_f32(1.0) }
+    fn zero() -> Self {
+        f16::from_f32(0.0)
+    }
+    fn one() -> Self {
+        f16::from_f32(1.0)
+    }
 }
 
 /// Checked multiplication for matrix sizes, panics on overflow.
@@ -255,10 +267,18 @@ fn matmul_2d_strided<T: GemmScalar>(lhs: FlexTensor, rhs: FlexTensor) -> FlexTen
 
     unsafe {
         gemm_call(
-            m, n, k,
-            out_data.as_mut_ptr(), 1, n as isize,
-            lhs_ptr, lhs_col_stride, lhs_row_stride,
-            rhs_ptr, rhs_col_stride, rhs_row_stride,
+            m,
+            n,
+            k,
+            out_data.as_mut_ptr(),
+            1,
+            n as isize,
+            lhs_ptr,
+            lhs_col_stride,
+            lhs_row_stride,
+            rhs_ptr,
+            rhs_col_stride,
+            rhs_row_stride,
             parallelism,
         );
     }
@@ -269,20 +289,40 @@ fn matmul_2d_strided<T: GemmScalar>(lhs: FlexTensor, rhs: FlexTensor) -> FlexTen
 /// Strided gemm call for one matrix. Wraps `gemm::gemm` with GemmScalar zero/one.
 #[inline]
 unsafe fn gemm_call<T: GemmScalar>(
-    m: usize, n: usize, k: usize,
-    out: *mut T, out_cs: isize, out_rs: isize,
-    lhs: *const T, lhs_cs: isize, lhs_rs: isize,
-    rhs: *const T, rhs_cs: isize, rhs_rs: isize,
+    m: usize,
+    n: usize,
+    k: usize,
+    out: *mut T,
+    out_cs: isize,
+    out_rs: isize,
+    lhs: *const T,
+    lhs_cs: isize,
+    lhs_rs: isize,
+    rhs: *const T,
+    rhs_cs: isize,
+    rhs_rs: isize,
     parallelism: gemm::Parallelism,
 ) {
     unsafe {
         gemm::gemm(
-            m, n, k,
-            out, out_cs, out_rs, false,
-            lhs, lhs_cs, lhs_rs,
-            rhs, rhs_cs, rhs_rs,
-            T::zero(), T::one(),
-            false, false, false,
+            m,
+            n,
+            k,
+            out,
+            out_cs,
+            out_rs,
+            false,
+            lhs,
+            lhs_cs,
+            lhs_rs,
+            rhs,
+            rhs_cs,
+            rhs_rs,
+            T::zero(),
+            T::one(),
+            false,
+            false,
+            false,
             parallelism,
         );
     }
@@ -338,10 +378,18 @@ fn matmul_batched_gemm<T: GemmScalar>(lhs: FlexTensor, rhs: FlexTensor) -> FlexT
         let rhs_off = rhs_start + batch_elem_offset(b, &broadcast_shape, &rhs_batch_strides);
         unsafe {
             gemm_call::<T>(
-                m, n, k,
-                out_ptr, 1, n as isize,
-                lhs_data.as_ptr().offset(lhs_off), lhs_col_stride, lhs_row_stride,
-                rhs_data.as_ptr().offset(rhs_off), rhs_col_stride, rhs_row_stride,
+                m,
+                n,
+                k,
+                out_ptr,
+                1,
+                n as isize,
+                lhs_data.as_ptr().offset(lhs_off),
+                lhs_col_stride,
+                lhs_row_stride,
+                rhs_data.as_ptr().offset(rhs_off),
+                rhs_col_stride,
+                rhs_row_stride,
                 parallelism,
             );
         }
@@ -373,7 +421,11 @@ fn matmul_batched_gemm<T: GemmScalar>(lhs: FlexTensor, rhs: FlexTensor) -> FlexT
                 });
         } else {
             for b in 0..batch_size {
-                run_one(out_data[b * out_matrix_size..].as_mut_ptr(), b, gemm::Parallelism::None);
+                run_one(
+                    out_data[b * out_matrix_size..].as_mut_ptr(),
+                    b,
+                    gemm::Parallelism::None,
+                );
             }
         }
     }
@@ -382,7 +434,11 @@ fn matmul_batched_gemm<T: GemmScalar>(lhs: FlexTensor, rhs: FlexTensor) -> FlexT
     {
         let _ = per_matrix_ops;
         for b in 0..batch_size {
-            run_one(out_data[b * out_matrix_size..].as_mut_ptr(), b, gemm::Parallelism::None);
+            run_one(
+                out_data[b * out_matrix_size..].as_mut_ptr(),
+                b,
+                gemm::Parallelism::None,
+            );
         }
     }
 
@@ -1116,7 +1172,9 @@ mod tests {
 
         // Compute same thing with contiguous k already transposed
         let q2 = FlexTensor::from_data(q_data);
-        let k_contig = FlexTensor::from_data(k_data).transpose(1, 2).to_contiguous();
+        let k_contig = FlexTensor::from_data(k_data)
+            .transpose(1, 2)
+            .to_contiguous();
         let result_contig = matmul(q2, k_contig);
 
         let values: Vec<f32> = result.into_data().to_vec().unwrap();
@@ -1153,7 +1211,9 @@ mod tests {
         assert_eq!(result.layout().shape().to_vec(), vec![2, 3, 2]);
 
         // Compare with contiguous version
-        let a2 = FlexTensor::from_data(a_data).transpose(1, 2).to_contiguous();
+        let a2 = FlexTensor::from_data(a_data)
+            .transpose(1, 2)
+            .to_contiguous();
         let b2 = FlexTensor::from_data(b_data);
         let expected_result = matmul(a2, b2);
 
@@ -1194,8 +1254,12 @@ mod tests {
         assert_eq!(result.layout().shape().to_vec(), vec![2, 2, 2]);
 
         // Compare with contiguous versions
-        let a2 = FlexTensor::from_data(a_data).transpose(1, 2).to_contiguous();
-        let b2 = FlexTensor::from_data(b_data2).transpose(1, 2).to_contiguous();
+        let a2 = FlexTensor::from_data(a_data)
+            .transpose(1, 2)
+            .to_contiguous();
+        let b2 = FlexTensor::from_data(b_data2)
+            .transpose(1, 2)
+            .to_contiguous();
         let expected_result = matmul(a2, b2);
 
         let values: Vec<f32> = result.into_data().to_vec().unwrap();
@@ -1224,7 +1288,9 @@ mod tests {
         let result = matmul(q, k_t);
 
         let q2 = FlexTensor::from_data(q_data);
-        let k2 = FlexTensor::from_data(k_data).transpose(1, 2).to_contiguous();
+        let k2 = FlexTensor::from_data(k_data)
+            .transpose(1, 2)
+            .to_contiguous();
         let expected_result = matmul(q2, k2);
 
         let values: Vec<f64> = result.into_data().to_vec().unwrap();
@@ -1236,11 +1302,29 @@ mod tests {
     fn test_matmul_batched_transposed_f16() {
         let f = |v: f32| f16::from_f32(v);
         let q_data = TensorData::new(
-            vec![f(1.0), f(2.0), f(3.0), f(4.0), f(5.0), f(6.0), f(7.0), f(8.0)],
+            vec![
+                f(1.0),
+                f(2.0),
+                f(3.0),
+                f(4.0),
+                f(5.0),
+                f(6.0),
+                f(7.0),
+                f(8.0),
+            ],
             vec![2, 2, 2],
         );
         let k_data = TensorData::new(
-            vec![f(1.0), f(0.0), f(0.0), f(1.0), f(2.0), f(0.0), f(0.0), f(2.0)],
+            vec![
+                f(1.0),
+                f(0.0),
+                f(0.0),
+                f(1.0),
+                f(2.0),
+                f(0.0),
+                f(0.0),
+                f(2.0),
+            ],
             vec![2, 2, 2],
         );
 
@@ -1251,7 +1335,9 @@ mod tests {
         let result = matmul(q, k_t);
 
         let q2 = FlexTensor::from_data(q_data);
-        let k2 = FlexTensor::from_data(k_data).transpose(1, 2).to_contiguous();
+        let k2 = FlexTensor::from_data(k_data)
+            .transpose(1, 2)
+            .to_contiguous();
         let expected_result = matmul(q2, k2);
 
         let values: Vec<f16> = result.into_data().to_vec().unwrap();
@@ -1286,10 +1372,17 @@ mod tests {
         assert_eq!(result.layout().shape().to_vec(), vec![4, 3, 2]);
 
         // Compare with contiguous broadcast version
-        let lhs2 = FlexTensor::from_data(lhs_data).transpose(1, 2).to_contiguous();
+        let lhs2 = FlexTensor::from_data(lhs_data)
+            .transpose(1, 2)
+            .to_contiguous();
         // Manually broadcast: repeat lhs 4 times
         let lhs2_data: Vec<f32> = lhs2.into_data().to_vec().unwrap();
-        let broadcast_lhs: Vec<f32> = lhs2_data.iter().copied().cycle().take(lhs2_data.len() * 4).collect();
+        let broadcast_lhs: Vec<f32> = lhs2_data
+            .iter()
+            .copied()
+            .cycle()
+            .take(lhs2_data.len() * 4)
+            .collect();
         let lhs_broadcast = FlexTensor::from_data(TensorData::new(broadcast_lhs, vec![4, 3, 2]));
         let rhs2 = FlexTensor::from_data(rhs_data);
         let expected_result = matmul(lhs_broadcast, rhs2);
