@@ -517,24 +517,23 @@ fn matmul_2d_i32(lhs: &FlexTensor, rhs: &FlexTensor) -> FlexTensor {
     )
 }
 
-/// SIMD-optimized dot product for i32 slices.
+/// Dot product for i32 slices. Uses macerator SIMD when the `simd` feature is enabled.
 #[inline]
 fn dot_i32(a: &[i32], b: &[i32]) -> i32 {
     debug_assert_eq!(a.len(), b.len());
 
-    #[cfg(all(target_arch = "aarch64", feature = "simd"))]
+    #[cfg(feature = "simd")]
     {
-        dot_i32_neon(a, b)
+        dot_i32_simd(a, b)
     }
 
-    #[cfg(not(all(target_arch = "aarch64", feature = "simd")))]
+    #[cfg(not(feature = "simd"))]
     {
         dot_i32_scalar(a, b)
     }
 }
 
-/// Scalar dot product fallback (used when aarch64+simd is not active).
-#[cfg(not(all(target_arch = "aarch64", feature = "simd")))]
+#[cfg(not(feature = "simd"))]
 #[inline]
 fn dot_i32_scalar(a: &[i32], b: &[i32]) -> i32 {
     let mut sum = 0i32;
@@ -544,40 +543,29 @@ fn dot_i32_scalar(a: &[i32], b: &[i32]) -> i32 {
     sum
 }
 
-/// NEON-optimized dot product for i32.
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
-#[inline]
-fn dot_i32_neon(a: &[i32], b: &[i32]) -> i32 {
-    use core::arch::aarch64::*;
+#[cfg(feature = "simd")]
+#[macerator::with_simd]
+fn dot_i32_simd<S: macerator::Simd>(a: &[i32], b: &[i32]) -> i32 {
+    use macerator::{Scalar, VMulAdd, vload_unaligned};
 
+    let lanes = i32::lanes::<S>();
     let len = a.len();
-    let mut sum = 0i32;
+    let simd_len = len / lanes * lanes;
+    let mut acc = 0i32.splat::<S>();
+
     let mut i = 0;
-
-    // Process 4 elements at a time (128-bit NEON)
-    if len >= 4 {
-        unsafe {
-            let mut acc = vdupq_n_s32(0);
-
-            while i + 4 <= len {
-                let va = vld1q_s32(a.as_ptr().add(i));
-                let vb = vld1q_s32(b.as_ptr().add(i));
-                // Multiply and accumulate: acc += va * vb
-                acc = vmlaq_s32(acc, va, vb);
-                i += 4;
-            }
-
-            // Horizontal sum of acc vector
-            sum = vaddvq_s32(acc);
-        }
+    while i < simd_len {
+        let va = unsafe { vload_unaligned(a.as_ptr().add(i)) };
+        let vb = unsafe { vload_unaligned(b.as_ptr().add(i)) };
+        acc = i32::vmul_add(va, vb, acc);
+        i += lanes;
     }
 
-    // Handle remaining elements
+    let mut sum = acc.reduce_add();
     while i < len {
         sum = sum.wrapping_add(a[i].wrapping_mul(b[i]));
         i += 1;
     }
-
     sum
 }
 
