@@ -850,16 +850,9 @@ conv3d_1x1_typed!(
 /// The direct path passes strided pointers directly to gemm, eliminating the
 /// im2col buffer. This wins when spatial_out is small enough that im2col
 /// allocation and fill overhead is significant relative to compute.
-fn should_use_direct_conv(
-    x_shape: &[usize],
-    w_shape: &[usize],
-    options: &ConvOptions<3>,
-) -> bool {
+fn should_use_direct_conv(x_shape: &[usize], w_shape: &[usize], options: &ConvOptions<3>) -> bool {
     // Only for groups=1, no padding, dilation=1 (the wav2vec2 case).
-    if options.groups != 1
-        || options.padding != [0, 0, 0]
-        || options.dilation != [1, 1, 1]
-    {
+    if options.groups != 1 || options.padding != [0, 0, 0] || options.dilation != [1, 1, 1] {
         return false;
     }
 
@@ -884,7 +877,6 @@ fn should_use_direct_conv(
     channels_in >= 32 && kernel_w <= 8 && out_w <= 800
 }
 
-/// Generates typed direct conv3d functions.
 macro_rules! conv3d_direct_typed {
     ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $one:expr, $add_fn:expr) => {
         fn $fn_name(
@@ -898,8 +890,22 @@ macro_rules! conv3d_direct_typed {
     };
 }
 
-conv3d_direct_typed!(conv3d_direct_f32, f32, DType::F32, 0.0f32, 1.0f32, |a, b| a + b);
-conv3d_direct_typed!(conv3d_direct_f64, f64, DType::F64, 0.0f64, 1.0f64, |a, b| a + b);
+conv3d_direct_typed!(
+    conv3d_direct_f32,
+    f32,
+    DType::F32,
+    0.0f32,
+    1.0f32,
+    |a, b| a + b
+);
+conv3d_direct_typed!(
+    conv3d_direct_f64,
+    f64,
+    DType::F64,
+    0.0f64,
+    1.0f64,
+    |a, b| a + b
+);
 
 /// Direct conv3d: decompose into kw gemm calls on NCHW data directly.
 ///
@@ -952,11 +958,11 @@ fn conv3d_direct_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + 
     let rhs_cs = stride_w as isize;
 
     let m = channels_out;
-    let kk = channels_in;
+    let gemm_k = channels_in;
     let n = out_w;
 
     #[cfg(feature = "rayon")]
-    let parallelism = if m.saturating_mul(n).saturating_mul(kk) >= 192 * 192 * 192 {
+    let parallelism = if m.saturating_mul(n).saturating_mul(gemm_k) >= 192 * 192 * 192 {
         gemm::Parallelism::Rayon(0)
     } else {
         gemm::Parallelism::None
@@ -976,19 +982,19 @@ fn conv3d_direct_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + 
             let dst_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
 
             (0..batch_size).into_par_iter().for_each(|b| {
-                let x_base = x_data.as_ptr().wrapping_add(b * batch_x_len);
                 let out_offset = b * channels_out * out_w;
 
                 for k in 0..kernel_w {
                     unsafe {
+                        let x_base = x_data.as_ptr().add(b * batch_x_len);
                         gemm::gemm(
                             m,
                             n,
-                            kk,
+                            gemm_k,
                             dst_ptr.ptr_add(out_offset),
                             1,
                             n as isize,
-                            k > 0, // accumulate for k > 0
+                            k > 0,
                             w_data.as_ptr().add(k),
                             lhs_cs,
                             lhs_rs,
@@ -1009,15 +1015,15 @@ fn conv3d_direct_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + 
         #[cfg(not(feature = "rayon"))]
         {
             for b in 0..batch_size {
-                let x_base = x_data.as_ptr().wrapping_add(b * batch_x_len);
                 let out_offset = b * channels_out * out_w;
 
                 for k in 0..kernel_w {
                     unsafe {
+                        let x_base = x_data.as_ptr().add(b * batch_x_len);
                         gemm::gemm(
                             m,
                             n,
-                            kk,
+                            gemm_k,
                             output.as_mut_ptr().add(out_offset),
                             1,
                             n as isize,
