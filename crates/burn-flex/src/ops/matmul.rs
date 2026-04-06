@@ -192,6 +192,7 @@ fn batch_index_to_offset(b: usize, broadcast_shape: &[usize], strides: &[usize])
 /// Compute element-level batch strides for a tensor in a broadcast context.
 /// Uses the actual layout strides so non-contiguous (transposed/sliced) tensors
 /// work without a copy. Dimensions that are broadcast (size 1) get stride 0.
+#[allow(clippy::needless_range_loop)]
 fn broadcast_batch_elem_strides(
     batch_shape: &[usize],
     layout_strides: &[isize],
@@ -288,6 +289,7 @@ fn matmul_2d_strided<T: GemmScalar>(lhs: FlexTensor, rhs: FlexTensor) -> FlexTen
 
 /// Strided gemm call for one matrix. Wraps `gemm::gemm` with GemmScalar zero/one.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 unsafe fn gemm_call<T: GemmScalar>(
     m: usize,
     n: usize,
