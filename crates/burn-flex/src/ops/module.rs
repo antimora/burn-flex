@@ -2,7 +2,7 @@
 //!
 //! These operations power neural network modules like convolutions and pooling.
 
-use crate::ops::{conv, deform_conv, interpolate, pool};
+use crate::ops::{conv, conv_transpose, deform_conv, interpolate, pool};
 use crate::{Flex, FlexTensor, Layout};
 use burn_backend::{
     DType, Element, TensorMetadata,
@@ -265,10 +265,10 @@ impl ModuleOps<Flex> for Flex {
         options: ConvTransposeOptions<1>,
     ) -> FloatTensor<Flex> {
         match x.dtype() {
-            DType::F32 => conv::conv_transpose1d_f32(x, weight, bias, &options),
-            DType::F64 => conv::conv_transpose1d_f64(x, weight, bias, &options),
-            DType::F16 => conv::conv_transpose1d_f16(x, weight, bias, &options),
-            DType::BF16 => conv::conv_transpose1d_bf16(x, weight, bias, &options),
+            DType::F32 => conv_transpose::conv_transpose1d_f32(x, weight, bias, &options),
+            DType::F64 => conv_transpose::conv_transpose1d_f64(x, weight, bias, &options),
+            DType::F16 => conv_transpose::conv_transpose1d_f16(x, weight, bias, &options),
+            DType::BF16 => conv_transpose::conv_transpose1d_bf16(x, weight, bias, &options),
             dtype => panic!("conv_transpose1d: unsupported dtype {:?}", dtype),
         }
     }
@@ -280,10 +280,10 @@ impl ModuleOps<Flex> for Flex {
         options: ConvTransposeOptions<2>,
     ) -> FloatTensor<Flex> {
         match x.dtype() {
-            DType::F32 => conv::conv_transpose2d_f32(x, weight, bias, &options),
-            DType::F64 => conv::conv_transpose2d_f64(x, weight, bias, &options),
-            DType::F16 => conv::conv_transpose2d_f16(x, weight, bias, &options),
-            DType::BF16 => conv::conv_transpose2d_bf16(x, weight, bias, &options),
+            DType::F32 => conv_transpose::conv_transpose2d_f32(x, weight, bias, &options),
+            DType::F64 => conv_transpose::conv_transpose2d_f64(x, weight, bias, &options),
+            DType::F16 => conv_transpose::conv_transpose2d_f16(x, weight, bias, &options),
+            DType::BF16 => conv_transpose::conv_transpose2d_bf16(x, weight, bias, &options),
             dtype => panic!("conv_transpose2d: unsupported dtype {:?}", dtype),
         }
     }
@@ -295,10 +295,10 @@ impl ModuleOps<Flex> for Flex {
         options: ConvTransposeOptions<3>,
     ) -> FloatTensor<Flex> {
         match x.dtype() {
-            DType::F32 => conv::conv_transpose3d_f32(x, weight, bias, &options),
-            DType::F64 => conv::conv_transpose3d_f64(x, weight, bias, &options),
-            DType::F16 => conv::conv_transpose3d_f16(x, weight, bias, &options),
-            DType::BF16 => conv::conv_transpose3d_bf16(x, weight, bias, &options),
+            DType::F32 => conv_transpose::conv_transpose3d_f32(x, weight, bias, &options),
+            DType::F64 => conv_transpose::conv_transpose3d_f64(x, weight, bias, &options),
+            DType::F16 => conv_transpose::conv_transpose3d_f16(x, weight, bias, &options),
+            DType::BF16 => conv_transpose::conv_transpose3d_bf16(x, weight, bias, &options),
             dtype => panic!("conv_transpose3d: unsupported dtype {:?}", dtype),
         }
     }
