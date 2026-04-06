@@ -1435,10 +1435,7 @@ mod tests {
         let x = FlexTensor::from_data(TensorData::new(vec![1.0f32; 16], vec![1, 4, 2, 2]));
         let w_data = vec![0.5f32; 8]; // 4 out channels, 2 per group
         let weight = FlexTensor::from_data(TensorData::new(w_data, vec![4, 2, 1, 1]));
-        let bias = FlexTensor::from_data(TensorData::new(
-            vec![10.0f32, 20.0, 30.0, 40.0],
-            vec![4],
-        ));
+        let bias = FlexTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], vec![4]));
 
         let options = ConvOptions::new([1, 1], [0, 0], [1, 1], 2);
         let result = conv2d_f32(x, weight, Some(bias), &options);
