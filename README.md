@@ -115,6 +115,8 @@ candle's CPU API.
 | batched matmul         | `[32, 128, 128]`         | **13.0x** |
 | cumsum last dim        | 256²                     | **10.4x** |
 | conv1d (L0, wav2vec2)  | 1x1x16000, k=10 s=5      | **7.0x**  |
+| argmax along dim       | 1024²                    | **6.5x**  |
+| max_dim / min_dim      | 1024²                    | **5.9x**  |
 | full-tensor max/min    | 1024²                    | **4.0x**  |
 | layer_norm (fused)     | `[50, 1024]`             | **3.6x**  |
 | cat along last dim     | 2x1024²                  | **2.7x**  |
@@ -128,8 +130,8 @@ candle's CPU API.
 
 **Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
 
-**Remaining regressions** (8 ops): `max_dim`/`argmax_dim` (4x slower), transposed-view matmul at
-small seqs, `index_select`, `mask_where`, last-axis `sum_dim`, 1x1 pointwise conv2d, `nearest2d`.
+**Remaining regressions** (7 ops): transposed-view matmul at small seqs, `index_select`,
+`mask_where`, last-axis `sum_dim`, 1x1 pointwise conv2d, `nearest2d`, small conv1d layers.
 
 Detailed per-op numbers, methodology, and the prioritized regression list are in
 [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row

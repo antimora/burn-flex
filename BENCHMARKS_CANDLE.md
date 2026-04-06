@@ -223,14 +223,14 @@ the divan noise floor (<100 µs).
 | sum_dim last    | 1024² | 78.2 µs     | 40.4 µs | 0.52×     |
 | sum_dim first   | 1024² | **78.4 µs** | 1.20 ms | **15.3×** |
 | mean_dim last   | 1024² | 77.6 µs     | 40.8 µs | 0.53×     |
-| max_dim last    | 1024² | 3.37 ms     | 506 µs  | 0.15×     |
-| max_dim first   | 1024² | 3.35 ms     | 911 µs  | 0.27×     |
-| argmax_dim last | 1024² | 3.40 ms     | 911 µs  | 0.27×     |
+| max_dim last    | 1024² | **92 µs**   | 545 µs  | **5.9×**  |
+| max_dim first   | 1024² | **199 µs**  | 986 µs  | **5.0×**  |
+| argmax_dim last | 1024² | **86 µs**   | 556 µs  | **6.5×**  |
 
-Two big wins: **4× faster full-tensor max/min** (candle routes via `flatten_all → max(0)`) and **15×
-faster non-last-dim sum** (candle is missing a SIMD strided reducer). Two real losses: **sum_dim /
-mean_dim last-axis** is 2× slower on flex, and **max_dim / argmax_dim** is 4× slower regardless of
-axis. Both are listed in the perf bug list.
+Three big wins: **4× faster full-tensor max/min**, **15× faster non-last-dim sum**, and **5-6×
+faster max_dim/argmax_dim** (was 4× slower before rayon + SIMD, fixed in
+[antimora/burn-flex#47](https://github.com/antimora/burn-flex/pull/47)). One real loss: **sum_dim /
+mean_dim last-axis** is 2× slower on flex, listed in the perf bug list.
 
 ### Elementwise (1D, 1M elements, f32)
 
@@ -300,29 +300,29 @@ adding rayon fan-out across rows (fixed in
 
 Surfaced by the broader coverage pass. Ordered by impact on real workloads.
 
-1. **max_dim / argmax_dim: ~4× slower** (3.4 ms vs ~900 µs at 1024²). On the classifier output path
-   for any model with an argmax head.
-2. **matmul on transposed-view input at small seqs: 4× slower than candle, 6× slower than flex's own
+1. **matmul on transposed-view input at small seqs: 4× slower than candle, 6× slower than flex's own
    contiguous path**. `Q @ K.swap_dims(1,2)` at `[16, 50, 64]` takes 340 µs on flex vs 52 µs for the
    contiguous-input form. Affects any attention kernel written in the idiomatic transpose form.
-3. **conv1d L3-L6 (small wav2vec2 shapes): 1.2-1.5× slower**. Already tracked at
+2. **conv1d L3-L6 (small wav2vec2 shapes): 1.2-1.5× slower**. Already tracked at
    [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
-4. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
-5. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
-6. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
+3. **index_select: 2.8× slower** (100 µs vs 36 µs). Pure row-copy; should be memcpy-bound.
+4. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
+5. **sum_dim / mean_dim along last axis: ~2× slower** (78 µs vs 40 µs at 1024²). Minor but sits on
    the fused-layer_norm dependency path.
-7. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
-8. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
+6. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
+7. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
    pointwise; flex's im2col adds overhead.
 
 Fixed since the first pass:
+- max_dim / argmax_dim at 1024² (was 4× slower; now 5-6× faster), fixed in
+  [antimora/burn-flex#47](https://github.com/antimora/burn-flex/pull/47).
 - conv_transpose2d (was 8× slower; now 2× faster), fixed in
   [antimora/burn-flex#46](https://github.com/antimora/burn-flex/pull/46).
 - sort_last at 1024² (was 7.8× slower; now 1.3× faster), fixed in
   [antimora/burn-flex#45](https://github.com/antimora/burn-flex/pull/45).
 
-Items 1-2 together cover classifiers and any attention not written in the pre-transposed-K form.
-Fixing them would move flex into a "wins everywhere" state against candle on this hardware.
+Item 1 covers any attention not written in the pre-transposed-K form. Fixing it would move flex into
+a "wins everywhere" state against candle on this hardware.
 
 ---
 
