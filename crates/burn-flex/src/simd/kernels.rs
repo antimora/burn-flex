@@ -6,74 +6,46 @@
 //! - wasm32 (SIMD128)
 //! - Scalar fallback for embedded/other platforms
 
-#[cfg(target_arch = "x86_64")]
 use core::iter::Sum;
 use core::ops::AddAssign;
 
-#[cfg(target_arch = "x86_64")]
-use macerator::ReduceAdd;
-use macerator::{ReduceMax, ReduceMin, Simd, VAdd, VOrd, vload_unaligned, vstore_unaligned};
+use macerator::{ReduceAdd, ReduceMax, ReduceMin, Simd, VAdd, VOrd, vload_unaligned, vstore_unaligned};
 
 // ============================================================================
 // Sum reduction
 // ============================================================================
 
-/// Sum all elements in a f32 slice.
-///
-/// Uses 8-fold unrolled loop that LLVM auto-vectorizes.
-/// This matches ndarray's approach and is faster than explicit SIMD dispatch
-/// due to lower overhead.
+/// Sum all elements in a f32 slice using SIMD with 4 accumulators.
 #[inline]
 pub fn sum_f32(data: &[f32]) -> f32 {
-    #[cfg(target_arch = "x86_64")]
-    let res = macerator_sum(data);
-    #[cfg(not(target_arch = "x86_64"))]
-    let res = unrolled_sum_f32(data);
-    res
+    macerator_sum(data)
 }
 
-/// 8-fold unrolled sum that LLVM auto-vectorizes.
-/// This is the same approach used by ndarray's `unrolled_fold`.
-#[inline]
-#[cfg(not(target_arch = "x86_64"))]
-fn unrolled_sum_f32(mut xs: &[f32]) -> f32 {
-    let (mut p0, mut p1, mut p2, mut p3, mut p4, mut p5, mut p6, mut p7) =
-        (0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-
-    while xs.len() >= 8 {
-        p0 += xs[0];
-        p1 += xs[1];
-        p2 += xs[2];
-        p3 += xs[3];
-        p4 += xs[4];
-        p5 += xs[5];
-        p6 += xs[6];
-        p7 += xs[7];
-        xs = &xs[8..];
-    }
-
-    // Combine accumulators in a way that allows further vectorization
-    let mut sum = (p0 + p4) + (p1 + p5) + (p2 + p6) + (p3 + p7);
-
-    // Handle remainder
-    for &x in xs {
-        sum += x;
-    }
-    sum
-}
-
-#[cfg(target_arch = "x86_64")]
+/// 4-accumulator SIMD sum. Uses independent accumulator chains so the CPU
+/// can pipeline floating-point adds instead of waiting for each to complete.
 #[macerator::with_simd]
 fn macerator_sum<S: Simd, F: VAdd + Sum + ReduceAdd>(mut xs: &[F]) -> F {
     let lanes = F::lanes::<S>();
-    let mut sum = F::default().splat::<S>();
+    let stride = lanes * 4;
+    let mut s0 = F::default().splat::<S>();
+    let mut s1 = s0;
+    let mut s2 = s0;
+    let mut s3 = s0;
 
-    while xs.len() >= lanes {
-        sum += unsafe { vload_unaligned(xs.as_ptr()) };
-        xs = &xs[lanes..];
+    while xs.len() >= stride {
+        unsafe {
+            s0 += vload_unaligned(xs.as_ptr());
+            s1 += vload_unaligned(xs.as_ptr().add(lanes));
+            s2 += vload_unaligned(xs.as_ptr().add(lanes * 2));
+            s3 += vload_unaligned(xs.as_ptr().add(lanes * 3));
+        }
+        xs = &xs[stride..];
     }
 
-    sum.reduce_add() + xs.iter().copied().sum()
+    // Combine accumulators and sum scalar remainder
+    let sum = (s0 + s1) + (s2 + s3);
+    let result = sum.reduce_add();
+    result + xs.iter().copied().sum()
 }
 
 // ============================================================================
@@ -171,21 +143,12 @@ pub fn scatter_add_batched<S: Simd, F: VAdd + AddAssign>(
 
 /// Sum each row, storing results in output slice.
 /// Used for last-dim reductions.
-///
-/// Uses 8-fold unrolled loop per row that LLVM auto-vectorizes.
 #[inline]
 pub fn sum_rows_f32(src: &[f32], dst: &mut [f32], num_rows: usize, row_len: usize) {
     for (row, dst_val) in dst.iter_mut().enumerate().take(num_rows) {
         let row_start = row * row_len;
         let row_data = &src[row_start..row_start + row_len];
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            *dst_val = unrolled_sum_f32(row_data);
-        }
-        #[cfg(target_arch = "x86_64")]
-        {
-            *dst_val = macerator_sum(row_data);
-        }
+        *dst_val = macerator_sum(row_data);
     }
 }
 
