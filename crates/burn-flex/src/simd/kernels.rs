@@ -9,7 +9,9 @@
 use core::iter::Sum;
 use core::ops::AddAssign;
 
-use macerator::{ReduceAdd, ReduceMax, ReduceMin, Simd, VAdd, VOrd, vload_unaligned, vstore_unaligned};
+use macerator::{
+    ReduceAdd, ReduceMax, ReduceMin, Simd, VAdd, VOrd, vload_unaligned, vstore_unaligned,
+};
 
 // ============================================================================
 // Sum reduction

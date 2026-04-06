@@ -1418,7 +1418,6 @@ pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
 #[cfg(feature = "rayon")]
 const EXTREMUM_PARALLEL_THRESHOLD: usize = 32 * 1024;
 
-
 /// SIMD fast path for f32 last-dim extremum (values only).
 /// Uses macerator SIMD reduction per contiguous row, with NaN propagation.
 #[cfg(feature = "simd")]
