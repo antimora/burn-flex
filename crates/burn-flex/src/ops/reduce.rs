@@ -614,14 +614,14 @@ fn min_impl<E: Element + bytemuck::Pod + PartialOrd>(tensor: &FlexTensor) -> Fle
 pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
     assert_dim_fits_isize(tensor.layout().shape()[dim], dim);
     match tensor.dtype() {
-        DType::F32 => argmax_float_impl::<f32>(&tensor, dim),
-        DType::F64 => argmax_float_impl::<f64>(&tensor, dim),
-        DType::F16 => argext_half::<f16>(&tensor, dim, |a, b| a.is_nan() || a > b, f16::to_f32),
-        DType::BF16 => argext_half::<bf16>(&tensor, dim, |a, b| a.is_nan() || a > b, bf16::to_f32),
-        DType::I8 => argmax_impl::<i8>(&tensor, dim),
-        DType::I16 => argmax_impl::<i16>(&tensor, dim),
-        DType::I32 => argmax_impl::<i32>(&tensor, dim),
-        DType::I64 => argmax_impl::<i64>(&tensor, dim),
+        DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b).1,
+        DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b).1,
+        DType::F16 => extremum_dim_with_indices_half::<f16, _>(&tensor, dim, |a, b| a.is_nan() || a > b, f16::to_f32, f16::from_f32).1,
+        DType::BF16 => extremum_dim_with_indices_half::<bf16, _>(&tensor, dim, |a, b| a.is_nan() || a > b, bf16::to_f32, bf16::from_f32).1,
+        DType::I8 => extremum_dim_with_indices::<i8, _>(&tensor, dim, |a, b| a > b).1,
+        DType::I16 => extremum_dim_with_indices::<i16, _>(&tensor, dim, |a, b| a > b).1,
+        DType::I32 => extremum_dim_with_indices::<i32, _>(&tensor, dim, |a, b| a > b).1,
+        DType::I64 => extremum_dim_with_indices::<i64, _>(&tensor, dim, |a, b| a > b).1,
         _ => panic!("argmax: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -630,14 +630,14 @@ pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
 pub fn argmin(tensor: FlexTensor, dim: usize) -> FlexTensor {
     assert_dim_fits_isize(tensor.layout().shape()[dim], dim);
     match tensor.dtype() {
-        DType::F32 => argmin_float_impl::<f32>(&tensor, dim),
-        DType::F64 => argmin_float_impl::<f64>(&tensor, dim),
-        DType::F16 => argext_half::<f16>(&tensor, dim, |a, b| a.is_nan() || a < b, f16::to_f32),
-        DType::BF16 => argext_half::<bf16>(&tensor, dim, |a, b| a.is_nan() || a < b, bf16::to_f32),
-        DType::I8 => argmin_impl::<i8>(&tensor, dim),
-        DType::I16 => argmin_impl::<i16>(&tensor, dim),
-        DType::I32 => argmin_impl::<i32>(&tensor, dim),
-        DType::I64 => argmin_impl::<i64>(&tensor, dim),
+        DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b).1,
+        DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b).1,
+        DType::F16 => extremum_dim_with_indices_half::<f16, _>(&tensor, dim, |a, b| a.is_nan() || a < b, f16::to_f32, f16::from_f32).1,
+        DType::BF16 => extremum_dim_with_indices_half::<bf16, _>(&tensor, dim, |a, b| a.is_nan() || a < b, bf16::to_f32, bf16::from_f32).1,
+        DType::I8 => extremum_dim_with_indices::<i8, _>(&tensor, dim, |a, b| a < b).1,
+        DType::I16 => extremum_dim_with_indices::<i16, _>(&tensor, dim, |a, b| a < b).1,
+        DType::I32 => extremum_dim_with_indices::<i32, _>(&tensor, dim, |a, b| a < b).1,
+        DType::I64 => extremum_dim_with_indices::<i64, _>(&tensor, dim, |a, b| a < b).1,
         _ => panic!("argmin: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -1155,18 +1155,18 @@ pub fn max_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         "max_dim: dimension {dim} has size 0"
     );
     match tensor.dtype() {
-        DType::F32 => max_dim_float_impl::<f32>(&tensor, dim),
-        DType::F64 => max_dim_float_impl::<f64>(&tensor, dim),
-        DType::F16 => max_dim_f16(&tensor, dim, true),
-        DType::BF16 => max_dim_bf16(&tensor, dim, true),
-        DType::I64 => max_dim_impl::<i64>(&tensor, dim),
-        DType::I32 => max_dim_impl::<i32>(&tensor, dim),
-        DType::I16 => max_dim_impl::<i16>(&tensor, dim),
-        DType::I8 => max_dim_impl::<i8>(&tensor, dim),
-        DType::U64 => max_dim_impl::<u64>(&tensor, dim),
-        DType::U32 => max_dim_impl::<u32>(&tensor, dim),
-        DType::U16 => max_dim_impl::<u16>(&tensor, dim),
-        DType::U8 => max_dim_impl::<u8>(&tensor, dim),
+        DType::F32 => extremum_dim::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
+        DType::F64 => extremum_dim::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
+        DType::F16 => extremum_dim_half::<f16, _>(&tensor, dim, |a, b| a.is_nan() || a > b, f16::to_f32, f16::from_f32),
+        DType::BF16 => extremum_dim_half::<bf16, _>(&tensor, dim, |a, b| a.is_nan() || a > b, bf16::to_f32, bf16::from_f32),
+        DType::I64 => extremum_dim::<i64, _>(&tensor, dim, |a, b| a > b),
+        DType::I32 => extremum_dim::<i32, _>(&tensor, dim, |a, b| a > b),
+        DType::I16 => extremum_dim::<i16, _>(&tensor, dim, |a, b| a > b),
+        DType::I8 => extremum_dim::<i8, _>(&tensor, dim, |a, b| a > b),
+        DType::U64 => extremum_dim::<u64, _>(&tensor, dim, |a, b| a > b),
+        DType::U32 => extremum_dim::<u32, _>(&tensor, dim, |a, b| a > b),
+        DType::U16 => extremum_dim::<u16, _>(&tensor, dim, |a, b| a > b),
+        DType::U8 => extremum_dim::<u8, _>(&tensor, dim, |a, b| a > b),
         _ => panic!("max_dim: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -1178,18 +1178,18 @@ pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         "min_dim: dimension {dim} has size 0"
     );
     match tensor.dtype() {
-        DType::F32 => min_dim_float_impl::<f32>(&tensor, dim),
-        DType::F64 => min_dim_float_impl::<f64>(&tensor, dim),
-        DType::F16 => min_dim_f16(&tensor, dim, true),
-        DType::BF16 => min_dim_bf16(&tensor, dim, true),
-        DType::I64 => min_dim_impl::<i64>(&tensor, dim),
-        DType::I32 => min_dim_impl::<i32>(&tensor, dim),
-        DType::I16 => min_dim_impl::<i16>(&tensor, dim),
-        DType::I8 => min_dim_impl::<i8>(&tensor, dim),
-        DType::U64 => min_dim_impl::<u64>(&tensor, dim),
-        DType::U32 => min_dim_impl::<u32>(&tensor, dim),
-        DType::U16 => min_dim_impl::<u16>(&tensor, dim),
-        DType::U8 => min_dim_impl::<u8>(&tensor, dim),
+        DType::F32 => extremum_dim::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
+        DType::F64 => extremum_dim::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
+        DType::F16 => extremum_dim_half::<f16, _>(&tensor, dim, |a, b| a.is_nan() || a < b, f16::to_f32, f16::from_f32),
+        DType::BF16 => extremum_dim_half::<bf16, _>(&tensor, dim, |a, b| a.is_nan() || a < b, bf16::to_f32, bf16::from_f32),
+        DType::I64 => extremum_dim::<i64, _>(&tensor, dim, |a, b| a < b),
+        DType::I32 => extremum_dim::<i32, _>(&tensor, dim, |a, b| a < b),
+        DType::I16 => extremum_dim::<i16, _>(&tensor, dim, |a, b| a < b),
+        DType::I8 => extremum_dim::<i8, _>(&tensor, dim, |a, b| a < b),
+        DType::U64 => extremum_dim::<u64, _>(&tensor, dim, |a, b| a < b),
+        DType::U32 => extremum_dim::<u32, _>(&tensor, dim, |a, b| a < b),
+        DType::U16 => extremum_dim::<u16, _>(&tensor, dim, |a, b| a < b),
+        DType::U8 => extremum_dim::<u8, _>(&tensor, dim, |a, b| a < b),
         _ => panic!("min_dim: unsupported dtype {:?}", tensor.dtype()),
     }
 }
@@ -1203,27 +1203,18 @@ pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
     );
     assert_dim_fits_isize(dim_len, dim);
     match tensor.dtype() {
-        DType::F32 => max_dim_with_indices_float_impl::<f32>(&tensor, dim),
-        DType::F64 => max_dim_with_indices_float_impl::<f64>(&tensor, dim),
-        DType::F16 => {
-            let values = max_dim_f16(&tensor, dim, true);
-            let indices = argext_half::<f16>(&tensor, dim, |a, b| a.is_nan() || a > b, f16::to_f32);
-            (values, indices)
-        }
-        DType::BF16 => {
-            let values = max_dim_bf16(&tensor, dim, true);
-            let indices =
-                argext_half::<bf16>(&tensor, dim, |a, b| a.is_nan() || a > b, bf16::to_f32);
-            (values, indices)
-        }
-        DType::I64 => max_dim_with_indices_impl::<i64>(&tensor, dim),
-        DType::I32 => max_dim_with_indices_impl::<i32>(&tensor, dim),
-        DType::I16 => max_dim_with_indices_impl::<i16>(&tensor, dim),
-        DType::I8 => max_dim_with_indices_impl::<i8>(&tensor, dim),
-        DType::U64 => max_dim_with_indices_impl::<u64>(&tensor, dim),
-        DType::U32 => max_dim_with_indices_impl::<u32>(&tensor, dim),
-        DType::U16 => max_dim_with_indices_impl::<u16>(&tensor, dim),
-        DType::U8 => max_dim_with_indices_impl::<u8>(&tensor, dim),
+        DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
+        DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a > b),
+        DType::F16 => extremum_dim_with_indices_half::<f16, _>(&tensor, dim, |a, b| a.is_nan() || a > b, f16::to_f32, f16::from_f32),
+        DType::BF16 => extremum_dim_with_indices_half::<bf16, _>(&tensor, dim, |a, b| a.is_nan() || a > b, bf16::to_f32, bf16::from_f32),
+        DType::I64 => extremum_dim_with_indices::<i64, _>(&tensor, dim, |a, b| a > b),
+        DType::I32 => extremum_dim_with_indices::<i32, _>(&tensor, dim, |a, b| a > b),
+        DType::I16 => extremum_dim_with_indices::<i16, _>(&tensor, dim, |a, b| a > b),
+        DType::I8 => extremum_dim_with_indices::<i8, _>(&tensor, dim, |a, b| a > b),
+        DType::U64 => extremum_dim_with_indices::<u64, _>(&tensor, dim, |a, b| a > b),
+        DType::U32 => extremum_dim_with_indices::<u32, _>(&tensor, dim, |a, b| a > b),
+        DType::U16 => extremum_dim_with_indices::<u16, _>(&tensor, dim, |a, b| a > b),
+        DType::U8 => extremum_dim_with_indices::<u8, _>(&tensor, dim, |a, b| a > b),
         _ => panic!(
             "max_dim_with_indices: unsupported dtype {:?}",
             tensor.dtype()
@@ -1240,27 +1231,18 @@ pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
     );
     assert_dim_fits_isize(dim_len, dim);
     match tensor.dtype() {
-        DType::F32 => min_dim_with_indices_float_impl::<f32>(&tensor, dim),
-        DType::F64 => min_dim_with_indices_float_impl::<f64>(&tensor, dim),
-        DType::F16 => {
-            let values = min_dim_f16(&tensor, dim, true);
-            let indices = argext_half::<f16>(&tensor, dim, |a, b| a.is_nan() || a < b, f16::to_f32);
-            (values, indices)
-        }
-        DType::BF16 => {
-            let values = min_dim_bf16(&tensor, dim, true);
-            let indices =
-                argext_half::<bf16>(&tensor, dim, |a, b| a.is_nan() || a < b, bf16::to_f32);
-            (values, indices)
-        }
-        DType::I64 => min_dim_with_indices_impl::<i64>(&tensor, dim),
-        DType::I32 => min_dim_with_indices_impl::<i32>(&tensor, dim),
-        DType::I16 => min_dim_with_indices_impl::<i16>(&tensor, dim),
-        DType::I8 => min_dim_with_indices_impl::<i8>(&tensor, dim),
-        DType::U64 => min_dim_with_indices_impl::<u64>(&tensor, dim),
-        DType::U32 => min_dim_with_indices_impl::<u32>(&tensor, dim),
-        DType::U16 => min_dim_with_indices_impl::<u16>(&tensor, dim),
-        DType::U8 => min_dim_with_indices_impl::<u8>(&tensor, dim),
+        DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
+        DType::F64 => extremum_dim_with_indices::<f64, _>(&tensor, dim, |a, b| a.is_nan() || a < b),
+        DType::F16 => extremum_dim_with_indices_half::<f16, _>(&tensor, dim, |a, b| a.is_nan() || a < b, f16::to_f32, f16::from_f32),
+        DType::BF16 => extremum_dim_with_indices_half::<bf16, _>(&tensor, dim, |a, b| a.is_nan() || a < b, bf16::to_f32, bf16::from_f32),
+        DType::I64 => extremum_dim_with_indices::<i64, _>(&tensor, dim, |a, b| a < b),
+        DType::I32 => extremum_dim_with_indices::<i32, _>(&tensor, dim, |a, b| a < b),
+        DType::I16 => extremum_dim_with_indices::<i16, _>(&tensor, dim, |a, b| a < b),
+        DType::I8 => extremum_dim_with_indices::<i8, _>(&tensor, dim, |a, b| a < b),
+        DType::U64 => extremum_dim_with_indices::<u64, _>(&tensor, dim, |a, b| a < b),
+        DType::U32 => extremum_dim_with_indices::<u32, _>(&tensor, dim, |a, b| a < b),
+        DType::U16 => extremum_dim_with_indices::<u16, _>(&tensor, dim, |a, b| a < b),
+        DType::U8 => extremum_dim_with_indices::<u8, _>(&tensor, dim, |a, b| a < b),
         _ => panic!(
             "min_dim_with_indices: unsupported dtype {:?}",
             tensor.dtype()
@@ -1268,10 +1250,23 @@ pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
     }
 }
 
-fn max_dim_impl<E: Element + bytemuck::Pod + PartialOrd>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> FlexTensor {
+// ============================================================================
+// Generic extremum helpers (parallelized with rayon)
+// ============================================================================
+
+// Lower threshold than the global PARALLEL_THRESHOLD (256K) because the per-element
+// work (a single comparison + conditional store) is cheap enough that rayon overhead
+// is amortized at smaller sizes. 32K elements * ~1.5ns/elem = ~48µs of serial work,
+// enough to justify thread-pool dispatch.
+#[cfg(feature = "rayon")]
+const EXTREMUM_PARALLEL_THRESHOLD: usize = 32 * 1024;
+
+/// Find extremum value along a dimension. `is_better(new, current) -> bool`.
+fn extremum_dim<E, F>(tensor: &FlexTensor, dim: usize, is_better: F) -> FlexTensor
+where
+    E: Element + bytemuck::Pod + Send + Sync,
+    F: Fn(E, E) -> bool + Send + Sync,
+{
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let ndims = shape.num_dims();
@@ -1280,26 +1275,35 @@ fn max_dim_impl<E: Element + bytemuck::Pod + PartialOrd>(
     let dim_size = shape[dim];
     let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let inner_size: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+    let out_size = outer_size * inner_size;
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
-    let mut values: Vec<E> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut max_val = data[first_idx];
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if val > max_val {
-                    max_val = val;
-                }
+    let find = |flat_idx: usize| -> E {
+        let outer = flat_idx / inner_size;
+        let inner = flat_idx % inner_size;
+        let base = start_offset + outer * dim_size * inner_size + inner;
+        let mut best = data[base];
+        for d in 1..dim_size {
+            let val = data[base + d * inner_size];
+            if is_better(val, best) {
+                best = val;
             }
-            values.push(max_val);
         }
-    }
+        best
+    };
+
+    #[cfg(feature = "rayon")]
+    let values: Vec<E> = if out_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+        (0..out_size).into_par_iter().map(&find).collect()
+    } else {
+        (0..out_size).map(find).collect()
+    };
+
+    #[cfg(not(feature = "rayon"))]
+    let values: Vec<E> = (0..out_size).map(find).collect();
 
     FlexTensor::new(
         Bytes::from_elems(values),
@@ -1308,11 +1312,16 @@ fn max_dim_impl<E: Element + bytemuck::Pod + PartialOrd>(
     )
 }
 
-/// Float-specific max_dim that propagates NaN.
-fn max_dim_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
+/// Find extremum value and its index along a dimension. `is_better(new, current) -> bool`.
+fn extremum_dim_with_indices<E, F>(
     tensor: &FlexTensor,
     dim: usize,
-) -> FlexTensor {
+    is_better: F,
+) -> (FlexTensor, FlexTensor)
+where
+    E: Element + bytemuck::Pod + Send + Sync,
+    F: Fn(E, E) -> bool + Send + Sync,
+{
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let ndims = shape.num_dims();
@@ -1321,154 +1330,37 @@ fn max_dim_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
     let dim_size = shape[dim];
     let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let inner_size: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+    let out_size = outer_size * inner_size;
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
 
-    let mut values: Vec<E> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut max_val = data[first_idx];
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if val.is_nan() || val > max_val {
-                    max_val = val;
-                }
+    let find = |flat_idx: usize| -> (E, isize) {
+        let outer = flat_idx / inner_size;
+        let inner = flat_idx % inner_size;
+        let base = start_offset + outer * dim_size * inner_size + inner;
+        let mut best = data[base];
+        let mut best_idx: isize = 0;
+        for d in 1..dim_size {
+            let val = data[base + d * inner_size];
+            if is_better(val, best) {
+                best = val;
+                best_idx = d as isize;
             }
-            values.push(max_val);
         }
-    }
+        (best, best_idx)
+    };
 
-    FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape)),
-        E::dtype(),
-    )
-}
+    #[cfg(feature = "rayon")]
+    let (values, indices): (Vec<E>, Vec<isize>) = if out_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+        (0..out_size).into_par_iter().map(&find).unzip()
+    } else {
+        (0..out_size).map(find).unzip()
+    };
 
-fn min_dim_impl<E: Element + bytemuck::Pod + PartialOrd>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut values: Vec<E> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut min_val = data[first_idx];
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if val < min_val {
-                    min_val = val;
-                }
-            }
-            values.push(min_val);
-        }
-    }
-
-    FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape)),
-        E::dtype(),
-    )
-}
-
-/// Float-specific min_dim that propagates NaN.
-fn min_dim_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut values: Vec<E> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut min_val = data[first_idx];
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if val.is_nan() || val < min_val {
-                    min_val = val;
-                }
-            }
-            values.push(min_val);
-        }
-    }
-
-    FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape)),
-        E::dtype(),
-    )
-}
-
-/// Float-specific max_dim_with_indices that propagates NaN.
-fn max_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> (FlexTensor, FlexTensor) {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-    let cap = outer_size.max(1) * inner_size.max(1);
-
-    let mut values: Vec<E> = Vec::with_capacity(cap);
-    let mut indices: Vec<isize> = Vec::with_capacity(cap);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut max_val = data[first_idx];
-            let mut max_idx: isize = 0;
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if val.is_nan() || val > max_val {
-                    max_val = val;
-                    max_idx = d as isize;
-                }
-            }
-            values.push(max_val);
-            indices.push(max_idx);
-        }
-    }
+    #[cfg(not(feature = "rayon"))]
+    let (values, indices): (Vec<E>, Vec<isize>) = (0..out_size).map(find).unzip();
 
     let val_tensor = FlexTensor::new(
         Bytes::from_elems(values),
@@ -1483,11 +1375,18 @@ fn max_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
     (val_tensor, idx_tensor)
 }
 
-/// Float-specific min_dim_with_indices that propagates NaN.
-fn min_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
+/// Find extremum value along a dimension for half-precision types (compared via f32).
+fn extremum_dim_half<E, F>(
     tensor: &FlexTensor,
     dim: usize,
-) -> (FlexTensor, FlexTensor) {
+    is_better: F,
+    to_f32: fn(E) -> f32,
+    from_f32: fn(f32) -> E,
+) -> FlexTensor
+where
+    E: Element + bytemuck::Pod + Send + Sync,
+    F: Fn(f32, f32) -> bool + Send + Sync,
+{
     let tensor = tensor.to_contiguous();
     let shape = tensor.layout().shape();
     let ndims = shape.num_dims();
@@ -1496,32 +1395,94 @@ fn min_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
     let dim_size = shape[dim];
     let mut out_shape: Vec<usize> = shape.to_vec();
     out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
+    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let inner_size: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+    let out_size = outer_size * inner_size;
     let data: &[E] = tensor.storage();
     let start_offset = tensor.layout().start_offset();
-    let cap = outer_size.max(1) * inner_size.max(1);
 
-    let mut values: Vec<E> = Vec::with_capacity(cap);
-    let mut indices: Vec<isize> = Vec::with_capacity(cap);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut min_val = data[first_idx];
-            let mut min_idx: isize = 0;
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if val.is_nan() || val < min_val {
-                    min_val = val;
-                    min_idx = d as isize;
-                }
+    let find = |flat_idx: usize| -> E {
+        let outer = flat_idx / inner_size;
+        let inner = flat_idx % inner_size;
+        let base = start_offset + outer * dim_size * inner_size + inner;
+        let mut best = to_f32(data[base]);
+        for d in 1..dim_size {
+            let val = to_f32(data[base + d * inner_size]);
+            if is_better(val, best) {
+                best = val;
             }
-            values.push(min_val);
-            indices.push(min_idx);
         }
-    }
+        from_f32(best)
+    };
+
+    #[cfg(feature = "rayon")]
+    let values: Vec<E> = if out_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+        (0..out_size).into_par_iter().map(&find).collect()
+    } else {
+        (0..out_size).map(find).collect()
+    };
+
+    #[cfg(not(feature = "rayon"))]
+    let values: Vec<E> = (0..out_size).map(find).collect();
+
+    FlexTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape)),
+        E::dtype(),
+    )
+}
+
+/// Find extremum value and index along a dimension for half-precision types (compared via f32).
+fn extremum_dim_with_indices_half<E, F>(
+    tensor: &FlexTensor,
+    dim: usize,
+    is_better: F,
+    to_f32: fn(E) -> f32,
+    from_f32: fn(f32) -> E,
+) -> (FlexTensor, FlexTensor)
+where
+    E: Element + bytemuck::Pod + Send + Sync,
+    F: Fn(f32, f32) -> bool + Send + Sync,
+{
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let ndims = shape.num_dims();
+    assert!(dim < ndims);
+
+    let dim_size = shape[dim];
+    let mut out_shape: Vec<usize> = shape.to_vec();
+    out_shape[dim] = 1;
+    let outer_size: usize = shape[..dim].iter().product::<usize>().max(1);
+    let inner_size: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+    let out_size = outer_size * inner_size;
+    let data: &[E] = tensor.storage();
+    let start_offset = tensor.layout().start_offset();
+
+    let find = |flat_idx: usize| -> (E, isize) {
+        let outer = flat_idx / inner_size;
+        let inner = flat_idx % inner_size;
+        let base = start_offset + outer * dim_size * inner_size + inner;
+        let mut best = to_f32(data[base]);
+        let mut best_idx: isize = 0;
+        for d in 1..dim_size {
+            let val = to_f32(data[base + d * inner_size]);
+            if is_better(val, best) {
+                best = val;
+                best_idx = d as isize;
+            }
+        }
+        (from_f32(best), best_idx)
+    };
+
+    #[cfg(feature = "rayon")]
+    let (values, indices): (Vec<E>, Vec<isize>) = if out_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+        (0..out_size).into_par_iter().map(&find).unzip()
+    } else {
+        (0..out_size).map(find).unzip()
+    };
+
+    #[cfg(not(feature = "rayon"))]
+    let (values, indices): (Vec<E>, Vec<isize>) = (0..out_size).map(find).unzip();
 
     let val_tensor = FlexTensor::new(
         Bytes::from_elems(values),
@@ -1534,258 +1495,6 @@ fn min_dim_with_indices_float_impl<E: num_traits::Float + Element + bytemuck::Po
         INDEX_DTYPE,
     );
     (val_tensor, idx_tensor)
-}
-
-fn max_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> (FlexTensor, FlexTensor) {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-    let cap = outer_size.max(1) * inner_size.max(1);
-
-    let mut values: Vec<E> = Vec::with_capacity(cap);
-    let mut indices: Vec<isize> = Vec::with_capacity(cap);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut max_val = data[first_idx];
-            let mut max_idx: isize = 0;
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if val > max_val {
-                    max_val = val;
-                    max_idx = d as isize;
-                }
-            }
-            values.push(max_val);
-            indices.push(max_idx);
-        }
-    }
-
-    let val_tensor = FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape.clone())),
-        E::dtype(),
-    );
-    let idx_tensor = FlexTensor::new(
-        Bytes::from_elems(indices),
-        Layout::contiguous(Shape::from(out_shape)),
-        INDEX_DTYPE,
-    );
-    (val_tensor, idx_tensor)
-}
-
-fn min_dim_with_indices_impl<E: Element + bytemuck::Pod + PartialOrd>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> (FlexTensor, FlexTensor) {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-    let cap = outer_size.max(1) * inner_size.max(1);
-
-    let mut values: Vec<E> = Vec::with_capacity(cap);
-    let mut indices: Vec<isize> = Vec::with_capacity(cap);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut min_val = data[first_idx];
-            let mut min_idx: isize = 0;
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if val < min_val {
-                    min_val = val;
-                    min_idx = d as isize;
-                }
-            }
-            values.push(min_val);
-            indices.push(min_idx);
-        }
-    }
-
-    let val_tensor = FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape.clone())),
-        E::dtype(),
-    );
-    let idx_tensor = FlexTensor::new(
-        Bytes::from_elems(indices),
-        Layout::contiguous(Shape::from(out_shape)),
-        INDEX_DTYPE,
-    );
-    (val_tensor, idx_tensor)
-}
-
-fn max_dim_f16(tensor: &FlexTensor, dim: usize, _values_only: bool) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[f16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut values: Vec<f16> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut max_val = data[first_idx].to_f32();
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx].to_f32();
-                if val.is_nan() || val > max_val {
-                    max_val = val;
-                }
-            }
-            values.push(f16::from_f32(max_val));
-        }
-    }
-
-    FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::F16,
-    )
-}
-
-fn min_dim_f16(tensor: &FlexTensor, dim: usize, _values_only: bool) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[f16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut values: Vec<f16> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut min_val = data[first_idx].to_f32();
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx].to_f32();
-                if val.is_nan() || val < min_val {
-                    min_val = val;
-                }
-            }
-            values.push(f16::from_f32(min_val));
-        }
-    }
-
-    FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::F16,
-    )
-}
-
-fn max_dim_bf16(tensor: &FlexTensor, dim: usize, _values_only: bool) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[bf16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut values: Vec<bf16> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut max_val = data[first_idx].to_f32();
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx].to_f32();
-                if val.is_nan() || val > max_val {
-                    max_val = val;
-                }
-            }
-            values.push(bf16::from_f32(max_val));
-        }
-    }
-
-    FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::BF16,
-    )
-}
-
-fn min_dim_bf16(tensor: &FlexTensor, dim: usize, _values_only: bool) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-    let data: &[bf16] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut values: Vec<bf16> = Vec::with_capacity(outer_size.max(1) * inner_size.max(1));
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let first_idx = start_offset + outer * dim_size * inner_size + inner;
-            let mut min_val = data[first_idx].to_f32();
-            for d in 1..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx].to_f32();
-                if val.is_nan() || val < min_val {
-                    min_val = val;
-                }
-            }
-            values.push(bf16::from_f32(min_val));
-        }
-    }
-
-    FlexTensor::new(
-        Bytes::from_elems(values),
-        Layout::contiguous(Shape::from(out_shape)),
-        DType::BF16,
-    )
 }
 
 // ============================================================================
@@ -1819,276 +1528,6 @@ fn scalar_div_bf16(mut tensor: FlexTensor, divisor: f32) -> FlexTensor {
     tensor
 }
 
-// ============================================================================
-// Argmax / Argmin implementations
-// ============================================================================
-
-fn argmax_impl<E: Element + bytemuck::Pod + PartialOrd>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(
-        dim < ndims,
-        "dim {} out of bounds for {} dimensions",
-        dim,
-        ndims
-    );
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<isize> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut max_idx: isize = 0;
-            let mut max_val: Option<E> = None;
-
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if max_val.is_none() || val > max_val.unwrap() {
-                    max_val = Some(val);
-                    max_idx = d as isize;
-                }
-            }
-            result.push(max_idx);
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    FlexTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        INDEX_DTYPE,
-    )
-}
-
-/// Arg-extremum for half-precision types, comparing via f32 conversion.
-///
-/// `is_better` returns true when `new` should replace `current` (e.g., `>` for argmax, `<` for argmin).
-fn argext_half<E: Element + bytemuck::Pod>(
-    tensor: &FlexTensor,
-    dim: usize,
-    is_better: fn(f32, f32) -> bool,
-    to_f32: fn(E) -> f32,
-) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(dim < ndims);
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<isize> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut best_idx: isize = 0;
-            let mut best_val: Option<f32> = None;
-
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = to_f32(data[idx]);
-                if best_val.is_none() || is_better(val, best_val.unwrap()) {
-                    best_val = Some(val);
-                    best_idx = d as isize;
-                }
-            }
-            result.push(best_idx);
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    FlexTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        INDEX_DTYPE,
-    )
-}
-
-fn argmin_impl<E: Element + bytemuck::Pod + PartialOrd>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(
-        dim < ndims,
-        "dim {} out of bounds for {} dimensions",
-        dim,
-        ndims
-    );
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<isize> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut min_idx: isize = 0;
-            let mut min_val: Option<E> = None;
-
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if min_val.is_none() || val < min_val.unwrap() {
-                    min_val = Some(val);
-                    min_idx = d as isize;
-                }
-            }
-            result.push(min_idx);
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    FlexTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        INDEX_DTYPE,
-    )
-}
-
-/// Float-specific argmax that propagates NaN.
-fn argmax_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(
-        dim < ndims,
-        "dim {} out of bounds for {} dimensions",
-        dim,
-        ndims
-    );
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<isize> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut max_idx: isize = 0;
-            let mut max_val: Option<E> = None;
-
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if max_val.is_none() || val.is_nan() || val > max_val.unwrap() {
-                    max_val = Some(val);
-                    max_idx = d as isize;
-                }
-            }
-            result.push(max_idx);
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    FlexTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        INDEX_DTYPE,
-    )
-}
-
-/// Float-specific argmin that propagates NaN.
-fn argmin_float_impl<E: num_traits::Float + Element + bytemuck::Pod>(
-    tensor: &FlexTensor,
-    dim: usize,
-) -> FlexTensor {
-    let tensor = tensor.to_contiguous();
-    let shape = tensor.layout().shape();
-    let ndims = shape.num_dims();
-
-    assert!(
-        dim < ndims,
-        "dim {} out of bounds for {} dimensions",
-        dim,
-        ndims
-    );
-
-    let dim_size = shape[dim];
-    let mut out_shape: Vec<usize> = shape.to_vec();
-    out_shape[dim] = 1;
-    let out_size: usize = out_shape.iter().product();
-
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size: usize = shape[dim + 1..].iter().product();
-
-    let data: &[E] = tensor.storage();
-    let start_offset = tensor.layout().start_offset();
-
-    let mut result: Vec<isize> = Vec::with_capacity(out_size);
-
-    for outer in 0..outer_size.max(1) {
-        for inner in 0..inner_size.max(1) {
-            let mut min_idx: isize = 0;
-            let mut min_val: Option<E> = None;
-
-            for d in 0..dim_size {
-                let idx = start_offset + outer * dim_size * inner_size + d * inner_size + inner;
-                let val = data[idx];
-                if min_val.is_none() || val.is_nan() || val < min_val.unwrap() {
-                    min_val = Some(val);
-                    min_idx = d as isize;
-                }
-            }
-            result.push(min_idx);
-        }
-    }
-
-    let bytes = Bytes::from_elems(result);
-    FlexTensor::new(
-        bytes,
-        Layout::contiguous(Shape::from(out_shape)),
-        INDEX_DTYPE,
-    )
-}
 
 // ============================================================================
 // Tests
