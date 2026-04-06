@@ -1787,6 +1787,90 @@ mod tests {
     }
 
     #[test]
+    fn test_conv1d_direct_path_f64() {
+        let c_in = 64;
+        let c_out = 16;
+        let in_w = 50;
+        let kw = 3;
+        let stride = 2;
+        let out_w = (in_w - kw) / stride + 1;
+
+        let x_data: Vec<f64> = (0..c_in * in_w)
+            .map(|i| ((i % 100) as f64 / 100.0) - 0.5)
+            .collect();
+        let w_data: Vec<f64> = (0..c_out * c_in * kw)
+            .map(|i| ((i % 50) as f64 / 50.0) - 0.5)
+            .collect();
+
+        let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![1, c_in, in_w]));
+        let weight =
+            FlexTensor::from_data(TensorData::new(w_data.clone(), vec![c_out, c_in, kw]));
+        let options = ConvOptions::new([stride], [0], [1], 1);
+        let result = conv1d_f64(x, weight, None, &options);
+        let out: Vec<f64> = result.into_data().to_vec().unwrap();
+
+        for co in 0..c_out {
+            for o in 0..out_w {
+                let mut expected = 0.0f64;
+                for ci in 0..c_in {
+                    for k in 0..kw {
+                        expected +=
+                            w_data[co * c_in * kw + ci * kw + k] * x_data[ci * in_w + o * stride + k];
+                    }
+                }
+                let actual = out[co * out_w + o];
+                assert!(
+                    (actual - expected).abs() < 1e-10,
+                    "f64 mismatch at co={co}, o={o}: expected {expected}, got {actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_conv1d_direct_path_with_bias() {
+        let c_in = 64;
+        let c_out = 32;
+        let in_w = 50;
+        let kw = 2;
+        let stride = 2;
+        let out_w = (in_w - kw) / stride + 1;
+
+        let x_data: Vec<f32> = (0..c_in * in_w)
+            .map(|i| ((i % 100) as f32 / 100.0) - 0.5)
+            .collect();
+        let w_data: Vec<f32> = (0..c_out * c_in * kw)
+            .map(|i| ((i % 50) as f32 / 50.0) - 0.5)
+            .collect();
+        let bias_data: Vec<f32> = (0..c_out).map(|i| i as f32 * 0.1).collect();
+
+        let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![1, c_in, in_w]));
+        let weight =
+            FlexTensor::from_data(TensorData::new(w_data.clone(), vec![c_out, c_in, kw]));
+        let bias = FlexTensor::from_data(TensorData::new(bias_data.clone(), vec![c_out]));
+        let options = ConvOptions::new([stride], [0], [1], 1);
+        let result = conv1d_f32(x, weight, Some(bias), &options);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        for co in 0..c_out {
+            for o in 0..out_w {
+                let mut expected = bias_data[co];
+                for ci in 0..c_in {
+                    for k in 0..kw {
+                        expected +=
+                            w_data[co * c_in * kw + ci * kw + k] * x_data[ci * in_w + o * stride + k];
+                    }
+                }
+                let actual = out[co * out_w + o];
+                assert!(
+                    (actual - expected).abs() < 1e-3,
+                    "bias mismatch at co={co}, o={o}: expected {expected}, got {actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_conv2d_simple() {
         let x_data: Vec<f32> = (1..=16).map(|x| x as f32).collect();
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 1, 4, 4]));
