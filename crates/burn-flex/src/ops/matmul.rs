@@ -613,69 +613,48 @@ fn matmul_batched_i32(lhs: FlexTensor, rhs: FlexTensor) -> FlexTensor {
         }
     }
 
+    let mut output = vec![0i32; batch_size * out_matrix_size];
+
+    let run_one = |b: usize, out_slice: &mut [i32]| {
+        let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
+        let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
+        let lhs_offset = lhs_batch_idx * lhs_matrix_size;
+        let rhs_t_offset = rhs_batch_idx * n * k;
+
+        let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
+        let rhs_t_slice = &rhs_transposed[rhs_t_offset..rhs_t_offset + n * k];
+
+        for i in 0..m {
+            let lhs_row = &lhs_slice[i * k..(i + 1) * k];
+            for j in 0..n {
+                let rhs_col = &rhs_t_slice[j * k..(j + 1) * k];
+                out_slice[i * n + j] = dot_i32(lhs_row, rhs_col);
+            }
+        }
+    };
+
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
-
-        let mut output = vec![0i32; batch_size * out_matrix_size];
-
         output
             .par_chunks_mut(out_matrix_size)
             .enumerate()
-            .for_each(|(b, out_slice)| {
-                let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-                let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
-                let lhs_offset = lhs_batch_idx * lhs_matrix_size;
-                let rhs_t_offset = rhs_batch_idx * n * k;
-
-                let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
-                let rhs_t_slice = &rhs_transposed[rhs_t_offset..rhs_t_offset + n * k];
-
-                for i in 0..m {
-                    let lhs_row = &lhs_slice[i * k..(i + 1) * k];
-                    for j in 0..n {
-                        let rhs_col = &rhs_t_slice[j * k..(j + 1) * k];
-                        out_slice[i * n + j] = dot_i32(lhs_row, rhs_col);
-                    }
-                }
-            });
-
-        FlexTensor::new(
-            Bytes::from_elems(output),
-            Layout::contiguous(out_shape),
-            DType::I32,
-        )
+            .for_each(|(b, out_slice)| run_one(b, out_slice));
     }
 
     #[cfg(not(feature = "rayon"))]
     {
-        let mut output = vec![0i32; batch_size * out_matrix_size];
-
         for b in 0..batch_size {
-            let lhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &lhs_strides);
-            let rhs_batch_idx = batch_index_to_offset(b, &broadcast_shape, &rhs_strides);
-            let lhs_offset = lhs_batch_idx * lhs_matrix_size;
-            let rhs_t_offset = rhs_batch_idx * n * k;
-            let out_offset = b * out_matrix_size;
-
-            let lhs_slice = &lhs_data[lhs_offset..lhs_offset + lhs_matrix_size];
-            let rhs_t_slice = &rhs_transposed[rhs_t_offset..rhs_t_offset + n * k];
-
-            for i in 0..m {
-                let lhs_row = &lhs_slice[i * k..(i + 1) * k];
-                for j in 0..n {
-                    let rhs_col = &rhs_t_slice[j * k..(j + 1) * k];
-                    output[out_offset + i * n + j] = dot_i32(lhs_row, rhs_col);
-                }
-            }
+            let offset = b * out_matrix_size;
+            run_one(b, &mut output[offset..offset + out_matrix_size]);
         }
-
-        FlexTensor::new(
-            Bytes::from_elems(output),
-            Layout::contiguous(out_shape),
-            DType::I32,
-        )
     }
+
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(out_shape),
+        DType::I32,
+    )
 }
 
 /// i64 matmul using naive triple loop.
