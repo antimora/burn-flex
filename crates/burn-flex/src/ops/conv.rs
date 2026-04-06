@@ -62,14 +62,14 @@ macro_rules! bf16_via_f32 {
 
 /// Generates a conv3d_1x1 function that uses the optimized gemm fast path.
 macro_rules! conv3d_1x1_typed {
-    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr) => {
+    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $one:expr, $add_fn:expr) => {
         fn $fn_name(
             x: FlexTensor,
             weight: FlexTensor,
             bias: Option<FlexTensor>,
             options: &ConvOptions<3>,
         ) -> FlexTensor {
-            conv3d_1x1_impl::<$T>(x, weight, bias, options, $dtype, $zero, $gemm_fn, $add_fn)
+            conv3d_1x1_impl::<$T>(x, weight, bias, options, $dtype, $zero, $one, $add_fn)
         }
     };
 }
@@ -657,10 +657,12 @@ fn is_1x1_conv(
         && options.padding == [0, 0, 0]
 }
 
-/// Optimized 1x1 convolution: skip im2col, use gemm directly.
+/// Optimized 1x1 convolution: skip im2col, call gemm directly on NCHW data.
 ///
-/// For 1x1 conv, im2col just transposes input to [spatial, channels] layout.
-/// We do the same transpose but avoid the full im2col kernel iteration overhead.
+/// For 1x1 conv with stride=1 and padding=0, the input for each (batch, group) is
+/// already [channels_per_group, spatial] row-major in NCHW layout. We pass it directly
+/// to gemm as the RHS with appropriate strides, avoiding the transpose allocation
+/// and the intermediate result buffer.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + Sync>(
     x: FlexTensor,
@@ -669,7 +671,7 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
     options: &ConvOptions<3>,
     dtype: DType,
     zero: T,
-    gemm_fn: fn(&[T], &[T], usize, usize, usize) -> Vec<T>,
+    one: T,
     add_fn: fn(T, T) -> T,
 ) -> FlexTensor {
     let x = x.to_contiguous();
@@ -687,93 +689,105 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
     let groups = options.groups;
     let out_channels_per_group = channels_out / groups;
 
+    let m = out_channels_per_group;
+    let k = channels_per_group;
+    let n = spatial;
+
     let x_data: &[T] = x.storage();
     let w_data: &[T] = weight.storage();
 
-    let output = {
+    // Gemm: C[M,N] = W[M,K] * X[K,N]
+    // W is [out_channels_per_group, channels_per_group] row-major
+    // X is [channels_per_group, spatial] row-major (directly from NCHW layout)
+    // C is [out_channels_per_group, spatial] row-major
+    #[cfg(feature = "rayon")]
+    let parallelism = if m * n * k >= 192 * 192 * 192 {
+        gemm::Parallelism::Rayon(0)
+    } else {
+        gemm::Parallelism::None
+    };
+    #[cfg(not(feature = "rayon"))]
+    let parallelism = gemm::Parallelism::None;
+
+    let mut output = vec![zero; batch_size * channels_out * spatial];
+
+    {
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
-            let mut dst = vec![zero; batch_size * channels_out * spatial];
-            let dst_ptr = crate::ops::SendMutPtr::new(dst.as_mut_ptr());
+            let dst_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
 
             (0..batch_size).into_par_iter().for_each(|b| {
                 for g in 0..groups {
-                    let in_c_start = g * channels_per_group;
-                    let out_c_start = g * out_channels_per_group;
+                    let x_offset = b * channels_in * spatial + g * k * spatial;
+                    let w_offset = g * out_channels_per_group * k;
+                    let out_offset =
+                        b * channels_out * spatial + g * out_channels_per_group * spatial;
 
-                    // Build X transposed: [spatial, channels_per_group]
-                    let mut x_t = vec![zero; spatial * channels_per_group];
-                    for c in 0..channels_per_group {
-                        let src_offset = b * channels_in * spatial + (in_c_start + c) * spatial;
-                        for s in 0..spatial {
-                            x_t[s * channels_per_group + c] = x_data[src_offset + s];
-                        }
-                    }
-
-                    // W[out_channels_per_group, channels_per_group], X_T[spatial, channels_per_group]
-                    let w_offset = out_c_start * channels_per_group;
-                    let w_slice =
-                        &w_data[w_offset..w_offset + out_channels_per_group * channels_per_group];
-                    let result = gemm_fn(
-                        w_slice,
-                        &x_t,
-                        out_channels_per_group,
-                        channels_per_group,
-                        spatial,
-                    );
-
-                    // Write result to output
-                    let out_offset = b * channels_out * spatial + out_c_start * spatial;
                     unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            result.as_ptr(),
+                        gemm::gemm(
+                            m,
+                            n,
+                            k,
                             dst_ptr.ptr_add(out_offset),
-                            out_channels_per_group * spatial,
+                            1,          // dst_cs
+                            n as isize, // dst_rs
+                            false,      // read_dst
+                            w_data.as_ptr().add(w_offset),
+                            1,          // lhs_cs: W row-major
+                            k as isize, // lhs_rs
+                            x_data.as_ptr().add(x_offset),
+                            1,          // rhs_cs: X row-major
+                            n as isize, // rhs_rs
+                            zero,
+                            one,
+                            false,
+                            false,
+                            false,
+                            parallelism,
                         );
                     }
                 }
             });
-            dst
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let mut output = vec![zero; batch_size * channels_out * spatial];
             for b in 0..batch_size {
                 for g in 0..groups {
-                    let in_c_start = g * channels_per_group;
-                    let out_c_start = g * out_channels_per_group;
+                    let x_offset = b * channels_in * spatial + g * k * spatial;
+                    let w_offset = g * out_channels_per_group * k;
+                    let out_offset =
+                        b * channels_out * spatial + g * out_channels_per_group * spatial;
 
-                    let mut x_t = vec![zero; spatial * channels_per_group];
-                    for c in 0..channels_per_group {
-                        let src_offset = b * channels_in * spatial + (in_c_start + c) * spatial;
-                        for s in 0..spatial {
-                            x_t[s * channels_per_group + c] = x_data[src_offset + s];
-                        }
+                    unsafe {
+                        gemm::gemm(
+                            m,
+                            n,
+                            k,
+                            output.as_mut_ptr().add(out_offset),
+                            1,
+                            n as isize,
+                            false,
+                            w_data.as_ptr().add(w_offset),
+                            1,
+                            k as isize,
+                            x_data.as_ptr().add(x_offset),
+                            1,
+                            n as isize,
+                            zero,
+                            one,
+                            false,
+                            false,
+                            false,
+                            parallelism,
+                        );
                     }
-
-                    let w_offset = out_c_start * channels_per_group;
-                    let w_slice =
-                        &w_data[w_offset..w_offset + out_channels_per_group * channels_per_group];
-                    let result = gemm_fn(
-                        w_slice,
-                        &x_t,
-                        out_channels_per_group,
-                        channels_per_group,
-                        spatial,
-                    );
-
-                    let out_offset = b * channels_out * spatial + out_c_start * spatial;
-                    output[out_offset..out_offset + out_channels_per_group * spatial]
-                        .copy_from_slice(&result);
                 }
             }
-            output
         }
-    };
+    }
 
     if let Some(bias) = bias {
-        let mut output = output;
         let bias = bias.to_contiguous();
         let bias_data: &[T] = bias.storage();
         add_bias(
@@ -784,44 +798,32 @@ fn conv3d_1x1_impl<T: bytemuck::Pod + Clone + Copy + burn_backend::Element + Sen
             spatial,
             add_fn,
         );
-        let out_shape = Shape::from(vec![
-            batch_size,
-            channels_out,
-            x_shape[2],
-            x_shape[3],
-            x_shape[4],
-        ]);
-        FlexTensor::new(
-            Bytes::from_elems(output),
-            Layout::contiguous(out_shape),
-            dtype,
-        )
-    } else {
-        let out_shape = Shape::from(vec![
-            batch_size,
-            channels_out,
-            x_shape[2],
-            x_shape[3],
-            x_shape[4],
-        ]);
-        FlexTensor::new(
-            Bytes::from_elems(output),
-            Layout::contiguous(out_shape),
-            dtype,
-        )
     }
+
+    let out_shape = Shape::from(vec![
+        batch_size,
+        channels_out,
+        x_shape[2],
+        x_shape[3],
+        x_shape[4],
+    ]);
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(out_shape),
+        dtype,
+    )
 }
 
-conv3d_1x1_typed!(conv3d_1x1_f32, f32, DType::F32, 0.0f32, gemm_f32, |a, b| a
+conv3d_1x1_typed!(conv3d_1x1_f32, f32, DType::F32, 0.0f32, 1.0f32, |a, b| a
     + b);
-conv3d_1x1_typed!(conv3d_1x1_f64, f64, DType::F64, 0.0f64, gemm_f64, |a, b| a
+conv3d_1x1_typed!(conv3d_1x1_f64, f64, DType::F64, 0.0f64, 1.0f64, |a, b| a
     + b);
 conv3d_1x1_typed!(
     conv3d_1x1_f16,
     f16,
     DType::F16,
     f16::from_f32(0.0),
-    gemm_f16,
+    f16::from_f32(1.0),
     |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32())
 );
 

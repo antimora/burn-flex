@@ -184,18 +184,20 @@ with no copy. Fixed in [antimora/burn-flex#49](https://github.com/antimora/burn-
 
 | Layer                         | Flex        | Candle  | Ratio        |
 | ----------------------------- | ----------- | ------- | ------------ |
-| resnet_conv1 1×3×224² k7 s2   | **872 µs**  | 1.10 ms | **1.27×**    |
-| resnet_l1 1×64×56² k3         | **942 µs**  | 1.28 ms | **1.36×**    |
-| resnet_l2 1×128×28² k3        | **1.03 ms** | 1.90 ms | **1.85×**    |
-| resnet_l3 1×256×14² k3        | **1.47 ms** | 2.20 ms | **1.49×**    |
-| resnet_l4 1×512×7² k3         | **2.35 ms** | 3.08 ms | **1.31×**    |
-| 1×1 pointwise 1×256×56² → 64  | 2.23 ms     | 1.52 ms | 0.68×        |
+| resnet_conv1 1×3×224² k7 s2   | **878 µs**  | 1.14 ms | **1.30×**    |
+| resnet_l1 1×64×56² k3         | **925 µs**  | 1.25 ms | **1.35×**    |
+| resnet_l2 1×128×28² k3        | **978 µs**  | 1.87 ms | **1.91×**    |
+| resnet_l3 1×256×14² k3        | **1.53 ms** | 2.10 ms | **1.37×**    |
+| resnet_l4 1×512×7² k3         | **2.40 ms** | 3.13 ms | **1.30×**    |
+| 1×1 pointwise 1×256×56² → 64  | **405 µs**  | 1.38 ms | **3.41×**    |
 | conv_transpose 1×128×16² → 64 | **602 µs**  | 1.37 ms | **2.27×** |
 | conv_transpose 1×64×32² → 32  | **838 µs**  | 1.72 ms | **2.05×** |
 
-Flex wins every standard 3×3 conv2d layer and conv_transpose2d (2x faster after GEMM + col2im
-rewrite in [antimora/burn-flex#46](https://github.com/antimora/burn-flex/pull/46)); 1×1 pointwise
-is where candle's direct gemm is sharper.
+Flex wins every conv2d layer and conv_transpose2d. The 1×1 pointwise fast path skips im2col
+entirely and calls gemm directly on the NCHW input with correct strides, avoiding the transpose
+buffer (fixed in [antimora/burn-flex#44](https://github.com/antimora/burn-flex/issues/44)).
+Conv_transpose2d is 2x faster after GEMM + col2im rewrite in
+[antimora/burn-flex#46](https://github.com/antimora/burn-flex/pull/46).
 
 ### Pool2d
 
@@ -304,8 +306,6 @@ Surfaced by the broader coverage pass. Ordered by impact on real workloads.
    [antimora/burn-flex#34](https://github.com/antimora/burn-flex/issues/34).
 2. **where_cond / mask_where: 2× slower** (248 µs vs 122 µs). Elementwise select.
 3. **nearest2d upsample: ~2× slower** (56 µs vs 30 µs). Low absolute cost.
-4. **conv2d 1×1 pointwise: 1.5× slower** (2.23 ms vs 1.52 ms). Candle takes a direct gemm path for
-   pointwise; flex's im2col adds overhead.
 
 Fixed since the first pass:
 - batched matmul on transposed-view input (was 4x slower at small seqs; now 1.4x faster), fixed in
@@ -320,6 +320,8 @@ Fixed since the first pass:
   [antimora/burn-flex#50](https://github.com/antimora/burn-flex/pull/50).
 - index_select at 1024² (was 2.8× slower; now 1.4× faster), fixed in
   [antimora/burn-flex#51](https://github.com/antimora/burn-flex/pull/51).
+- conv2d 1×1 pointwise (was 1.5× slower; now 3.4× faster), fixed in
+  [antimora/burn-flex#44](https://github.com/antimora/burn-flex/issues/44).
 
 ---
 
