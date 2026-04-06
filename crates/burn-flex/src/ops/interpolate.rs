@@ -861,8 +861,9 @@ where
     let bc = batch * channels;
 
     // Each (batch, channel) plane is independent, so parallelize across planes.
+    // Gate on output size since the work is proportional to iterating output pixels.
     #[cfg(feature = "rayon")]
-    if in_numel >= super::PARALLEL_THRESHOLD {
+    if bc * out_hw >= super::PARALLEL_THRESHOLD {
         use rayon::prelude::*;
 
         input_grad
