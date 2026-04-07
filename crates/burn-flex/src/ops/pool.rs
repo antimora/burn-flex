@@ -235,64 +235,66 @@ where
             let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
             let idx_ptr = crate::ops::SendMutPtr::new(indices.as_mut_ptr());
 
-            (0..batch_size).into_par_iter().for_each(|b| {
-                (0..channels).into_par_iter().for_each(|c| {
-                    let x_offset = b * channels * in_d * in_h * in_w + c * in_d * in_h * in_w;
-                    let out_offset = b * channels * spatial_out + c * spatial_out;
+            // Flatten batch*channels into a single par_iter so rayon chooses
+            // the right granularity instead of creating one task per channel.
+            let bc_total = batch_size * channels;
+            (0..bc_total).into_par_iter().for_each(|bc| {
+                let b = bc / channels;
+                let c = bc % channels;
+                let x_offset = b * channels * in_d * in_h * in_w + c * in_d * in_h * in_w;
+                let out_offset = bc * spatial_out;
 
-                    for od in 0..out_d {
-                        for oh in 0..out_h {
-                            for ow in 0..out_w {
-                                let out_idx = out_offset + od * out_h * out_w + oh * out_w + ow;
-                                let mut max_val = neg_inf;
-                                let mut max_idx: i64 = -1;
+                for od in 0..out_d {
+                    for oh in 0..out_h {
+                        for ow in 0..out_w {
+                            let out_idx = out_offset + od * out_h * out_w + oh * out_w + ow;
+                            let mut max_val = neg_inf;
+                            let mut max_idx: i64 = -1;
 
-                                for kd in 0..kernel_d {
-                                    let id =
-                                        (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
-                                    if id < 0 || id >= in_d as isize {
+                            for kd in 0..kernel_d {
+                                let id =
+                                    (od * stride_d + kd * dilation_d) as isize - pad_d as isize;
+                                if id < 0 || id >= in_d as isize {
+                                    continue;
+                                }
+                                let id = id as usize;
+
+                                for kh in 0..kernel_h {
+                                    let ih = (oh * stride_h + kh * dilation_h) as isize
+                                        - pad_h as isize;
+                                    if ih < 0 || ih >= in_h as isize {
                                         continue;
                                     }
-                                    let id = id as usize;
+                                    let ih = ih as usize;
 
-                                    for kh in 0..kernel_h {
-                                        let ih = (oh * stride_h + kh * dilation_h) as isize
-                                            - pad_h as isize;
-                                        if ih < 0 || ih >= in_h as isize {
+                                    for kw in 0..kernel_w {
+                                        let iw = (ow * stride_w + kw * dilation_w) as isize
+                                            - pad_w as isize;
+                                        if iw < 0 || iw >= in_w as isize {
                                             continue;
                                         }
-                                        let ih = ih as usize;
+                                        let iw = iw as usize;
 
-                                        for kw in 0..kernel_w {
-                                            let iw = (ow * stride_w + kw * dilation_w) as isize
-                                                - pad_w as isize;
-                                            if iw < 0 || iw >= in_w as isize {
-                                                continue;
-                                            }
-                                            let iw = iw as usize;
+                                        let x_idx =
+                                            x_offset + id * in_h * in_w + ih * in_w + iw;
+                                        let val = x_data[x_idx];
 
-                                            let x_idx =
-                                                x_offset + id * in_h * in_w + ih * in_w + iw;
-                                            let val = x_data[x_idx];
-
-                                            if max_idx < 0 || val > max_val {
-                                                max_val = val;
-                                                // Store flat index into input spatial dims
-                                                max_idx =
-                                                    (id * in_h * in_w + ih * in_w + iw) as i64;
-                                            }
+                                        if max_idx < 0 || val > max_val {
+                                            max_val = val;
+                                            max_idx =
+                                                (id * in_h * in_w + ih * in_w + iw) as i64;
                                         }
                                     }
                                 }
+                            }
 
-                                unsafe {
-                                    out_ptr.write(out_idx, max_val);
-                                    idx_ptr.write(out_idx, max_idx);
-                                }
+                            unsafe {
+                                out_ptr.write(out_idx, max_val);
+                                idx_ptr.write(out_idx, max_idx);
                             }
                         }
                     }
-                });
+                }
             });
             (output, indices)
         }
@@ -697,80 +699,77 @@ where
             let mut output = vec![zero; batch_size * channels * spatial_out];
             let out_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
 
-            (0..batch_size).into_par_iter().for_each(|b| {
-                (0..channels).into_par_iter().for_each(|c| {
-                    let x_offset = b * channels * in_d * in_h * in_w + c * in_d * in_h * in_w;
-                    let out_offset = b * channels * spatial_out + c * spatial_out;
+            let bc_total = batch_size * channels;
+            (0..bc_total).into_par_iter().for_each(|bc| {
+                let b = bc / channels;
+                let c = bc % channels;
+                let x_offset = b * channels * in_d * in_h * in_w + c * in_d * in_h * in_w;
+                let out_offset = bc * spatial_out;
 
-                    for od in 0..out_d {
-                        for oh in 0..out_h {
-                            for ow in 0..out_w {
-                                let out_idx = out_offset + od * out_h * out_w + oh * out_w + ow;
-                                let mut sum = zero;
-                                let mut count = 0usize;
+                for od in 0..out_d {
+                    for oh in 0..out_h {
+                        for ow in 0..out_w {
+                            let out_idx = out_offset + od * out_h * out_w + oh * out_w + ow;
+                            let mut sum = zero;
+                            let mut count = 0usize;
+                            let mut pad_count = 0usize;
 
-                                // Track count for count_include_pad (positions within padded bounds)
-                                let mut pad_count = 0usize;
+                            for kd in 0..kernel_d {
+                                let id = (od * stride_d + kd) as isize - pad_d as isize;
+                                let id_in_bounds =
+                                    id >= -(pad_d as isize) && id < (in_d + pad_d) as isize;
+                                if !id_in_bounds {
+                                    continue;
+                                }
+                                let id_valid = id >= 0 && id < in_d as isize;
 
-                                for kd in 0..kernel_d {
-                                    let id = (od * stride_d + kd) as isize - pad_d as isize;
-                                    // Check if within padded bounds (not ceil_mode extension)
-                                    let id_in_bounds =
-                                        id >= -(pad_d as isize) && id < (in_d + pad_d) as isize;
-                                    if !id_in_bounds {
-                                        continue; // ceil_mode extension - skip entirely
+                                for kh in 0..kernel_h {
+                                    let ih = (oh * stride_h + kh) as isize - pad_h as isize;
+                                    let ih_in_bounds =
+                                        ih >= -(pad_h as isize) && ih < (in_h + pad_h) as isize;
+                                    if !ih_in_bounds {
+                                        continue;
                                     }
-                                    let id_valid = id >= 0 && id < in_d as isize;
+                                    let ih_valid = ih >= 0 && ih < in_h as isize;
 
-                                    for kh in 0..kernel_h {
-                                        let ih = (oh * stride_h + kh) as isize - pad_h as isize;
-                                        let ih_in_bounds =
-                                            ih >= -(pad_h as isize) && ih < (in_h + pad_h) as isize;
-                                        if !ih_in_bounds {
+                                    for kw in 0..kernel_w {
+                                        let iw = (ow * stride_w + kw) as isize - pad_w as isize;
+                                        let iw_in_bounds = iw >= -(pad_w as isize)
+                                            && iw < (in_w + pad_w) as isize;
+                                        if !iw_in_bounds {
                                             continue;
                                         }
-                                        let ih_valid = ih >= 0 && ih < in_h as isize;
 
-                                        for kw in 0..kernel_w {
-                                            let iw = (ow * stride_w + kw) as isize - pad_w as isize;
-                                            let iw_in_bounds = iw >= -(pad_w as isize)
-                                                && iw < (in_w + pad_w) as isize;
-                                            if !iw_in_bounds {
-                                                continue;
-                                            }
+                                        pad_count += 1;
 
-                                            // Position is within padded bounds
-                                            pad_count += 1;
-
-                                            let iw_valid = iw >= 0 && iw < in_w as isize;
-                                            if !id_valid || !ih_valid || !iw_valid {
-                                                continue; // In padding zone - count but don't add
-                                            }
-
-                                            let id = id as usize;
-                                            let ih = ih as usize;
-                                            let iw = iw as usize;
-                                            let x_idx =
-                                                x_offset + id * in_h * in_w + ih * in_w + iw;
-                                            sum = add_fn(sum, x_data[x_idx]);
-                                            count += 1;
+                                        let iw_valid = iw >= 0 && iw < in_w as isize;
+                                        if !id_valid || !ih_valid || !iw_valid {
+                                            continue;
                                         }
+
+                                        let id = id as usize;
+                                        let ih = ih as usize;
+                                        let iw = iw as usize;
+                                        let x_idx =
+                                            x_offset + id * in_h * in_w + ih * in_w + iw;
+                                        sum = add_fn(sum, x_data[x_idx]);
+                                        count += 1;
                                     }
                                 }
+                            }
 
-                                let divisor = if count_include_pad {
-                                    pad_count.max(1) // Positions within padded bounds
-                                } else {
-                                    count.max(1) // Only actual valid positions
-                                };
+                            let divisor = if count_include_pad {
+                                pad_count.max(1)
+                            } else {
+                                count.max(1)
+                            };
 
-                                unsafe {
-                                    out_ptr.write(out_idx, div_fn(sum, divisor));
-                                }
+                            unsafe {
+                                out_ptr.write(out_idx, div_fn(sum, divisor));
                             }
                         }
                     }
-                });
+                }
             });
             output
         }

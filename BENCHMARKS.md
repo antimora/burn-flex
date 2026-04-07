@@ -35,10 +35,10 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Transposed
 
-| Operation | Size      | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| --------- | --------- | ------ | ------- | -------- | -------- | ----------- |
-| add       | 256x256   | 48.5 us | 46.0 us | 0.95x    | 262 KB   | 262 KB      |
-| add       | 1024x1024 | 1.00 ms | 990 us  | ~1x      | 4.19 MB  | 4.19 MB     |
+| Operation | Size      | Flex    | NdArray | Speedup | Flex Mem | NdArray Mem |
+| --------- | --------- | ------- | ------- | ------- | -------- | ----------- |
+| add       | 256x256   | 48.5 us | 46.0 us | 0.95x   | 262 KB   | 262 KB      |
+| add       | 1024x1024 | 1.00 ms | 990 us  | ~1x     | 4.19 MB  | 4.19 MB     |
 
 ---
 
@@ -58,35 +58,35 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Int Power
 
-| Operation       | Size     | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| --------------- | -------- | ------- | ------- | -------- | -------- | ----------- |
-| int_powi        | 256x256  | 95.6 us | 83.1 us | 0.87x    | 262 KB   | 524 KB      |
-| int_powi        | 1024x256 | 336 us  | 382 us  | **1.1x** | 1.05 MB  | 2.10 MB     |
+| Operation | Size     | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| --------- | -------- | ------- | ------- | -------- | -------- | ----------- |
+| int_powi  | 256x256  | 95.6 us | 83.1 us | 0.87x    | 262 KB   | 524 KB      |
+| int_powi  | 1024x256 | 336 us  | 382 us  | **1.1x** | 1.05 MB  | 2.10 MB     |
 
 ### Transposed (i64)
 
-| Operation | Size      | Flex    | NdArray | Speedup |
-| --------- | --------- | ------- | ------- | ------- |
-| int_add   | 256x256   | 55.6 us | 50.5 us | 0.91x   |
+| Operation | Size      | Flex    | NdArray | Speedup  |
+| --------- | --------- | ------- | ------- | -------- |
+| int_add   | 256x256   | 55.6 us | 50.5 us | 0.91x    |
 | int_add   | 1024x1024 | 996 us  | 1.10 ms | **1.1x** |
 
 ---
 
 ## Int Cast
 
-| Operation  | Size      | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| ---------- | --------- | ------ | ------- | -------- | -------- | ----------- |
-| i64 to i8  | 256x256   | 3.19 us | 20.2 us | **6.3x** | 65.6 KB  | 65.6 KB     |
-| i64 to i32 | 64x64     | 16.8 ns | 1.37 us | **82x**  | 16.0 B   | 16.4 KB     |
-| i64 to i32 | 256x256   | 13.6 ns | 20.0 us | **~1475x** | 16.0 B   | 262 KB      |
+| Operation  | Size      | Flex    | NdArray | Speedup     | Flex Mem | NdArray Mem |
+| ---------- | --------- | ------- | ------- | ----------- | -------- | ----------- |
+| i64 to i8  | 256x256   | 3.19 us | 20.2 us | **6.3x**    | 65.6 KB  | 65.6 KB     |
+| i64 to i32 | 64x64     | 16.8 ns | 1.37 us | **82x**     | 16.0 B   | 16.4 KB     |
+| i64 to i32 | 256x256   | 13.6 ns | 20.0 us | **~1475x**  | 16.0 B   | 262 KB      |
 | i64 to i32 | 1024x1024 | 13.6 ns | 352 us  | **~25963x** | 16.0 B   | 4.19 MB     |
 
 ---
 
 ## Int Random
 
-| Operation | Size       | Flex    | NdArray | Speedup |
-| --------- | ---------- | ------- | ------- | ------- |
+| Operation | Size       | Flex    | NdArray | Speedup  |
+| --------- | ---------- | ------- | ------- | -------- |
 | uniform   | 64x64      | 20.9 us | 31.6 us | **1.5x** |
 | uniform   | 256x256    | 334 us  | 510 us  | **1.5x** |
 | uniform   | 1024x1024  | 5.36 ms | 8.16 ms | **1.5x** |
@@ -108,11 +108,11 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Rectangular (f32)
 
-| Shape               | Flex   | NdArray | Speedup  |
-| ------------------- | ------ | ------- | -------- |
-| 512x64 x 64x512     | 167 us | 144 us  | 0.87x    |
-| 256x512 x 512x256   | 265 us | 266 us  | ~1x      |
-| 128x1024 x 1024x128 | 190 us | 199 us  | ~1x      |
+| Shape               | Flex   | NdArray | Speedup |
+| ------------------- | ------ | ------- | ------- |
+| 512x64 x 64x512     | 167 us | 144 us  | 0.87x   |
+| 256x512 x 512x256   | 265 us | 266 us  | ~1x     |
+| 128x1024 x 1024x128 | 190 us | 199 us  | ~1x     |
 
 ### Transposed (256x256)
 
@@ -124,17 +124,17 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Batched (f32)
 
-| Shape              | Flex   | NdArray | Speedup  |
-| ------------------ | ------ | ------- | -------- |
+| Shape              | Flex    | NdArray | Speedup  |
+| ------------------ | ------- | ------- | -------- |
 | 8x 64x64           | 57.6 us | 76.7 us | **1.3x** |
 | 32x 64x64          | 67.0 us | 111 us  | **1.7x** |
-| 16x 128x128        | 267 us | 540 us  | **2.0x** |
-| 12x 512x64 (heads) | 777 us | 1.71 ms | **2.2x** |
+| 16x 128x128        | 267 us  | 540 us  | **2.0x** |
+| 12x 512x64 (heads) | 777 us  | 1.71 ms | **2.2x** |
 
 ### Broadcast (f32)
 
-| Shape                     | Flex   | NdArray | Speedup  |
-| ------------------------- | ------ | ------- | -------- |
+| Shape                     | Flex    | NdArray | Speedup  |
+| ------------------------- | ------- | ------- | -------- |
 | [1,64,64] x [8,64,64]     | 47.9 us | 79.8 us | **1.7x** |
 | [8,64,64] x [1,64,64]     | 54.0 us | 78.5 us | **1.5x** |
 | [2,1,32,32] x [1,4,32,32] | 7.00 us | 40.0 us | **5.7x** |
@@ -181,19 +181,19 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Transposed Slicing
 
-| Size      | Flex   | NdArray | Speedup    |
-| --------- | ------ | ------- | ---------- |
+| Size      | Flex    | NdArray | Speedup    |
+| --------- | ------- | ------- | ---------- |
 | 256x256   | 98.2 ns | 7.98 us | **81x**    |
 | 1024x1024 | 98.2 ns | 232 us  | **~2363x** |
 
 ### Slice with Step
 
-| Operation | Size      | Flex  | NdArray | Speedup    |
-| --------- | --------- | ----- | ------- | ---------- |
+| Operation | Size      | Flex    | NdArray | Speedup    |
+| --------- | --------- | ------- | ------- | ---------- |
 | step2 1D  | 1K        | 87.1 ns | 360 ns  | **4.1x**   |
 | step2 1D  | 1M        | 76.7 ns | 142 us  | **~1849x** |
-| step2 2D  | 1024x1024 | 103 ns | 86.8 us | **~845x**  |
-| step4 2D  | 256x256   | 101 ns | 2.65 us | **26x**    |
+| step2 2D  | 1024x1024 | 103 ns  | 86.8 us | **~845x**  |
+| step4 2D  | 256x256   | 101 ns  | 2.65 us | **26x**    |
 
 ---
 
@@ -210,10 +210,10 @@ enabled (`std`, `simd`, `rayon`); `gemm` is a required dependency.
 
 ### Cat (dim 1, general path)
 
-| Tensors | Size    | Flex    | NdArray | Speedup   | Flex Mem | NdArray Mem |
-| ------- | ------- | ------- | ------- | --------- | -------- | ----------- |
-| 4x      | 256x64  | 6.92 us | 59.2 us | **8.6x**  | 263 KB   | 525 KB      |
-| 4x      | 1024x64 | 25.5 us | 366 us  | **14x**   | 1.05 MB  | 2.10 MB     |
+| Tensors | Size    | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| ------- | ------- | ------- | ------- | -------- | -------- | ----------- |
+| 4x      | 256x64  | 6.92 us | 59.2 us | **8.6x** | 263 KB   | 525 KB      |
+| 4x      | 1024x64 | 25.5 us | 366 us  | **14x**  | 1.05 MB  | 2.10 MB     |
 
 Dim-1 cat is much faster because NdArray's default uses N `slice_assign` calls while Flex copies
 contiguous chunks directly.
@@ -224,27 +224,27 @@ contiguous chunks directly.
 
 ### Full Tensor Sum
 
-| Size | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| ---- | ------ | ------- | -------- | -------- | ----------- |
-| 1K   | 118 ns | 156 ns  | **1.3x** | 76.2 B   | 44.0 B      |
+| Size | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| ---- | ------- | ------- | -------- | -------- | ----------- |
+| 1K   | 118 ns  | 156 ns  | **1.3x** | 76.2 B   | 44.0 B      |
 | 64K  | 3.23 us | 6.20 us | **1.9x** | 80.0 B   | 44.0 B      |
 | 1M   | 43.3 us | 97.0 us | **2.2x** | 84.0 B   | 44.0 B      |
 
 ### Full Tensor Max
 
-| Size | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| ---- | ------ | ------- | -------- | -------- | ----------- |
-| 1K   | 207 ns | 662 ns  | **3.2x** | 76.2 B   | 44.0 B      |
+| Size | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| ---- | ------- | ------- | -------- | -------- | ----------- |
+| 1K   | 207 ns  | 662 ns  | **3.2x** | 76.2 B   | 44.0 B      |
 | 64K  | 8.78 us | 32.5 us | **3.7x** | 84.0 B   | 44.0 B      |
-| 1M   | 139 us | 558 us  | **4.0x** | 84.0 B   | 44.0 B      |
+| 1M   | 139 us  | 558 us  | **4.0x** | 84.0 B   | 44.0 B      |
 
 ### Full Tensor Min
 
-| Size | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| ---- | ------ | ------- | -------- | -------- | ----------- |
-| 1K   | 278 ns | 579 ns  | **2.1x** | 84.0 B   | 44.0 B      |
+| Size | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| ---- | ------- | ------- | -------- | -------- | ----------- |
+| 1K   | 278 ns  | 579 ns  | **2.1x** | 84.0 B   | 44.0 B      |
 | 64K  | 9.15 us | 34.8 us | **3.8x** | 84.0 B   | 44.0 B      |
-| 1M   | 142 us | 540 us  | **3.8x** | 84.0 B   | 44.0 B      |
+| 1M   | 142 us  | 540 us  | **3.8x** | 84.0 B   | 44.0 B      |
 
 ### Int Max
 
@@ -264,9 +264,9 @@ contiguous chunks directly.
 
 ### 3D Sum (Batched)
 
-| Shape      | Dim | Flex   | NdArray | Speedup  |
-| ---------- | --- | ------ | ------- | -------- |
-| 32x256x256 | 1   | 156 us | 212 us  | **1.4x** |
+| Shape      | Dim | Flex    | NdArray | Speedup  |
+| ---------- | --- | ------- | ------- | -------- |
+| 32x256x256 | 1   | 156 us  | 212 us  | **1.4x** |
 | 32x256x256 | 2   | 86.2 us | 134 us  | **1.6x** |
 
 ### Sum Transposed
@@ -339,7 +339,7 @@ contiguous chunks directly.
 ### 3D Cumsum (Batched)
 
 | Shape    | Dim | Flex    | NdArray | Speedup  |
-| -------- | --- | ------ | ------- | -------- |
+| -------- | --- | ------- | ------- | -------- |
 | 32x64x64 | 1   | 24.1 us | 83.7 us | **3.5x** |
 | 32x64x64 | 2   | 68.0 us | 237 us  | **3.5x** |
 
@@ -372,17 +372,17 @@ contiguous chunks directly.
 
 ### Bool Select
 
-| Shape    | Indices | Flex    | NdArray | Speedup   | Flex Mem | NdArray Mem |
-| -------- | ------- | ------- | ------- | --------- | -------- | ----------- |
-| 256x256  | 128     | 935 ns  | 12.0 us | **13x**   | 33.9 KB  | 45.0 KB     |
-| 1024x256 | 512     | 2.89 us | 47.4 us | **16x**   | 135 KB   | 180 KB      |
+| Shape    | Indices | Flex    | NdArray | Speedup | Flex Mem | NdArray Mem |
+| -------- | ------- | ------- | ------- | ------- | -------- | ----------- |
+| 256x256  | 128     | 935 ns  | 12.0 us | **13x** | 33.9 KB  | 45.0 KB     |
+| 1024x256 | 512     | 2.89 us | 47.4 us | **16x** | 135 KB   | 180 KB      |
 
 ### Select Add
 
-| Shape     | Dim | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| --------- | --- | ------ | ------- | -------- | -------- | ----------- |
+| Shape     | Dim | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| --------- | --- | ------- | ------- | -------- | -------- | ----------- |
 | 256x256   | 0   | 7.35 us | 13.5 us | **1.8x** | 263 KB   | 263 KB      |
-| 1024x1024 | 0   | 103 us | 126 us  | **1.2x** | 4.20 MB  | 4.20 MB     |
+| 1024x1024 | 0   | 103 us  | 126 us  | **1.2x** | 4.20 MB  | 4.20 MB     |
 
 ---
 
@@ -430,34 +430,34 @@ contiguous chunks directly.
 
 ### Tensor-Tensor Comparisons
 
-| Operation | Size | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| --------- | ---- | ------ | ------- | -------- | -------- | ----------- |
-| greater   | 4K   | 1.03 us | 384 ns  | 0.37x    | 4.17 KB  | 4.14 KB     |
-| greater   | 64K  | 14.1 us | 5.56 us | 0.39x    | 65.6 KB  | 65.6 KB     |
-| greater   | 1M   | 218 us | 85.9 us | 0.39x    | 1.05 MB  | 1.05 MB     |
-| equal     | 4K   | 911 ns | 381 ns  | 0.42x    | 4.17 KB  | 4.14 KB     |
-| equal     | 1M   | 185 us | 83.7 us | 0.45x    | 1.05 MB  | 1.05 MB     |
-| lower     | 1M   | 119 us | 83.6 us | 0.70x    | 1.05 MB  | 1.05 MB     |
+| Operation | Size | Flex    | NdArray | Speedup | Flex Mem | NdArray Mem |
+| --------- | ---- | ------- | ------- | ------- | -------- | ----------- |
+| greater   | 4K   | 431 ns  | 398 ns  | ~1x     | 4.17 KB  | 4.14 KB     |
+| greater   | 64K  | 6.48 us | 5.73 us | ~1x     | 65.6 KB  | 65.6 KB     |
+| greater   | 1M   | 93 us   | 88 us   | ~1x     | 1.05 MB  | 1.05 MB     |
+| equal     | 4K   | 433 ns  | 403 ns  | ~1x     | 4.17 KB  | 4.14 KB     |
+| equal     | 1M   | 86 us   | 89 us   | ~1x     | 1.05 MB  | 1.05 MB     |
+| lower     | 1M   | 92 us   | 87 us   | ~1x     | 1.05 MB  | 1.05 MB     |
 
 ### Scalar Comparisons
 
-| Operation    | Size | Flex  | NdArray | Speedup  |
-| ------------ | ---- | ----- | ------- | -------- |
-| greater_elem | 1M   | 218 us | 73.7 us | 0.34x    |
+| Operation    | Size | Flex  | NdArray | Speedup   |
+| ------------ | ---- | ----- | ------- | --------- |
+| greater_elem | 1M   | 56 us | 76 us   | **1.36x** |
 
 ### Transposed Comparisons
 
-| Operation | Size      | Flex   | NdArray | Speedup |
-| --------- | --------- | ------ | ------- | ------- |
+| Operation | Size      | Flex    | NdArray | Speedup |
+| --------- | --------- | ------- | ------- | ------- |
 | greater   | 256x256   | 53.6 us | 43.7 us | 0.82x   |
-| greater   | 1024x1024 | 985 us | 990 us  | ~1x     |
+| greater   | 1024x1024 | 985 us  | 990 us  | ~1x     |
 
 ### Broadcast Comparisons
 
-| Operation | Shape     | Flex   | NdArray | Speedup  |
-| --------- | --------- | ------ | ------- | -------- |
+| Operation | Shape     | Flex    | NdArray | Speedup  |
+| --------- | --------- | ------- | ------- | -------- |
 | greater   | 256x256   | 7.98 us | 25.6 us | **3.2x** |
-| greater   | 1024x1024 | 120 us | 317 us  | **2.6x** |
+| greater   | 1024x1024 | 120 us  | 317 us  | **2.6x** |
 
 ### Expand (Broadcasting)
 
@@ -469,8 +469,8 @@ contiguous chunks directly.
 
 ### Boolean Operations
 
-| Operation | Size | Flex  | NdArray | Speedup |
-| --------- | ---- | ----- | ------- | ------- |
+| Operation | Size | Flex    | NdArray | Speedup |
+| --------- | ---- | ------- | ------- | ------- |
 | bool_not  | 1M   | 24.1 us | 19.0 us | 0.79x   |
 | bool_and  | 1M   | 34.6 us | 28.8 us | 0.83x   |
 
@@ -499,16 +499,16 @@ contiguous chunks directly.
 
 ### Small (batch=1, 3x3)
 
-| Input      | Channels | Flex   | NdArray | Speedup  |
-| ---------- | -------- | ------ | ------- | -------- |
+| Input      | Channels | Flex    | NdArray | Speedup  |
+| ---------- | -------- | ------- | ------- | -------- |
 | 1x3x32x32  | 3 to 16  | 71.3 us | 79.4 us | **1.1x** |
-| 1x16x32x32 | 16 to 32 | 219 us | 252 us  | **1.2x** |
-| 1x32x16x16 | 32 to 64 | 164 us | 338 us  | **2.1x** |
+| 1x16x32x32 | 16 to 32 | 219 us  | 252 us  | **1.2x** |
+| 1x32x16x16 | 32 to 64 | 164 us  | 338 us  | **2.1x** |
 
 ### Large Batched (batch=16, 3x3)
 
-| Input         | Channels   | Flex  | NdArray | Speedup  |
-| ------------- | ---------- | ----- | ------- | -------- |
+| Input         | Channels   | Flex    | NdArray | Speedup  |
+| ------------- | ---------- | ------- | ------- | -------- |
 | 16x64x128x128 | 64 to 128  | 79.8 ms | 180 ms  | **2.3x** |
 | 16x128x64x64  | 128 to 256 | 59.8 ms | 218 ms  | **3.7x** |
 
@@ -534,11 +534,11 @@ contiguous chunks directly.
 
 ### Max Pool 2D
 
-| Input        | Kernel | Flex   | NdArray | Speedup  |
-| ------------ | ------ | ------ | ------- | -------- |
-| 1x64x56x56   | 3x3 s2 | 135 us | 165 us  | **1.2x** |
-| 8x64x56x56   | 3x3 s2 | 683 us | 914 us  | **1.3x** |
-| 16x128x28x28 | 2x2 s2 | 406 us | 640 us  | **1.6x** |
+| Input        | Kernel | Flex    | NdArray | Speedup  |
+| ------------ | ------ | ------- | ------- | -------- |
+| 1x64x56x56   | 3x3 s2 | 135 us  | 165 us  | **1.2x** |
+| 8x64x56x56   | 3x3 s2 | 683 us  | 914 us  | **1.3x** |
+| 16x128x28x28 | 2x2 s2 | 406 us  | 640 us  | **1.6x** |
 | 1x512x14x14  | 2x2 s2 | 90.5 us | 106 us  | **1.2x** |
 
 ### Max Pool 2D (ResNet)
@@ -559,12 +559,12 @@ contiguous chunks directly.
 
 ### Adaptive Avg Pool 2D
 
-| Input       | Output | Flex   | NdArray | Speedup  |
-| ----------- | ------ | ------ | ------- | -------- |
-| 1x256x56x56 | 7x7    | 151 us | 142 us  | 0.94x    |
+| Input       | Output | Flex    | NdArray | Speedup  |
+| ----------- | ------ | ------- | ------- | -------- |
+| 1x256x56x56 | 7x7    | 151 us  | 142 us  | 0.94x    |
 | 1x512x7x7   | 1x1    | 63.7 us | 68.2 us | **1.1x** |
-| 8x512x7x7   | 1x1    | 112 us | 110 us  | ~1x      |
-| 16x2048x7x7 | 1x1    | 286 us | 289 us  | ~1x      |
+| 8x512x7x7   | 1x1    | 112 us  | 110 us  | ~1x      |
+| 16x2048x7x7 | 1x1    | 286 us  | 289 us  | ~1x      |
 
 ### Max Pool 1D
 
@@ -588,13 +588,13 @@ contiguous chunks directly.
 
 ### Conv Transpose 2D
 
-| Input          | Output | Flex    | NdArray | Speedup  |
-| -------------- | ------ | ------- | ------- | -------- |
-| 1x64x7x7       | 14x14  | 138 us  | 1.67 ms | **12x**  |
-| 1x128x14x14    | 28x28  | 533 us  | 12.9 ms | **24x**  |
-| 1x256x28x28    | 56x56  | 2.49 ms | 209 ms  | **84x**  |
-| 1x512x7x7 k3s1 | 7x7    | 1.01 ms | 52.6 ms | **52x**  |
-| 8x64x14x14     | 28x28  | 3.41 ms | 49.7 ms | **15x**  |
+| Input          | Output | Flex    | NdArray | Speedup |
+| -------------- | ------ | ------- | ------- | ------- |
+| 1x64x7x7       | 14x14  | 138 us  | 1.67 ms | **12x** |
+| 1x128x14x14    | 28x28  | 533 us  | 12.9 ms | **24x** |
+| 1x256x28x28    | 56x56  | 2.49 ms | 209 ms  | **84x** |
+| 1x512x7x7 k3s1 | 7x7    | 1.01 ms | 52.6 ms | **52x** |
+| 8x64x14x14     | 28x28  | 3.41 ms | 49.7 ms | **15x** |
 
 ### DCGAN Generator
 
@@ -607,18 +607,18 @@ contiguous chunks directly.
 
 ### Conv Transpose 1D
 
-| Input     | Flex    | NdArray | Speedup  |
-| --------- | ------- | ------- | -------- |
-| 1x64x32   | 17.5 us | 383 us  | **22x**  |
-| 8x128x64  | 433 us  | 9.02 ms | **21x**  |
-| 1x256x128 | 337 us  | 8.95 ms | **27x**  |
+| Input     | Flex    | NdArray | Speedup |
+| --------- | ------- | ------- | ------- |
+| 1x64x32   | 17.5 us | 383 us  | **22x** |
+| 8x128x64  | 433 us  | 9.02 ms | **21x** |
+| 1x256x128 | 337 us  | 8.95 ms | **27x** |
 
 ### Conv Transpose 3D
 
-| Input      | Output   | Flex    | NdArray | Speedup  |
-| ---------- | -------- | ------- | ------- | -------- |
-| 1x32x4x4x4 | 8x8x8    | 245 us  | 2.58 ms | **11x**  |
-| 1x64x8x8x8 | 16x16x16 | 1.41 ms | 47.4 ms | **34x**  |
+| Input      | Output   | Flex    | NdArray | Speedup |
+| ---------- | -------- | ------- | ------- | ------- |
+| 1x32x4x4x4 | 8x8x8    | 245 us  | 2.58 ms | **11x** |
+| 1x64x8x8x8 | 16x16x16 | 1.41 ms | 47.4 ms | **34x** |
 
 ---
 
@@ -626,8 +626,8 @@ contiguous chunks directly.
 
 ### Nearest
 
-| Input       | Output  | Flex  | NdArray | Speedup  |
-| ----------- | ------- | ----- | ------- | -------- |
+| Input       | Output  | Flex    | NdArray | Speedup  |
+| ----------- | ------- | ------- | ------- | -------- |
 | 1x3x64x64   | 128x128 | 22.7 us | 138 us  | **6.1x** |
 | 1x3x32x32   | 128x128 | 22.8 us | 143 us  | **6.3x** |
 | 1x3x256x256 | 128x128 | 22.5 us | 143 us  | **6.3x** |
@@ -636,13 +636,13 @@ contiguous chunks directly.
 
 ### Bilinear
 
-| Input       | Output  | Flex   | NdArray | Speedup  |
-| ----------- | ------- | ------ | ------- | -------- |
+| Input       | Output  | Flex    | NdArray | Speedup  |
+| ----------- | ------- | ------- | ------- | -------- |
 | 1x3x64x64   | 128x128 | 81.2 us | 161 us  | **2.0x** |
 | 1x3x32x32   | 128x128 | 86.5 us | 147 us  | **1.7x** |
 | 1x3x256x256 | 128x128 | 83.9 us | 157 us  | **1.9x** |
-| 8x3x64x64   | 128x128 | 181 us | 382 us  | **2.1x** |
-| 1x64x32x32  | 64x64   | 108 us | 309 us  | **2.8x** |
+| 8x3x64x64   | 128x128 | 181 us  | 382 us  | **2.1x** |
+| 1x64x32x32  | 64x64   | 108 us  | 309 us  | **2.8x** |
 
 ### Bicubic
 
@@ -680,8 +680,8 @@ contiguous chunks directly.
 
 ### Unfold (1D)
 
-| Input | Window | Step | Flex  | NdArray | Speedup      |
-| ----- | ------ | ---- | ----- | ------- | ------------ |
+| Input | Window | Step | Flex    | NdArray | Speedup      |
+| ----- | ------ | ---- | ------- | ------- | ------------ |
 | 1K    | 8      | 1    | 62.2 ns | 120 us  | **~1927x**   |
 | 64K   | 8      | 1    | 64.1 ns | 7.55 ms | **~117686x** |
 | 64K   | 64     | 1    | 62.2 ns | 8.04 ms | **~129295x** |
@@ -689,8 +689,8 @@ contiguous chunks directly.
 
 ### Unfold (2D/3D)
 
-| Shape    | Dim | Window | Step | Flex  | NdArray | Speedup     |
-| -------- | --- | ------ | ---- | ----- | ------- | ----------- |
+| Shape    | Dim | Window | Step | Flex    | NdArray | Speedup     |
+| -------- | --- | ------ | ---- | ------- | ------- | ----------- |
 | 256x256  | 1   | 8      | 1    | 68.7 ns | 871 us  | **~12685x** |
 | 256x256  | 1   | 32     | 16   | 62.5 ns | 57.7 us | **~924x**   |
 | 1024x256 | 1   | 8      | 1    | 62.8 ns | 3.28 ms | **~52182x** |
@@ -702,13 +702,13 @@ contiguous chunks directly.
 
 ### Small/Tiny Inputs
 
-| Input     | Config      | Flex    | NdArray | Speedup   |
-| --------- | ----------- | ------- | ------- | --------- |
-| 1x3x8x8   | 3 to 8, k3  | 8.72 us | 92.6 us | **11x**   |
-| 1x3x8x8   | no mask     | 7.98 us | 78.9 us | **9.9x**  |
-| 1x3x16x16 | 3 to 16, k3 | 36.4 us | 122 us  | **3.4x**  |
-| 1x3x16x16 | stride 2    | 10.2 us | 80.8 us | **7.9x**  |
-| 2x8x16x16 | 8 to 16, k3 | 116 us  | 246 us  | **2.1x**  |
+| Input     | Config      | Flex    | NdArray | Speedup  |
+| --------- | ----------- | ------- | ------- | -------- |
+| 1x3x8x8   | 3 to 8, k3  | 8.72 us | 92.6 us | **11x**  |
+| 1x3x8x8   | no mask     | 7.98 us | 78.9 us | **9.9x** |
+| 1x3x16x16 | 3 to 16, k3 | 36.4 us | 122 us  | **3.4x** |
+| 1x3x16x16 | stride 2    | 10.2 us | 80.8 us | **7.9x** |
+| 2x8x16x16 | 8 to 16, k3 | 116 us  | 246 us  | **2.1x** |
 
 ### Medium Inputs
 
@@ -783,63 +783,63 @@ call, which dominates the cost.
 
 ### Dequantize (i8 to float)
 
-| Size | Flex    | NdArray  | Speedup  | Flex Mem | NdArray Mem |
-| ---- | ------- | -------- | -------- | -------- | ----------- |
-| 4K   | 399 ns  | 48.8 us  | **~122x** | 16.5 KB  | 24.6 KB     |
-| 64K  | 3.73 us | 801 us   | **~215x** | 262 KB   | 393 KB      |
-| 1M   | 54.6 us | 13.0 ms  | **~238x** | 4.19 MB  | 6.29 MB     |
+| Size | Flex    | NdArray | Speedup   | Flex Mem | NdArray Mem |
+| ---- | ------- | ------- | --------- | -------- | ----------- |
+| 4K   | 399 ns  | 48.8 us | **~122x** | 16.5 KB  | 24.6 KB     |
+| 64K  | 3.73 us | 801 us  | **~215x** | 262 KB   | 393 KB      |
+| 1M   | 54.6 us | 13.0 ms | **~238x** | 4.19 MB  | 6.29 MB     |
 
 ### q_add (dequant + add + requant)
 
-| Size | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| ---- | ------- | ------- | -------- | -------- | ----------- |
-| 4K   | 1.15 us | 101 us  | **88x**  | 20.6 KB  | 41.0 KB     |
+| Size | Flex    | NdArray | Speedup   | Flex Mem | NdArray Mem |
+| ---- | ------- | ------- | --------- | -------- | ----------- |
+| 4K   | 1.15 us | 101 us  | **88x**   | 20.6 KB  | 41.0 KB     |
 | 64K  | 14.3 us | 1.61 ms | **~113x** | 524 KB   | 655 KB      |
 | 1M   | 208 us  | 25.9 ms | **~125x** | 8.39 MB  | 10.5 MB     |
 
 ### q_matmul (dequant + matmul + requant)
 
-| Size    | Flex   | NdArray | Speedup | Flex Mem | NdArray Mem |
-| ------- | ------ | ------- | ------- | -------- | ----------- |
+| Size    | Flex    | NdArray | Speedup | Flex Mem | NdArray Mem |
+| ------- | ------- | ------- | ------- | -------- | ----------- |
 | 64x64   | 7.10 us | 137 us  | **19x** | 66.5 KB  | 49.3 KB     |
-| 256x256 | 147 us | 1.93 ms | **13x** | 1.05 MB  | 788 KB      |
-| 512x512 | 641 us | 8.07 ms | **13x** | 4.19 MB  | 3.15 MB     |
+| 256x256 | 147 us  | 1.93 ms | **13x** | 1.05 MB  | 788 KB      |
+| 512x512 | 641 us  | 8.07 ms | **13x** | 4.19 MB  | 3.15 MB     |
 
 ### q_sum (dequant + sum)
 
-| Size | Flex    | NdArray | Speedup | Flex Mem | NdArray Mem |
-| ---- | ------- | ------- | ------- | -------- | ----------- |
-| 4K   | 605 ns  | 50.7 us | **84x** | 2.13 KB  | 24.6 KB     |
+| Size | Flex    | NdArray | Speedup   | Flex Mem | NdArray Mem |
+| ---- | ------- | ------- | --------- | -------- | ----------- |
+| 4K   | 605 ns  | 50.7 us | **84x**   | 2.13 KB  | 24.6 KB     |
 | 64K  | 7.71 us | 834 us  | **~108x** | 262 KB   | 393 KB      |
-| 1M   | 194 us  | 13.3 ms | **68x** | 4.19 MB  | 6.29 MB     |
+| 1M   | 194 us  | 13.3 ms | **68x**   | 4.19 MB  | 6.29 MB     |
 
 ### q_permute (zero-copy layout op)
 
-| Size      | Flex  | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| --------- | ----- | ------- | -------- | -------- | ----------- |
-| 256x256   | 75.5 ns | 66.1 ns | 0.88x    | 20.5 B   | 4.00 B      |
-| 1024x1024 | 77.5 ns | 66.1 ns | 0.85x    | 20.5 B   | 4.00 B      |
+| Size      | Flex    | NdArray | Speedup | Flex Mem | NdArray Mem |
+| --------- | ------- | ------- | ------- | -------- | ----------- |
+| 256x256   | 75.5 ns | 66.1 ns | 0.88x   | 20.5 B   | 4.00 B      |
+| 1024x1024 | 77.5 ns | 66.1 ns | 0.85x   | 20.5 B   | 4.00 B      |
 
 ### q_argmax (operates on i8 directly)
 
-| Size      | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| --------- | ------ | ------- | -------- | -------- | ----------- |
+| Size      | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| --------- | ------- | ------- | -------- | -------- | ----------- |
 | 256x256   | 67.9 us | 106 us  | **1.6x** | 3.25 KB  | 4.16 KB     |
-| 1024x1024 | 137 us | 1.71 ms | **12x**  | 12.5 KB  | 16.4 KB     |
+| 1024x1024 | 137 us  | 1.71 ms | **12x**  | 12.5 KB  | 16.4 KB     |
 
 ### q_argmin (operates on i8 directly)
 
-| Size      | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| --------- | ------ | ------- | -------- | -------- | ----------- |
+| Size      | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| --------- | ------- | ------- | -------- | -------- | ----------- |
 | 256x256   | 69.4 us | 106 us  | **1.5x** | 3.25 KB  | 4.16 KB     |
-| 1024x1024 | 139 us | 1.72 ms | **12x**  | 12.5 KB  | 16.4 KB     |
+| 1024x1024 | 139 us  | 1.72 ms | **12x**  | 12.5 KB  | 16.4 KB     |
 
 ### q_gather (operates on i8 directly for tensor-level quant)
 
-| Size      | Flex   | NdArray | Speedup  | Flex Mem | NdArray Mem |
-| --------- | ------ | ------- | -------- | -------- | ----------- |
+| Size      | Flex    | NdArray | Speedup  | Flex Mem | NdArray Mem |
+| --------- | ------- | ------- | -------- | -------- | ----------- |
 | 256x256   | 65.7 us | 155 us  | **2.4x** | 590 KB   | 721 KB      |
-| 1024x1024 | 393 us | 2.40 ms | **6.1x** | 9.44 MB  | 11.5 MB     |
+| 1024x1024 | 393 us  | 2.40 ms | **6.1x** | 9.44 MB  | 11.5 MB     |
 
 ---
 
@@ -872,38 +872,38 @@ These ops override burn's default trait implementations with direct storage oper
 
 ### Repeat Dim (f32, 256x256)
 
-| Config            | Flex   | NdArray | Speedup |
-| ----------------- | ------ | ------- | ------- |
-| dim0 4x           | 12.7 us | 134 us  | **11x** |
-| dim1 4x           | 11.5 us | 138 us  | **12x** |
+| Config            | Flex    | NdArray | Speedup  |
+| ----------------- | ------- | ------- | -------- |
+| dim0 4x           | 12.7 us | 134 us  | **11x**  |
+| dim1 4x           | 11.5 us | 138 us  | **12x**  |
 | dim0 8x (512x512) | 98.4 us | 880 us  | **8.9x** |
 
 ### Tensor Creation (f32, 1M elements)
 
-| Operation | Flex  | NdArray | Speedup |
-| --------- | ----- | ------- | ------- |
+| Operation | Flex    | NdArray | Speedup |
+| --------- | ------- | ------- | ------- |
 | zeros     | 17.7 us | 579 us  | **33x** |
 | ones      | 35.7 us | 579 us  | **16x** |
 | full      | 35.9 us | 579 us  | **16x** |
 
 ### Arange (i64)
 
-| Size | Flex   | NdArray | Speedup |
-| ---- | ------ | ------- | ------- |
+| Size | Flex    | NdArray | Speedup |
+| ---- | ------- | ------- | ------- |
 | 4K   | 1.21 us | 1.21 us | ~1x     |
-| 1M   | 299 us | 280 us  | 0.94x   |
+| 1M   | 299 us  | 280 us  | 0.94x   |
 
 ### Embedding (f32)
 
-| Config                  | Flex   | NdArray | Speedup  |
-| ----------------------- | ------ | ------- | -------- |
+| Config                  | Flex    | NdArray | Speedup  |
+| ----------------------- | ------- | ------- | -------- |
 | 30k vocab, d=512, 8x128 | 26.1 us | 150 us  | **5.8x** |
 | 50k vocab, d=768, 4x256 | 38.9 us | 188 us  | **4.8x** |
 
 ### Predicates (f32, 1M elements)
 
-| Operation | Flex  | NdArray | Speedup  |
-| --------- | ----- | ------- | -------- |
+| Operation | Flex    | NdArray | Speedup  |
+| --------- | ------- | ------- | -------- |
 | is_nan    | 46.4 us | 73.6 us | **1.6x** |
 | is_inf    | 52.6 us | 147 us  | **2.8x** |
 
@@ -916,37 +916,37 @@ NdArray does not implement rfft. `realfft` requires `std`; Flex works in `no_std
 
 ### 1D rfft
 
-| Size    | Flex (median) | realfft (median) | Ratio    |
-| ------- | ------------- | ---------------- | -------- |
-| n=256   | 841 ns        | 252 ns           | 3.3x     |
-| n=1024  | 2.64 us       | 991 ns           | 2.7x     |
-| n=4096  | 10.6 us       | 4.37 us          | 2.4x     |
-| n=16384 | 45.4 us       | 20.7 us          | 2.2x     |
-| n=65536 | 231 us        | 91.2 us          | 2.5x     |
+| Size    | Flex (median) | realfft (median) | Ratio |
+| ------- | ------------- | ---------------- | ----- |
+| n=256   | 841 ns        | 252 ns           | 3.3x  |
+| n=1024  | 2.64 us       | 991 ns           | 2.7x  |
+| n=4096  | 10.6 us       | 4.37 us          | 2.4x  |
+| n=16384 | 45.4 us       | 20.7 us          | 2.2x  |
+| n=65536 | 231 us        | 91.2 us          | 2.5x  |
 
 ### Batched 2D rfft (along last dim)
 
-| Size          | Flex (median) | realfft (median) | Ratio    |
-| ------------- | ------------- | ---------------- | -------- |
-| 16 x 1024     | 59.9 us       | 15.9 us          | 3.8x     |
-| 64 x 1024     | 114 us        | 64.0 us          | 1.8x     |
-| 256 x 256     | 191 us        | 64.9 us          | 2.9x     |
+| Size      | Flex (median) | realfft (median) | Ratio |
+| --------- | ------------- | ---------------- | ----- |
+| 16 x 1024 | 59.9 us       | 15.9 us          | 3.8x  |
+| 64 x 1024 | 114 us        | 64.0 us          | 1.8x  |
+| 256 x 256 | 191 us        | 64.9 us          | 2.9x  |
 
 ### 1D irfft (inverse)
 
-| Size    | Flex (median) | realfft (median) | Ratio    |
-| ------- | ------------- | ---------------- | -------- |
-| n=256   | 1.32 us       | 207 ns           | 6.4x     |
-| n=1024  | 4.01 us       | 908 ns           | 4.4x     |
-| n=4096  | 15.6 us       | 4.24 us          | 3.7x     |
-| n=16384 | 63.2 us       | 21.1 us          | 3.0x     |
-| n=65536 | 278 us        | 93.0 us          | 3.0x     |
+| Size    | Flex (median) | realfft (median) | Ratio |
+| ------- | ------------- | ---------------- | ----- |
+| n=256   | 1.32 us       | 207 ns           | 6.4x  |
+| n=1024  | 4.01 us       | 908 ns           | 4.4x  |
+| n=4096  | 15.6 us       | 4.24 us          | 3.7x  |
+| n=16384 | 63.2 us       | 21.1 us          | 3.0x  |
+| n=65536 | 278 us        | 93.0 us          | 3.0x  |
 
 Flex implementation: Cooley-Tukey with mixed radix-4/radix-2, complex packing (forward) / inverse
 packing (inverse), compile-time twiddle tables via const fn, SIMD vectorization via macerator,
-unrolled small kernels (N=2,4,8), and rayon parallelism across fibers. The remaining gap to rustfft is due
-to their hand-tuned per-arch SIMD rewrites, split-radix algorithms, and strength-reduced modular
-arithmetic.
+unrolled small kernels (N=2,4,8), and rayon parallelism across fibers. The remaining gap to rustfft
+is due to their hand-tuned per-arch SIMD rewrites, split-radix algorithms, and strength-reduced
+modular arithmetic.
 
 ---
 

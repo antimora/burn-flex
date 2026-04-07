@@ -34,9 +34,6 @@ use crate::simd::aligned;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
-#[cfg(feature = "rayon")]
-use super::PARALLEL_THRESHOLD;
-
 /// Truncate an i64 to a smaller Pod type, keeping the low-order bytes.
 /// Endian-safe: works correctly on both little-endian and big-endian targets.
 fn truncate_i64_to_pod<E: bytemuck::Pod>(value: i64) -> E {
@@ -104,10 +101,14 @@ fn sum_f32(tensor: &FlexTensor) -> FlexTensor {
 }
 
 /// SIMD + parallel sum for contiguous f32 slice.
+///
+/// The parallel threshold is higher than the general `PARALLEL_THRESHOLD` because
+/// sum is memory-bound and L2-resident data (< ~4MB on Apple M-series) doesn't
+/// benefit from rayon's task dispatch overhead.
 #[inline]
 fn sum_f32_contiguous(data: &[f32]) -> f32 {
     #[cfg(feature = "rayon")]
-    if data.len() >= PARALLEL_THRESHOLD {
+    if data.len() >= 4 * 1024 * 1024 {
         return sum_f32_parallel(data);
     }
 
@@ -613,9 +614,13 @@ fn min_impl<E: Element + bytemuck::Pod + PartialOrd>(tensor: &FlexTensor) -> Fle
 /// Argmax along a dimension, returning indices as isize (INDEX_DTYPE).
 pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
     assert_dim_fits_isize(tensor.layout().shape()[dim], dim);
-    #[cfg(feature = "simd")]
+    // f32 last-dim fast path: 2-pass SIMD for large rows, 1-pass scalar for small rows
     if tensor.dtype() == DType::F32 && dim == tensor.layout().shape().num_dims() - 1 {
-        return extremum_indices_f32_last_simd(&tensor, dim, kernels::max_f32);
+        #[cfg(feature = "simd")]
+        if tensor.layout().shape()[dim] >= EXTREMUM_SIMD_ROW_THRESHOLD {
+            return extremum_indices_f32_last_simd(&tensor, dim, kernels::max_f32);
+        }
+        return extremum_indices_f32_last_scalar(&tensor, dim, |a, b| a > b);
     }
     match tensor.dtype() {
         DType::F32 => {
@@ -661,9 +666,13 @@ pub fn argmax(tensor: FlexTensor, dim: usize) -> FlexTensor {
 /// Argmin along a dimension, returning indices as isize (INDEX_DTYPE).
 pub fn argmin(tensor: FlexTensor, dim: usize) -> FlexTensor {
     assert_dim_fits_isize(tensor.layout().shape()[dim], dim);
-    #[cfg(feature = "simd")]
+    // f32 last-dim fast path: 2-pass SIMD for large rows, 1-pass scalar for small rows
     if tensor.dtype() == DType::F32 && dim == tensor.layout().shape().num_dims() - 1 {
-        return extremum_indices_f32_last_simd(&tensor, dim, kernels::min_f32);
+        #[cfg(feature = "simd")]
+        if tensor.layout().shape()[dim] >= EXTREMUM_SIMD_ROW_THRESHOLD {
+            return extremum_indices_f32_last_simd(&tensor, dim, kernels::min_f32);
+        }
+        return extremum_indices_f32_last_scalar(&tensor, dim, |a, b| a < b);
     }
     match tensor.dtype() {
         DType::F32 => {
@@ -1231,9 +1240,12 @@ pub fn max_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         tensor.layout().shape()[dim] > 0,
         "max_dim: dimension {dim} has size 0"
     );
-    #[cfg(feature = "simd")]
     if tensor.dtype() == DType::F32 && dim == tensor.layout().shape().num_dims() - 1 {
-        return extremum_dim_f32_last_simd(&tensor, dim, kernels::max_f32);
+        #[cfg(feature = "simd")]
+        if tensor.layout().shape()[dim] >= EXTREMUM_SIMD_ROW_THRESHOLD {
+            return extremum_dim_f32_last_simd(&tensor, dim, kernels::max_f32);
+        }
+        return extremum_f32_last_scalar(&tensor, dim, |a, b| a > b);
     }
     match tensor.dtype() {
         DType::F32 => {
@@ -1274,9 +1286,12 @@ pub fn min_dim(tensor: FlexTensor, dim: usize) -> FlexTensor {
         tensor.layout().shape()[dim] > 0,
         "min_dim: dimension {dim} has size 0"
     );
-    #[cfg(feature = "simd")]
     if tensor.dtype() == DType::F32 && dim == tensor.layout().shape().num_dims() - 1 {
-        return extremum_dim_f32_last_simd(&tensor, dim, kernels::min_f32);
+        #[cfg(feature = "simd")]
+        if tensor.layout().shape()[dim] >= EXTREMUM_SIMD_ROW_THRESHOLD {
+            return extremum_dim_f32_last_simd(&tensor, dim, kernels::min_f32);
+        }
+        return extremum_f32_last_scalar(&tensor, dim, |a, b| a < b);
     }
     match tensor.dtype() {
         DType::F32 => {
@@ -1319,9 +1334,12 @@ pub fn max_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
         "max_dim_with_indices: dimension {dim} has size 0"
     );
     assert_dim_fits_isize(dim_len, dim);
-    #[cfg(feature = "simd")]
     if tensor.dtype() == DType::F32 && dim == tensor.layout().shape().num_dims() - 1 {
-        return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::max_f32);
+        #[cfg(feature = "simd")]
+        if tensor.layout().shape()[dim] >= EXTREMUM_SIMD_ROW_THRESHOLD {
+            return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::max_f32);
+        }
+        return extremum_with_indices_f32_last_scalar(&tensor, dim, |a, b| a > b);
     }
     match tensor.dtype() {
         DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| {
@@ -1367,9 +1385,12 @@ pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
         "min_dim_with_indices: dimension {dim} has size 0"
     );
     assert_dim_fits_isize(dim_len, dim);
-    #[cfg(feature = "simd")]
     if tensor.dtype() == DType::F32 && dim == tensor.layout().shape().num_dims() - 1 {
-        return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::min_f32);
+        #[cfg(feature = "simd")]
+        if tensor.layout().shape()[dim] >= EXTREMUM_SIMD_ROW_THRESHOLD {
+            return extremum_dim_with_indices_f32_last_simd(&tensor, dim, kernels::min_f32);
+        }
+        return extremum_with_indices_f32_last_scalar(&tensor, dim, |a, b| a < b);
     }
     match tensor.dtype() {
         DType::F32 => extremum_dim_with_indices::<f32, _>(&tensor, dim, |a, b| {
@@ -1418,7 +1439,185 @@ pub fn min_dim_with_indices(tensor: FlexTensor, dim: usize) -> (FlexTensor, Flex
 #[cfg(feature = "rayon")]
 const EXTREMUM_PARALLEL_THRESHOLD: usize = 32 * 1024;
 
+/// Minimum row length for the 2-pass SIMD extremum path (reduce + scan).
+/// Below this, single-pass scalar is faster since it reads each element once.
+#[cfg(feature = "simd")]
+const EXTREMUM_SIMD_ROW_THRESHOLD: usize = 512;
+
 /// SIMD fast path for f32 last-dim extremum (values only).
+/// Scalar single-pass f32 last-dim extremum (values only).
+/// Avoids the generic closure path by operating directly on contiguous f32 rows.
+fn extremum_f32_last_scalar<F>(tensor: &FlexTensor, dim: usize, is_better: F) -> FlexTensor
+where
+    F: Fn(f32, f32) -> bool + Send + Sync,
+{
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let dim_size = shape[dim];
+    let outer_size: usize = shape[..dim].iter().product();
+    let data: &[f32] = tensor.storage();
+    let start = tensor.layout().start_offset();
+
+    let mut out_shape: Vec<usize> = shape.to_vec();
+    out_shape[dim] = 1;
+
+    let reduce_row = |outer: usize| -> f32 {
+        let row_start = start + outer * dim_size;
+        let row = &data[row_start..row_start + dim_size];
+        let mut best = row[0];
+        for &v in &row[1..] {
+            if v.is_nan() {
+                return f32::NAN;
+            }
+            if is_better(v, best) {
+                best = v;
+            }
+        }
+        // Check first element for NaN (skipped in loop)
+        if best.is_nan() {
+            return f32::NAN;
+        }
+        best
+    };
+
+    #[cfg(feature = "rayon")]
+    let values: Vec<f32> = if outer_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+        (0..outer_size).into_par_iter().map(&reduce_row).collect()
+    } else {
+        (0..outer_size).map(reduce_row).collect()
+    };
+
+    #[cfg(not(feature = "rayon"))]
+    let values: Vec<f32> = (0..outer_size).map(reduce_row).collect();
+
+    FlexTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape)),
+        DType::F32,
+    )
+}
+
+/// Scalar single-pass f32 last-dim argmax/argmin (indices only).
+/// Uses direct pointer access and simple comparisons instead of the generic closure path.
+fn extremum_indices_f32_last_scalar<F>(
+    tensor: &FlexTensor,
+    dim: usize,
+    is_better: F,
+) -> FlexTensor
+where
+    F: Fn(f32, f32) -> bool + Send + Sync,
+{
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let dim_size = shape[dim];
+    let outer_size: usize = shape[..dim].iter().product();
+    let data: &[f32] = tensor.storage();
+    let start = tensor.layout().start_offset();
+
+    let mut out_shape: Vec<usize> = shape.to_vec();
+    out_shape[dim] = 1;
+
+    let find_row = |outer: usize| -> isize {
+        let row_start = start + outer * dim_size;
+        let row = &data[row_start..row_start + dim_size];
+        let mut best = row[0];
+        let mut best_idx: isize = 0;
+        for (i, &v) in row[1..].iter().enumerate() {
+            if v.is_nan() {
+                return (i + 1) as isize;
+            }
+            if is_better(v, best) {
+                best = v;
+                best_idx = (i + 1) as isize;
+            }
+        }
+        // Check first element for NaN
+        if best == row[0] && row[0].is_nan() {
+            return 0;
+        }
+        best_idx
+    };
+
+    #[cfg(feature = "rayon")]
+    let indices: Vec<isize> = if outer_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+        (0..outer_size).into_par_iter().map(find_row).collect()
+    } else {
+        (0..outer_size).map(find_row).collect()
+    };
+
+    #[cfg(not(feature = "rayon"))]
+    let indices: Vec<isize> = (0..outer_size).map(find_row).collect();
+
+    FlexTensor::new(
+        Bytes::from_elems(indices),
+        Layout::contiguous(Shape::from(out_shape)),
+        INDEX_DTYPE,
+    )
+}
+
+/// Scalar single-pass f32 last-dim extremum with indices (values + indices).
+fn extremum_with_indices_f32_last_scalar<F>(
+    tensor: &FlexTensor,
+    dim: usize,
+    is_better: F,
+) -> (FlexTensor, FlexTensor)
+where
+    F: Fn(f32, f32) -> bool + Send + Sync,
+{
+    let tensor = tensor.to_contiguous();
+    let shape = tensor.layout().shape();
+    let dim_size = shape[dim];
+    let outer_size: usize = shape[..dim].iter().product();
+    let data: &[f32] = tensor.storage();
+    let start = tensor.layout().start_offset();
+
+    let mut out_shape: Vec<usize> = shape.to_vec();
+    out_shape[dim] = 1;
+
+    let find_row = |outer: usize| -> (f32, isize) {
+        let row_start = start + outer * dim_size;
+        let row = &data[row_start..row_start + dim_size];
+        let mut best = row[0];
+        let mut best_idx: isize = 0;
+        for (i, &v) in row[1..].iter().enumerate() {
+            if v.is_nan() {
+                return (f32::NAN, (i + 1) as isize);
+            }
+            if is_better(v, best) {
+                best = v;
+                best_idx = (i + 1) as isize;
+            }
+        }
+        if row[0].is_nan() {
+            return (f32::NAN, 0);
+        }
+        (best, best_idx)
+    };
+
+    #[cfg(feature = "rayon")]
+    let (values, indices): (Vec<f32>, Vec<isize>) =
+        if outer_size * dim_size >= EXTREMUM_PARALLEL_THRESHOLD {
+            (0..outer_size).into_par_iter().map(find_row).unzip()
+        } else {
+            (0..outer_size).map(find_row).unzip()
+        };
+
+    #[cfg(not(feature = "rayon"))]
+    let (values, indices): (Vec<f32>, Vec<isize>) = (0..outer_size).map(find_row).unzip();
+
+    let val_tensor = FlexTensor::new(
+        Bytes::from_elems(values),
+        Layout::contiguous(Shape::from(out_shape.clone())),
+        DType::F32,
+    );
+    let idx_tensor = FlexTensor::new(
+        Bytes::from_elems(indices),
+        Layout::contiguous(Shape::from(out_shape)),
+        INDEX_DTYPE,
+    );
+    (val_tensor, idx_tensor)
+}
+
 /// Uses macerator SIMD reduction per contiguous row, with NaN propagation.
 #[cfg(feature = "simd")]
 fn extremum_dim_f32_last_simd(
