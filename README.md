@@ -60,28 +60,33 @@ compatibility with Burn's backend test suite.
 
 #### Compute Performance
 
-Genuine algorithmic and library improvements (gemm over matrixmultiply, SIMD reductions, Arc COW for
-buffer reuse):
+burn-ndarray now uses macerator SIMD for f32 elementwise ops (tracel-ai/burn#2851), so contiguous
+f32 binary/unary ops are at parity. Flex advantages come from gemm, integer ops (i32 vs i64),
+structural zero-copy, and fused kernels.
 
-| Category          | Speedup      | Highlights                                |
-| ----------------- | ------------ | ----------------------------------------- |
-| Binary ops (f32)  | **2.4-3.6x** | 3x less memory allocation                 |
-| Binary ops (i64)  | **1.5-6.4x** | Smaller tensors see bigger gains          |
-| Matmul (square)   | **1.1-3.4x** | Up to 2.3x at 1024x1024                   |
-| Matmul (batched)  | **1.8-3.2x** | 3.2x on multi-head attention shapes       |
-| Conv2d (3x3)      | **1.4-4.0x** | Larger kernels and batches benefit most   |
-| Conv1d            | **4.3-9.6x** |                                           |
-| Attention         | **1.2-2.4x** | Flash attention, 2-8.5x lower peak memory |
-| Pooling           | **1.2-3.1x** |                                           |
-| Interpolation     | **1.2-3.6x** | All modes: nearest, bilinear, bicubic     |
-| Reductions        | **1.6-5.1x** | Near-zero allocation for scalar results   |
-| Cumulative ops    | **3.1-93x**  | 1D cumsum: 93x faster                     |
-| Gather/scatter    | **1.9-9.7x** |                                           |
-| Unary (tanh, sin) | **1.3-2.7x** |                                           |
-| Comparisons       | **2.1-3.9x** |                                           |
-| Int casting       | **5.0-7.6x** |                                           |
-| Quantize          | **1.6x**     | Fused 2-pass implementation               |
-| FFT (rfft/irfft)  | **yes**      | Native implementation, works in no_std    |
+| Category          | Speedup       | Highlights                                |
+| ----------------- | ------------- | ----------------------------------------- |
+| Binary ops (f32)  | **~1x**       | Both use macerator SIMD for f32           |
+| Binary ops (i32)  | **1.8-5.3x**  | Flex uses i32, NdArray uses i64           |
+| Matmul (square)   | **1.4-3.1x**  | gemm at small/large; tied at mid-sizes    |
+| Matmul (batched)  | **1.3-2.2x**  | Multi-head attention shapes               |
+| Matmul (int)      | **3.7-6.5x**  | gemm vs matrixmultiply for integers       |
+| Conv2d (3x3)      | **1.1-3.7x**  | Larger kernels and batches benefit most   |
+| Conv1d            | **4.3-9.8x**  |                                           |
+| Conv transpose    | **9.2-84x**   | Direct scatter vs im2col                  |
+| Attention         | **1.2-3.0x**  | Fused softmax, 2-8x lower peak memory    |
+| Pooling           | **1.1-3.1x**  |                                           |
+| Interpolation     | **1.1-6.3x**  | Nearest 4-6x, bilinear 1.7-2.8x          |
+| Reductions        | **1.3-5.4x**  | Near-zero allocation for scalar results   |
+| Cumulative ops    | **2.1-95x**   | 1D cumsum: 95x faster                     |
+| Gather/scatter    | **1.2-6.4x**  |                                           |
+| Unary (tanh, sin) | **1.3-2.0x**  | tanh 2x, sin/cos 1.3-1.5x                |
+| Sort              | **2.3-29x**   | 2D sort up to 29x                         |
+| Repeat dim        | **8.9-12x**   | Single alloc + memcpy vs N slice_assign   |
+| Tensor creation   | **16-33x**    | zeros/ones/full                           |
+| Embedding         | **4.8-5.8x**  |                                           |
+| Quantize          | **1.3-1.5x**  | Fused 2-pass implementation               |
+| FFT (rfft/irfft)  | **yes**       | Native implementation, works in no_std    |
 
 #### Structural Improvements
 
@@ -89,13 +94,14 @@ These reflect better _operation representation_, not faster computation. burn-nd
 materializes data for these operations; burn-flex avoids the work entirely through zero-copy views
 and separated storage layouts.
 
-| Category      | Improvement        | What changed                                                 |
-| ------------- | ------------------ | ------------------------------------------------------------ |
-| Dequantize    | **135-232x**       | Direct `scale * x_q` vs reparsing `QuantizedBytes` each call |
-| Quantized ops | **2.9-117x**       | Dominated by fast dequantize path above                      |
-| Slice/narrow  | **2.1-2,100x**     | Zero-copy strided view vs potential data copy                |
-| Unfold        | **1,200-166,000x** | O(1) strided view vs O(n) full materialization               |
-| Expand        | **550-2,600x**     | Zero-copy broadcast (stride=0) vs data copy                  |
+| Category      | Improvement         | What changed                                                 |
+| ------------- | ------------------- | ------------------------------------------------------------ |
+| Dequantize    | **122-238x**        | Direct `scale * x_q` vs reparsing `QuantizedBytes` each call |
+| Quantized ops | **6.1-125x**        | Dominated by fast dequantize path above                      |
+| Slice/narrow  | **2.1-2,400x**      | Zero-copy strided view vs data copy                          |
+| Unfold        | **920-130,000x**    | O(1) strided view vs O(n) full materialization               |
+| Expand        | **620-2,800x**      | Zero-copy broadcast (stride=0) vs data copy                  |
+| Int cast      | **6.3-26,000x**     | Zero-copy reinterpret vs element-wise conversion             |
 
 > **Note on quantization**: burn-ndarray simulates quantization by dequantizing to f32 for most
 > operations. The quantized speedups reflect the difference between simulated and native execution,
