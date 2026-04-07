@@ -1499,11 +1499,7 @@ where
 
 /// Scalar single-pass f32 last-dim argmax/argmin (indices only).
 /// Uses direct pointer access and simple comparisons instead of the generic closure path.
-fn extremum_indices_f32_last_scalar<F>(
-    tensor: &FlexTensor,
-    dim: usize,
-    is_better: F,
-) -> FlexTensor
+fn extremum_indices_f32_last_scalar<F>(tensor: &FlexTensor, dim: usize, is_better: F) -> FlexTensor
 where
     F: Fn(f32, f32) -> bool + Send + Sync,
 {

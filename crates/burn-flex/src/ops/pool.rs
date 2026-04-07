@@ -260,8 +260,8 @@ where
                                 let id = id as usize;
 
                                 for kh in 0..kernel_h {
-                                    let ih = (oh * stride_h + kh * dilation_h) as isize
-                                        - pad_h as isize;
+                                    let ih =
+                                        (oh * stride_h + kh * dilation_h) as isize - pad_h as isize;
                                     if ih < 0 || ih >= in_h as isize {
                                         continue;
                                     }
@@ -275,14 +275,12 @@ where
                                         }
                                         let iw = iw as usize;
 
-                                        let x_idx =
-                                            x_offset + id * in_h * in_w + ih * in_w + iw;
+                                        let x_idx = x_offset + id * in_h * in_w + ih * in_w + iw;
                                         let val = x_data[x_idx];
 
                                         if max_idx < 0 || val > max_val {
                                             max_val = val;
-                                            max_idx =
-                                                (id * in_h * in_w + ih * in_w + iw) as i64;
+                                            max_idx = (id * in_h * in_w + ih * in_w + iw) as i64;
                                         }
                                     }
                                 }
@@ -734,8 +732,8 @@ where
 
                                     for kw in 0..kernel_w {
                                         let iw = (ow * stride_w + kw) as isize - pad_w as isize;
-                                        let iw_in_bounds = iw >= -(pad_w as isize)
-                                            && iw < (in_w + pad_w) as isize;
+                                        let iw_in_bounds =
+                                            iw >= -(pad_w as isize) && iw < (in_w + pad_w) as isize;
                                         if !iw_in_bounds {
                                             continue;
                                         }
@@ -750,8 +748,7 @@ where
                                         let id = id as usize;
                                         let ih = ih as usize;
                                         let iw = iw as usize;
-                                        let x_idx =
-                                            x_offset + id * in_h * in_w + ih * in_w + iw;
+                                        let x_idx = x_offset + id * in_h * in_w + ih * in_w + iw;
                                         sum = add_fn(sum, x_data[x_idx]);
                                         count += 1;
                                     }
