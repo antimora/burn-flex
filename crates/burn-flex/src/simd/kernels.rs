@@ -23,29 +23,33 @@ pub fn sum_f32(data: &[f32]) -> f32 {
     macerator_sum(data)
 }
 
-/// 4-accumulator SIMD sum. Uses independent accumulator chains so the CPU
-/// can pipeline floating-point adds instead of waiting for each to complete.
+/// 8-accumulator SIMD sum. Independent accumulator chains let the CPU
+/// pipeline floating-point adds and hide L2 cache latency.
 #[macerator::with_simd]
 fn macerator_sum<S: Simd, F: VAdd + Sum + ReduceAdd>(mut xs: &[F]) -> F {
     let lanes = F::lanes::<S>();
-    let stride = lanes * 4;
-    let mut s0 = F::default().splat::<S>();
-    let mut s1 = s0;
-    let mut s2 = s0;
-    let mut s3 = s0;
+    let stride = lanes * 8;
+    let zero = F::default().splat::<S>();
+    let (mut s0, mut s1, mut s2, mut s3) = (zero, zero, zero, zero);
+    let (mut s4, mut s5, mut s6, mut s7) = (zero, zero, zero, zero);
 
     while xs.len() >= stride {
         unsafe {
-            s0 += vload_unaligned(xs.as_ptr());
-            s1 += vload_unaligned(xs.as_ptr().add(lanes));
-            s2 += vload_unaligned(xs.as_ptr().add(lanes * 2));
-            s3 += vload_unaligned(xs.as_ptr().add(lanes * 3));
+            let p = xs.as_ptr();
+            s0 += vload_unaligned(p);
+            s1 += vload_unaligned(p.add(lanes));
+            s2 += vload_unaligned(p.add(lanes * 2));
+            s3 += vload_unaligned(p.add(lanes * 3));
+            s4 += vload_unaligned(p.add(lanes * 4));
+            s5 += vload_unaligned(p.add(lanes * 5));
+            s6 += vload_unaligned(p.add(lanes * 6));
+            s7 += vload_unaligned(p.add(lanes * 7));
         }
         xs = &xs[stride..];
     }
 
-    // Combine 4 accumulators into one, then drain remaining full vectors
-    let mut sum = (s0 + s1) + (s2 + s3);
+    // Combine 8 accumulators into one, then drain remaining full vectors
+    let mut sum = ((s0 + s1) + (s2 + s3)) + ((s4 + s5) + (s6 + s7));
     while xs.len() >= lanes {
         sum += unsafe { vload_unaligned(xs.as_ptr()) };
         xs = &xs[lanes..];

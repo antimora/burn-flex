@@ -3,7 +3,7 @@
 //! Replaces platform-specific implementations (neon.rs) with a single
 //! portable implementation that auto-dispatches to NEON/AVX2/SSE/SIMD128/scalar.
 
-use macerator::{Scalar, Simd, VBitAnd, VBitOr, VBitXor, VOrd, vload_unaligned, vstore_unaligned};
+use macerator::{Scalar, Simd, VBitAnd, VBitOr, VBitXor, vload_unaligned, vstore_unaligned};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -181,47 +181,48 @@ pub fn cmp_f32(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
         return;
     }
 
-    cmp_seq(a, b, out, op);
+    cmp_f32_seq(a, b, out, op);
 }
 
-#[macerator::with_simd]
-fn cmp_seq<S: Simd, T: VOrd + PartialOrd>(a: &[T], b: &[T], out: &mut [u8], op: CmpOp) {
-    let lanes = T::lanes::<S>();
-    let len = a.len();
-    let simd_len = len / lanes * lanes;
-
-    let mut i = 0;
-    while i < simd_len {
-        unsafe {
-            let va = vload_unaligned::<S, _>(a.as_ptr().add(i));
-            let vb = vload_unaligned::<S, _>(b.as_ptr().add(i));
-
-            let out_ptr = out.as_mut_ptr().add(i) as *mut bool;
-            let out_mask = match op {
-                CmpOp::Gt => va.gt(vb),
-                CmpOp::Ge => va.ge(vb),
-                CmpOp::Lt => va.lt(vb),
-                CmpOp::Le => va.le(vb),
-                CmpOp::Eq => va.eq(vb),
-                CmpOp::Ne => va.ne(vb),
-            };
-            // mask_store_as_bool writes `bool` (1 byte per lane, 0 or 1)
-            // which has the same repr as u8 0/1
-            out_mask.store_as_bool(out_ptr);
+/// Comparison kernel using simple loops that LLVM autovectorizes.
+///
+/// Autovectorization outperforms explicit SIMD here because comparisons
+/// produce u8 output from f32 input (4:1 size ratio). LLVM batches 16+
+/// comparisons and packs results into a single wide vector store, while
+/// explicit SIMD (store_as_bool) writes only `lanes` bytes per iteration.
+#[inline]
+fn cmp_f32_seq(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
+    match op {
+        CmpOp::Gt => {
+            for ((a, b), o) in a.iter().zip(b).zip(out.iter_mut()) {
+                *o = (*a > *b) as u8;
+            }
         }
-        i += lanes;
-    }
-
-    // Scalar tail
-    for j in simd_len..len {
-        out[j] = match op {
-            CmpOp::Gt => (a[j] > b[j]) as u8,
-            CmpOp::Ge => (a[j] >= b[j]) as u8,
-            CmpOp::Lt => (a[j] < b[j]) as u8,
-            CmpOp::Le => (a[j] <= b[j]) as u8,
-            CmpOp::Eq => (a[j] == b[j]) as u8,
-            CmpOp::Ne => (a[j] != b[j]) as u8,
-        };
+        CmpOp::Ge => {
+            for ((a, b), o) in a.iter().zip(b).zip(out.iter_mut()) {
+                *o = (*a >= *b) as u8;
+            }
+        }
+        CmpOp::Lt => {
+            for ((a, b), o) in a.iter().zip(b).zip(out.iter_mut()) {
+                *o = (*a < *b) as u8;
+            }
+        }
+        CmpOp::Le => {
+            for ((a, b), o) in a.iter().zip(b).zip(out.iter_mut()) {
+                *o = (*a <= *b) as u8;
+            }
+        }
+        CmpOp::Eq => {
+            for ((a, b), o) in a.iter().zip(b).zip(out.iter_mut()) {
+                *o = (*a == *b) as u8;
+            }
+        }
+        CmpOp::Ne => {
+            for ((a, b), o) in a.iter().zip(b).zip(out.iter_mut()) {
+                *o = (*a != *b) as u8;
+            }
+        }
     }
 }
 
@@ -232,7 +233,7 @@ fn cmp_f32_par(a: &[f32], b: &[f32], out: &mut [u8], op: CmpOp) {
         .for_each(|(chunk_idx, out_chunk)| {
             let start = chunk_idx * CHUNK_SIZE;
             let end = (start + CHUNK_SIZE).min(a.len());
-            cmp_seq(&a[start..end], &b[start..end], out_chunk, op);
+            cmp_f32_seq(&a[start..end], &b[start..end], out_chunk, op);
         });
 }
 
@@ -246,44 +247,44 @@ pub fn cmp_scalar_f32(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
         return;
     }
 
-    cmp_scalar_seq(a, scalar, out, op);
+    cmp_scalar_f32_seq(a, scalar, out, op);
 }
 
-#[macerator::with_simd]
-fn cmp_scalar_seq<S: Simd, T: VOrd + PartialOrd>(a: &[T], scalar: T, out: &mut [u8], op: CmpOp) {
-    let lanes = T::lanes::<S>();
-    let len = a.len();
-    let simd_len = len / lanes * lanes;
-
-    let vs = scalar.splat::<S>();
-
-    let mut i = 0;
-    while i < simd_len {
-        unsafe {
-            let va = vload_unaligned::<S, _>(a.as_ptr().add(i));
-            let out_ptr = out.as_mut_ptr().add(i) as *mut bool;
-            let out_mask = match op {
-                CmpOp::Gt => va.gt(vs),
-                CmpOp::Ge => va.ge(vs),
-                CmpOp::Lt => va.lt(vs),
-                CmpOp::Le => va.le(vs),
-                CmpOp::Eq => va.eq(vs),
-                CmpOp::Ne => va.ne(vs),
-            };
-            out_mask.store_as_bool(out_ptr);
+/// Scalar comparison kernel using simple loops that LLVM autovectorizes.
+/// See `cmp_f32_seq` for rationale.
+#[inline]
+fn cmp_scalar_f32_seq(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
+    match op {
+        CmpOp::Gt => {
+            for (a, o) in a.iter().zip(out.iter_mut()) {
+                *o = (*a > scalar) as u8;
+            }
         }
-        i += lanes;
-    }
-
-    for j in simd_len..len {
-        out[j] = match op {
-            CmpOp::Gt => (a[j] > scalar) as u8,
-            CmpOp::Ge => (a[j] >= scalar) as u8,
-            CmpOp::Lt => (a[j] < scalar) as u8,
-            CmpOp::Le => (a[j] <= scalar) as u8,
-            CmpOp::Eq => (a[j] == scalar) as u8,
-            CmpOp::Ne => (a[j] != scalar) as u8,
-        };
+        CmpOp::Ge => {
+            for (a, o) in a.iter().zip(out.iter_mut()) {
+                *o = (*a >= scalar) as u8;
+            }
+        }
+        CmpOp::Lt => {
+            for (a, o) in a.iter().zip(out.iter_mut()) {
+                *o = (*a < scalar) as u8;
+            }
+        }
+        CmpOp::Le => {
+            for (a, o) in a.iter().zip(out.iter_mut()) {
+                *o = (*a <= scalar) as u8;
+            }
+        }
+        CmpOp::Eq => {
+            for (a, o) in a.iter().zip(out.iter_mut()) {
+                *o = (*a == scalar) as u8;
+            }
+        }
+        CmpOp::Ne => {
+            for (a, o) in a.iter().zip(out.iter_mut()) {
+                *o = (*a != scalar) as u8;
+            }
+        }
     }
 }
 
@@ -294,7 +295,7 @@ fn cmp_scalar_f32_par(a: &[f32], scalar: f32, out: &mut [u8], op: CmpOp) {
         .for_each(|(chunk_idx, out_chunk)| {
             let start = chunk_idx * CHUNK_SIZE;
             let end = (start + CHUNK_SIZE).min(a.len());
-            cmp_scalar_seq(&a[start..end], scalar, out_chunk, op);
+            cmp_scalar_f32_seq(&a[start..end], scalar, out_chunk, op);
         });
 }
 
