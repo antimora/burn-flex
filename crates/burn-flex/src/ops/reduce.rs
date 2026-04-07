@@ -103,8 +103,8 @@ fn sum_f32(tensor: &FlexTensor) -> FlexTensor {
 /// SIMD + parallel sum for contiguous f32 slice.
 ///
 /// The parallel threshold is higher than the general `PARALLEL_THRESHOLD` because
-/// sum is memory-bound and L2-resident data (< ~4MB on Apple M-series) doesn't
-/// benefit from rayon's task dispatch overhead.
+/// sum is memory-bound and L2-resident data (< ~16 MiB / 4M f32 elements on
+/// Apple M-series) doesn't benefit from rayon's task dispatch overhead.
 #[inline]
 fn sum_f32_contiguous(data: &[f32]) -> f32 {
     #[cfg(feature = "rayon")]
