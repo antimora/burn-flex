@@ -112,42 +112,24 @@ See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
 ### Performance vs candle-core (Apple M3 Max, pure-Rust, no BLAS)
 
 Per-op comparison against [candle-core](https://github.com/huggingface/candle), pure-Rust on both
-sides. Medians of 100 samples via divan. Eleven bench files cover every flex op that intersects with
-candle's CPU API.
+sides. Across 11 bench files covering every flex op that intersects with candle's CPU API, flex is
+as fast or faster on every operation category.
 
-**Flex wins** (selected):
+| Category               | Representative ratio | Notes                            |
+| ---------------------- | -------------------- | -------------------------------- |
+| Batched matmul         | **8-11x**            | Strided gemm, no copy            |
+| Conv1d (wav2vec2)      | **1.4-7.6x**         | Direct conv path                 |
+| Conv2d (ResNet)        | **1.3-4.0x**         | 1x1 pointwise 4x                |
+| Conv transpose         | **1.5-1.9x**         |                                  |
+| Max/min reductions     | **3.8-5.1x**         | SIMD + zero-alloc                |
+| Pooling (k=3 s=2)      | **1.8-2.5x**         |                                  |
+| Layer norm (fused)     | **1.6-3.4x**         | Two-pass Welford kernel          |
+| Softmax (fused)        | **1.4-1.7x**         | Three-pass row kernel            |
+| Cat, gather, select    | **1.3-2.5x**         |                                  |
+| Nearest2d interpolation | **1.3-1.4x**         |                                  |
+| Elementwise, matmul, gelu, view ops | tied  | Both at memory bandwidth ceiling |
 
-| Op                     | Representative shape     | Ratio     |
-| ---------------------- | ------------------------ | --------- |
-| sum along non-last dim | 1024²                    | **15.3x** |
-| batched matmul         | `[32, 128, 128]`         | **13.0x** |
-| cumsum last dim        | 256²                     | **10.4x** |
-| conv1d (L0, wav2vec2)  | 1x1x16000, k=10 s=5      | **7.8x**  |
-| conv1d (L6, wav2vec2)  | 1x512x99, k=2 s=2        | **1.7x**  |
-| argmax along dim       | 1024²                    | **6.5x**  |
-| max_dim / min_dim      | 1024²                    | **5.9x**  |
-| full-tensor max/min    | 1024²                    | **4.0x**  |
-| layer_norm (fused)     | `[50, 1024]`             | **3.6x**  |
-| cat along last dim     | 2x1024²                  | **2.7x**  |
-| max_pool2d k=3 s=2     | 8x64x56²                 | **2.6x**  |
-| matmul (small square)  | 128x128                  | **2.4x**  |
-| conv2d 1x1 pointwise   | 1x256x56², k=1           | **3.4x**  |
-| conv_transpose2d       | 1x128x16² -> 64, k=4 s=2 | **2.3x**  |
-| gather last dim        | 1024²                    | **2.1x**  |
-| conv2d (ResNet layer)  | 1x128x28², k=3           | **1.9x**  |
-| index_select dim=0     | 1024²                    | **1.4x**  |
-| softmax (fused)        | `[16, 150, 150]`         | **1.5x**  |
-| sort last dim          | 1024²                    | **1.3x**  |
-| nearest2d interpolation | 64² -> 128²              | **1.3x**  |
-| mask_where             | 1024²                    | **1.1x**  |
-
-**Tied**: elementwise arithmetic, transcendentals, gelu, large matmul, view ops.
-
-**No remaining regressions** across all benchmarked ops.
-
-Detailed per-op numbers, methodology, and the prioritized regression list are in
-[BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md). The softmax and layer_norm wins come from fused row
-kernels that bypass the decomposed 5-6-op default path.
+See [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md) for the full per-op breakdown.
 
 ### Status
 
