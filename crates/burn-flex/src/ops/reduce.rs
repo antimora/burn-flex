@@ -1444,7 +1444,6 @@ const EXTREMUM_PARALLEL_THRESHOLD: usize = 32 * 1024;
 #[cfg(feature = "simd")]
 const EXTREMUM_SIMD_ROW_THRESHOLD: usize = 512;
 
-/// SIMD fast path for f32 last-dim extremum (values only).
 /// Scalar single-pass f32 last-dim extremum (values only).
 /// Avoids the generic closure path by operating directly on contiguous f32 rows.
 fn extremum_f32_last_scalar<F>(tensor: &FlexTensor, dim: usize, is_better: F) -> FlexTensor
@@ -1527,8 +1526,8 @@ where
                 best_idx = (i + 1) as isize;
             }
         }
-        // Check first element for NaN
-        if best == row[0] && row[0].is_nan() {
+        // Check first element for NaN (skipped in loop)
+        if row[0].is_nan() {
             return 0;
         }
         best_idx
