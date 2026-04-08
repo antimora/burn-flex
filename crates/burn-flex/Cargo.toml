@@ -5,10 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "A fast, portable CPU backend for Burn"
 repository = "https://github.com/antimora/burn-flex"
-readme = false
+documentation = "https://docs.rs/burn-flex"
+readme = "../../README.md"
+keywords = ["burn", "tensor", "deep-learning", "neural-network", "simd"]
+categories = ["science", "mathematics", "no-std"]
 authors = ["Dilshod Tadjibaev (@antimora)"]
-
-exclude = ["*.md"]
 
 [lints]
 workspace = true

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="burn-flex logo" width="400">
+  <img src="https://raw.githubusercontent.com/antimora/burn-flex/main/logo.png" alt="burn-flex logo" width="400">
 </p>
 
 ## burn-flex - The portable flex that carries Burn anywhere.
@@ -8,7 +8,7 @@ A fast, memory-efficient CPU backend for Burn with multi-threading, SIMD, and op
 multiplication. Runs on std, no_std, and WebAssembly. Supports f16/bf16, zero-copy data loading, and
 is thread-safe by design.
 
-> **[Detailed comparison with burn-ndarray](COMPARISON.md)**: Full architecture, feature coverage,
+> **[Detailed comparison with burn-ndarray](https://github.com/antimora/burn-flex/blob/main/COMPARISON.md)**: Full architecture, feature coverage,
 > operation-by-operation analysis, and migration path.
 
 ### Features
@@ -60,7 +60,7 @@ compatibility with Burn's backend test suite.
 
 #### Compute Performance
 
-burn-ndarray now uses macerator SIMD for f32 elementwise ops (tracel-ai/burn#2851), so contiguous
+burn-ndarray now uses macerator SIMD for f32 elementwise ops ([tracel-ai/burn#2851](https://github.com/tracel-ai/burn/pull/2851)), so contiguous
 f32 binary/unary ops are at parity. Flex advantages come from gemm, integer ops (i32 vs i64),
 structural zero-copy, and fused kernels.
 
@@ -107,7 +107,7 @@ and separated storage layouts.
 > operations. The quantized speedups reflect the difference between simulated and native execution,
 > not equivalent algorithms running at different speeds.
 
-See [BENCHMARKS.md](BENCHMARKS.md) for the full breakdown.
+See [BENCHMARKS.md](https://github.com/antimora/burn-flex/blob/main/BENCHMARKS.md) for the full breakdown.
 
 ### Performance vs candle-core (Apple M3 Max, pure-Rust, no BLAS)
 
@@ -129,7 +129,7 @@ as fast or faster on every operation category.
 | Nearest2d interpolation             | **1.3-1.4x**         |                                  |
 | Elementwise, matmul, gelu, view ops | tied                 | Both at memory bandwidth ceiling |
 
-See [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md) for the full per-op breakdown.
+See [BENCHMARKS_CANDLE.md](https://github.com/antimora/burn-flex/blob/main/BENCHMARKS_CANDLE.md) for the full per-op breakdown.
 
 ### Status
 
@@ -158,8 +158,8 @@ See [BENCHMARKS_CANDLE.md](BENCHMARKS_CANDLE.md) for the full per-op breakdown.
 
 ### Documentation
 
-- [COMPARISON.md](COMPARISON.md) - Comprehensive comparison with burn-ndarray
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Design decisions, memory strategy, and implementation
+- [COMPARISON.md](https://github.com/antimora/burn-flex/blob/main/COMPARISON.md) - Comprehensive comparison with burn-ndarray
+- [ARCHITECTURE.md](https://github.com/antimora/burn-flex/blob/main/ARCHITECTURE.md) - Design decisions, memory strategy, and implementation
   patterns
-- [BENCHMARKS.md](BENCHMARKS.md) - Full benchmark results (Flex vs NdArray)
-- [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) - Projects that influenced burn-flex
+- [BENCHMARKS.md](https://github.com/antimora/burn-flex/blob/main/BENCHMARKS.md) - Full benchmark results (Flex vs NdArray)
+- [ACKNOWLEDGMENTS.md](https://github.com/antimora/burn-flex/blob/main/ACKNOWLEDGMENTS.md) - Projects that influenced burn-flex
