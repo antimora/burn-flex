@@ -1,6 +1,6 @@
 [package]
 name = "burn-flex"
-version = "0.21.0-pre.2"
+version = "0.21.0-pre.3"
 edition.workspace = true
 license.workspace = true
 description = "A fast, portable CPU backend for Burn"
@@ -33,8 +33,8 @@ gemm = { workspace = true }
 macerator = { workspace = true, optional = true }
 aligned-vec = { workspace = true, optional = true }
 once_cell = { version = "1", default-features = false, optional = true }
-portable-atomic = { version = "1", optional = true }
-portable-atomic-util = { version = "0.2", default-features = false, features = ["alloc"], optional = true }
+portable-atomic = { version = "1.13.1", optional = true }
+portable-atomic-util = { version = "0.2.6", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 burn-tensor = { workspace = true }

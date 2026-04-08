@@ -16,10 +16,10 @@ burn-tensor = { workspace = true }
 # pull in accelerate/mkl/cuda/metal. The kernel-vs-kernel comparison is the
 # interesting signal; Accelerate wins via Apple's hand-tuned BLAS and is not a
 # target we can match without wiring BLAS into burn-flex.
-candle-core = { version = "0.10", default-features = false }
+candle-core = { version = "0.10.2", default-features = false }
 # candle-nn for layer_norm/softmax/gelu equivalents to burn's module-level
 # ops. Pinned to the same 0.10 line as candle-core to avoid dep duplication.
-candle-nn = { version = "0.10", default-features = false }
+candle-nn = { version = "0.10.2", default-features = false }
 divan = { workspace = true }
 
 [[bench]]
