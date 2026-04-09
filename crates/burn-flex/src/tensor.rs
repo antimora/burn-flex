@@ -276,8 +276,6 @@ impl FlexTensor {
     }
 
     /// Copy to contiguous layout if needed.
-    //
-    // Note: `collapse_for_copy` is a free function below this impl block.
     pub fn to_contiguous(&self) -> Self {
         if self.is_contiguous() && self.layout.start_offset() == 0 {
             return self.clone();
@@ -356,13 +354,13 @@ impl FlexTensor {
             // (row, col) pair exactly once, writing all n positions.
             unsafe { dst.set_len(n) };
 
-            // Pick the loop nesting so that the innermost read walks
-            // the *smaller* source stride. Otherwise we'd read with a
-            // large stride on the hot inner loop and trash the cache.
-            // For a [N,C,H,W].permute([0,2,3,1]) ConvNeXt layer norm
-            // the collapsed strides are [1, 54656] (row_stride << col),
-            // so the existing col-inner nesting did ~54k-apart reads;
-            // we swap to row-inner here to read contiguously.
+            // Pick the loop nesting so the innermost read walks the
+            // smaller source stride, otherwise we'd read with a large
+            // stride on the hot inner loop and trash the cache. For a
+            // `[N, C, H, W].permute([0, 2, 3, 1])` ConvNeXt layer norm
+            // the collapsed strides are `[1, 54656]`, which means
+            // `row_stride < col_stride` and the row-inside-col branch
+            // below is the right choice.
             if row_stride <= col_stride {
                 for col_tile in (0..cols).step_by(TILE) {
                     let col_end = (col_tile + TILE).min(cols);
@@ -490,13 +488,19 @@ impl TensorMetadata for FlexTensor {
 /// Canonical example: a 4D ConvNeXt input `[1, 244, 224, 48]` with
 /// strides `[2623488, 224, 1, 54656]` (the result of
 /// `[N,C,H,W].permute([0, 2, 3, 1])`) collapses to a 2D `[54656, 48]`
-/// with strides `[1, 54656]` — a plain 2D transpose that the tiled 2D
+/// with strides `[1, 54656]`, a plain 2D transpose that the tiled 2D
 /// fast path handles at near-memcpy speed.
 ///
 /// Collapsing preserves the iteration order of a contiguous destination
 /// walk, so the resulting `(shape, strides)` pair can be substituted
 /// directly into a row-major copy loop without changing the visit
 /// order.
+///
+/// PRECONDITION: the caller must gate on all-positive strides before
+/// using the collapsed layout. The merge rule assumes positive strides
+/// and will produce iteration-order-incorrect results for flipped
+/// tensors (both `copy_contiguous` call sites check `all_positive`
+/// before taking the collapsed path).
 fn collapse_for_copy(shape: &[usize], strides: &[isize]) -> (Vec<usize>, Vec<isize>) {
     let mut s: Vec<usize> = Vec::with_capacity(shape.len());
     let mut st: Vec<isize> = Vec::with_capacity(strides.len());
@@ -625,6 +629,49 @@ mod tests {
 
         let result_data = contig.into_data();
         let values = result_data.as_slice::<f32>().unwrap();
+        assert_eq!(values, expected.as_slice());
+    }
+
+    #[test]
+    fn test_to_contiguous_2d_row_stride_gt_col_stride() {
+        // Exercise the `else` branch of the 2D tiled copy (the
+        // original col-inner nesting), which triggers when
+        // `row_stride > col_stride`. The hot ConvNeXt case hits the
+        // other branch because the permuted last dim has the big
+        // stride.
+        //
+        // Strategy: build a stepped-outer view over a `[6, 3]`
+        // contiguous tensor. `slice(s![..;2, ..])` on `[6, 3]` strides
+        // `[3, 1]` gives a shape `[3, 3]` view with strides `[6, 1]`
+        // and start_offset 0. That's non-contiguous, and the collapse
+        // doesn't merge (stride[0]=6 != stride[1]*s[1]=3), so the 2D
+        // branch runs with row_stride 6 and col_stride 1.
+        let data: Vec<f32> = (0..18).map(|i| i as f32).collect();
+        let t = FlexTensor::from_data(TensorData::new(data, vec![6, 3]));
+        let stepped = crate::ops::slice::slice(
+            t,
+            &[
+                burn_std::Slice::new(0, Some(6), 2),
+                burn_std::Slice::new(0, None, 1),
+            ],
+        );
+        // Verify the layout matches what the branch requires.
+        assert_eq!(stepped.layout().shape().to_vec(), vec![3, 3]);
+        assert_eq!(stepped.layout().strides(), &[6, 1]);
+        assert!(!stepped.layout().is_contiguous());
+
+        let contig = stepped.to_contiguous();
+        assert!(contig.is_contiguous());
+        assert_eq!(contig.shape().to_vec(), vec![3, 3]);
+
+        let result_data = contig.into_data();
+        let values = result_data.as_slice::<f32>().unwrap();
+        // Expected: rows 0, 2, 4 of the original 6x3 tensor.
+        let expected = vec![
+            0.0f32, 1.0, 2.0, // row 0
+            6.0, 7.0, 8.0, // row 2
+            12.0, 13.0, 14.0, // row 4
+        ];
         assert_eq!(values, expected.as_slice());
     }
 

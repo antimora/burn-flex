@@ -182,9 +182,18 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
     // even start the strided write into the destination, which triples
     // the memory traffic for what should be a single-pass scalar fill.
     // Detect it and hand off to `slice_fill_impl`.
-    if !value.layout().strides().is_empty() && value.layout().strides().iter().all(|&s| s == 0) {
-        // All strides zero means every position maps to the same element
-        // at `start_offset`. Read it once and dispatch.
+    //
+    // We gate on `num_elements > 0` (not `!strides().is_empty()`) so
+    // that rank-0 scalar tensors are covered as well: their strides
+    // slice is empty, so `iter().all(...)` is vacuously true, and the
+    // single storage element at `start_offset` is the scalar we want.
+    // The `num_elements > 0` check also guards the storage read
+    // against a zero-sized source (e.g. `from_data(vec![], [0]).expand
+    // ([0, 3])`), which would otherwise index an empty slice.
+    if value.layout().num_elements() > 0 && value.layout().strides().iter().all(|&s| s == 0) {
+        // All strides zero (or rank 0) means every position maps to
+        // the same element at `start_offset`. Read it once and
+        // dispatch.
         let scalar = value.storage::<E>()[value.layout().start_offset()];
         return slice_fill_impl::<E>(tensor, slices, scalar);
     }
@@ -740,5 +749,86 @@ mod tests {
             }
         }
         assert_eq!(out, expected);
+    }
+
+    /// Exercise the broadcast-scalar fast path for a non-f32 dtype.
+    /// `slice_fill_impl` is monomorphized per-element-type with no
+    /// dtype-specific code, but nothing in the test suite actually
+    /// verifies that a Pod cast through a 64-bit integer type produces
+    /// the right bytes in the destination.
+    #[test]
+    fn test_slice_assign_broadcast_scalar_i64() {
+        fn broadcast_scalar_i64(value: i64, target_shape: &[usize]) -> FlexTensor {
+            let scalar_tensor = FlexTensor::from_data(TensorData::new(vec![value], [1]));
+            crate::ops::expand::expand(scalar_tensor, Shape::from(target_shape.to_vec()))
+        }
+
+        let data: Vec<i64> = (0..12).collect();
+        let tensor = FlexTensor::from_data(TensorData::new(data, [3, 4]));
+        let value = broadcast_scalar_i64(-7, &[2, 2]);
+        let slices = vec![Slice::new(0, Some(2), 1), Slice::new(1, Some(3), 1)];
+        let result = slice_assign(tensor, &slices, value);
+
+        let result_data = result.into_data();
+        let values: Vec<i64> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        // Positions (0, 1), (0, 2), (1, 1), (1, 2): linear indices 1,
+        // 2, 5, 6 get replaced by -7.
+        assert_eq!(values, vec![0, -7, -7, 3, 4, -7, -7, 7, 8, 9, 10, 11]);
+    }
+
+    /// ND strided fallback path in `slice_fill_impl`: a 3D slice with a
+    /// stepped inner dim so `inner_contiguous` is false and the final
+    /// `else` branch runs.
+    #[test]
+    fn test_slice_assign_broadcast_scalar_nd_strided_fallback() {
+        let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        let tensor = FlexTensor::from_data(TensorData::new(data, [2, 3, 4]));
+        // Step 2 on the innermost dim means slice_info's last step != 1,
+        // so inner_contiguous is false and we take the ND fallback.
+        let value = broadcast_scalar_f32(9.0, &[2, 3, 2]);
+        let slices = vec![
+            Slice::new(0, Some(2), 1),
+            Slice::new(0, Some(3), 1),
+            Slice::new(0, Some(4), 2),
+        ];
+        let result = slice_assign(tensor, &slices, value);
+
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        // Step-2 on dim 2 picks indices 0 and 2, so within each
+        // `[b, r, :]` row the 0 and 2 positions get 9.0.
+        let mut expected: Vec<f32> = (0..24).map(|i| i as f32).collect();
+        for b in 0..2 {
+            for r in 0..3 {
+                for c in [0, 2] {
+                    expected[b * 12 + r * 4 + c] = 9.0;
+                }
+            }
+        }
+        assert_eq!(values, expected);
+    }
+
+    /// Stepped 2D row index in `slice_fill_impl`'s 2D-inner-contig
+    /// branch: tests the `row_step > 0` path with `row_step != 1`.
+    #[test]
+    fn test_slice_assign_broadcast_scalar_2d_stepped_rows() {
+        let data: Vec<f32> = (0..25).map(|i| i as f32).collect();
+        let tensor = FlexTensor::from_data(TensorData::new(data, [5, 5]));
+        // Step-2 rows pick out rows 0, 2, 4 (3 rows). Slice the inner
+        // dim as a contiguous range so the 2D-inner-contig branch with
+        // row_step != 1 fires.
+        let value = broadcast_scalar_f32(-1.0, &[3, 3]);
+        let slices = vec![Slice::new(0, Some(5), 2), Slice::new(1, Some(4), 1)];
+        let result = slice_assign(tensor, &slices, value);
+
+        let result_data = result.into_data();
+        let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
+        let mut expected: Vec<f32> = (0..25).map(|i| i as f32).collect();
+        for r in [0, 2, 4] {
+            for c in 1..4 {
+                expected[r * 5 + c] = -1.0;
+            }
+        }
+        assert_eq!(values, expected);
     }
 }

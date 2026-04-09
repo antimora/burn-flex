@@ -69,13 +69,14 @@ fn binary_op_f32<Op>(
 where
     Op: Fn(f32, f32) -> f32,
 {
-    // Permuted input + broadcast rhs (e.g. `x.permute(...) - mean`): the
-    // existing generic path would walk the permuted lhs with a scalar
-    // StridedIter, which is ~18x slower than ndarray on the ConvNeXt
-    // channels-last layer_norm composite (issue #64 item 2). Pay one
-    // memcpy to materialize lhs contiguous, then fall through to the
-    // SIMD fast paths below. The memcpy is strictly cheaper than the
-    // scalar fallback it replaces.
+    // Permuted input + broadcast rhs (e.g. `x.permute(...) - mean`):
+    // without this shortcut the generic path walks the permuted lhs
+    // with a scalar `StridedIter`, which is an order of magnitude
+    // slower than the SIMD fast path on the ConvNeXt channels-last
+    // layer_norm composite. Pay one memcpy to materialize lhs
+    // contiguous, then fall through to the SIMD fast paths below. The
+    // memcpy is strictly cheaper than the scalar fallback it replaces.
+    // See issue #64 item 2.
     if !lhs.layout().is_contiguous() && rhs.layout().strides().contains(&0) {
         lhs = lhs.to_contiguous();
     }
@@ -101,17 +102,20 @@ where
         return lhs;
     }
 
-    // Broadcast SIMD fast path: lhs contiguous at offset 0 (in-place or
-    // allocating), rhs broadcast via stride-0 dims. Handles the two hot
-    // patterns that dominate decomposed layer_norm:
-    //   (a) shared row  - rhs is `[..., 1, .., 1, R]` contiguous broadcast
-    //       on outer dims (e.g. `gamma.unsqueeze() * x`).
-    //   (b) per-row scalar - rhs is `[..., R_1, .., R_k, 1, .., 1]` with
-    //       stride 0 on the inner dims (e.g. `input - input.mean_dim(-1)`).
-    // Without this, both patterns fall through to `StridedIter` scalar
-    // loops which are 25-100x slower than ndarray. See issue #64 item 2.
+    // Broadcast SIMD fast path: lhs contiguous at offset 0 (in-place
+    // or allocating), rhs broadcast via stride-0 dims. Handles the
+    // two hot patterns that dominate decomposed layer_norm:
+    //   (a) shared row  - rhs is `[..., 1, .., 1, R]` contiguous
+    //       broadcast on outer dims (e.g. `gamma.unsqueeze() * x`).
+    //   (b) per-row scalar - rhs is `[..., R_1, .., R_k, 1, .., 1]`
+    //       with stride 0 on the inner dims (e.g.
+    //       `input - input.mean_dim(-1)`).
+    // Without this, both patterns fall through to `StridedIter`
+    // scalar loops that are orders of magnitude slower than the SIMD
+    // version. See issue #64 item 2.
     if let Some(simd_op) = simd_hint
-        && let Some(pattern) = detect_broadcast_pattern(lhs.layout(), rhs.layout())
+        && let Some(pattern) =
+            detect_broadcast_pattern(lhs.layout(), rhs.layout(), rhs.storage::<f32>().len())
     {
         return apply_broadcast_pattern_f32(lhs, rhs, simd_op, pattern);
     }
@@ -122,9 +126,11 @@ where
 
 /// Categorization of the two broadcast patterns we can accelerate.
 ///
-/// Tensors are always equal-shaped at this point because `binary_op`
-/// calls `broadcast_binary` before dispatching. These enums describe
-/// `rhs`'s stride layout relative to `lhs` (which must be row-contiguous).
+/// Invariant assumed by every consumer: `lhs` and `rhs` already share
+/// the same logical shape (the caller must have broadcast-expanded
+/// before constructing one of these), and `lhs` is row-contiguous at
+/// offset 0. The variants describe `rhs`'s stride layout relative to
+/// that canonical lhs view.
 #[derive(Debug, Clone, Copy)]
 enum BroadcastView {
     /// rhs's inner `row_len` elements form a contiguous row that is
@@ -149,10 +155,20 @@ enum BroadcastView {
 
 /// Detect whether rhs can be handled as one of the accelerated broadcast
 /// patterns. Returns `None` if lhs is not row-contiguous at offset 0, if
-/// the ranks don't match, or if rhs's stride pattern doesn't cleanly fit
-/// either bucket.
+/// the ranks don't match, if rhs's stride pattern doesn't cleanly fit
+/// either bucket, or if the resulting offsets would step outside rhs's
+/// storage.
+///
+/// `rhs_storage_elems` is the number of elements in rhs's underlying
+/// storage slice (not `rhs.num_elements()`, which counts the logical
+/// broadcast shape). It's used for a final bounds check so callers can
+/// blindly trust the returned offsets.
 #[cfg(feature = "simd")]
-fn detect_broadcast_pattern(lhs: &Layout, rhs: &Layout) -> Option<BroadcastView> {
+fn detect_broadcast_pattern(
+    lhs: &Layout,
+    rhs: &Layout,
+    rhs_storage_elems: usize,
+) -> Option<BroadcastView> {
     // Require lhs to be row-contiguous at offset 0. The broadcast kernel
     // below uses linear offsets into lhs's storage; relaxing this would
     // complicate the indexing without helping the hot layer_norm path.
@@ -177,8 +193,9 @@ fn detect_broadcast_pattern(lhs: &Layout, rhs: &Layout) -> Option<BroadcastView>
     // Layer-norm example: `normalized * gamma.unsqueeze()` where gamma
     // has shape `[C]` gets reshaped via `unsqueeze` to `[1, 1, C]` with
     // strides `[C, C, 1]`, then expanded to `[N, M, C]` producing
-    // strides `[C, 0, 1]`. The leading `C` stride is fine because
-    // `N == 1` in the hot ConvNeXt case; it just never gets stepped.
+    // strides `[C, 0, 1]`. The leading stride is irrelevant when the
+    // corresponding lhs dim is size 1 (the dim is never stepped past
+    // index 0).
     if last_stride == 1 {
         let outer_ok = (0..ndims - 1).all(|d| rhs_strides[d] == 0 || lhs_shape[d] == 1);
         if outer_ok {
@@ -189,10 +206,17 @@ fn detect_broadcast_pattern(lhs: &Layout, rhs: &Layout) -> Option<BroadcastView>
             if outer_count == 0 || row_len == 0 {
                 return None;
             }
+            // Bounds check: the kernel reads `rhs_storage[rhs_row_offset
+            // .. rhs_row_offset + row_len]`. Reject if that span would
+            // leave rhs's storage rather than letting the kernel panic.
+            let rhs_row_offset = rhs.start_offset();
+            if rhs_row_offset.checked_add(row_len)? > rhs_storage_elems {
+                return None;
+            }
             return Some(BroadcastView::SharedRow {
                 outer_count,
                 row_len,
-                rhs_row_offset: rhs.start_offset(),
+                rhs_row_offset,
             });
         }
     }
@@ -237,10 +261,19 @@ fn detect_broadcast_pattern(lhs: &Layout, rhs: &Layout) -> Option<BroadcastView>
         if outer_count == 0 || row_len == 0 {
             return None;
         }
+        // Bounds check: the kernel reads `rhs_storage[rhs_scalar_base +
+        // i]` for `i in 0..outer_count`. Reject if the last such index
+        // would leave rhs's storage rather than letting the kernel
+        // panic (paranoid: for layouts produced by `broadcast_binary`
+        // this is always in bounds, but hand-built Layouts may not be).
+        let rhs_scalar_base = rhs.start_offset();
+        if rhs_scalar_base.checked_add(outer_count)? > rhs_storage_elems {
+            return None;
+        }
         return Some(BroadcastView::PerRowScalar {
             outer_count,
             row_len,
-            rhs_scalar_base: rhs.start_offset(),
+            rhs_scalar_base,
         });
     }
 
@@ -1130,21 +1163,11 @@ mod tests {
     // Broadcast binary-op fast paths (issue #64 item 2)
     // ============================================================================
 
-    /// Shared-row broadcast: `[3, 4] - gamma.unsqueeze()` where
-    /// `gamma` is 1-D of length 4. After `unsqueeze` the rhs becomes
-    /// `[1, 4]`; broadcast_binary expands it to `[3, 4]` with strides
-    /// `[4, 1]`. With lhs shape `[3, 4]`, the first-dim size is >1 and
-    /// the outer rhs stride is `4`, not `0`. That stride pattern does
-    /// NOT match the "all outer strides zero" SharedRow detector as it
-    /// stood initially; the "size-1 dim exemption" added later lets it
-    /// through for ConvNeXt `[1, M, C]` inputs but this test covers
-    /// the standard broadcast where the detector must still reject
-    /// non-broadcast rhs with valid strides.
-    ///
-    /// Here the lhs has shape `[1, 3, 4]` and the rhs is
-    /// `gamma.unsqueeze()` = `[1, 1, 4]` → expanded to `[1, 3, 4]`
-    /// with strides `[4, 0, 1]`. dim 1 has stride 0 and dim 0 has size
-    /// 1, so SharedRow *does* apply.
+    /// Shared-row broadcast: lhs has shape `[1, 3, 4]` and rhs is a
+    /// 1-D `gamma` reshaped to `[1, 1, 4]` and expanded to `[1, 3, 4]`
+    /// with strides `[4, 0, 1]`. dim 1 has stride 0 and dim 0 has
+    /// size 1, so the detector's SharedRow case applies (the size-1
+    /// outer dim exemption covers the non-zero stride on dim 0).
     #[test]
     fn test_binary_shared_row_broadcast_f32() {
         let a = FlexTensor::from_data(TensorData::new(
@@ -1284,5 +1307,40 @@ mod tests {
 
         let data = result.into_data();
         assert_eq!(data.as_slice::<f32>().unwrap(), reference.as_slice());
+    }
+
+    /// Fully-broadcast scalar: rhs is a 1-element tensor expanded up to
+    /// match lhs's full rank, so every rhs stride is 0. This exercises
+    /// `detect_broadcast_pattern`'s `PerRowScalar` path with
+    /// `outer_ndims == 0` and `row_len == lhs.num_elements()`, where
+    /// the outer walk has exactly one iteration and the kernel applies
+    /// the single scalar across the whole destination in one scalar
+    /// loop. Important to cover because a bug in the empty-outer-dims
+    /// arithmetic (e.g. `outer_count = 0` instead of `1`) would
+    /// silently produce an empty result or panic on an OOB read.
+    #[test]
+    fn test_binary_fully_broadcast_scalar_f32() {
+        let a = FlexTensor::from_data(TensorData::new(
+            (0..12).map(|i| i as f32).collect::<Vec<_>>(),
+            vec![2, 2, 3],
+        ));
+        // 1-element tensor expanded to lhs's full shape. All strides
+        // become 0.
+        let scalar_tensor = FlexTensor::from_data(TensorData::new(vec![100.0f32], [1]));
+        let scalar_expanded = crate::ops::expand::expand(scalar_tensor, Shape::from(vec![2, 2, 3]));
+        // Sanity check: every stride is 0.
+        assert!(scalar_expanded.layout().strides().iter().all(|&s| s == 0));
+
+        let result = binary_op(
+            a,
+            scalar_expanded,
+            |a, b| a + b,
+            |a, b| a + b,
+            Some(BinaryOp::Add),
+        );
+
+        let expected: Vec<f32> = (0..12).map(|i| i as f32 + 100.0).collect();
+        let data = result.into_data();
+        assert_eq!(data.as_slice::<f32>().unwrap(), expected.as_slice());
     }
 }
