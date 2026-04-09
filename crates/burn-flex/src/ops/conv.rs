@@ -900,6 +900,16 @@ fn valid_out_range(
 /// previous `ci` iterations). The function reads each output element before
 /// writing, so an uninitialized buffer produces silent garbage.
 ///
+/// Loop order is `oh -> kh -> kw -> ow`. Keeping `oh` outermost means each
+/// output row stays hot in L1 across every kernel position we accumulate
+/// into it: for a `kh x kw` kernel we read/write that row `kh * kw` times
+/// but never evict it. The obvious alternative order (`kh -> kw -> oh -> ow`)
+/// walks the whole output plane for every kernel position, so on large
+/// planes each row is refetched `kh * kw` times from L2/DRAM -- a roughly
+/// `kh * kw`-fold amplification of output memory traffic. For shapes like
+/// Sobel `1x5 / 5x1` on RGB, where the plane is ~1 MB and the kernel does
+/// 5 passes, that is the dominant cost.
+///
 /// Shared by `conv3d_depthwise_impl` and `conv3d_small_channel_impl`. Marked
 /// `inline(always)` so every call site gets a monomorphized copy where LLVM can
 /// see the concrete inner loop pattern and emit SIMD fmuladd. Using
@@ -924,28 +934,36 @@ fn conv_plane_accumulate<T: num_traits::Float + Copy>(
     oh_ranges: &[(usize, usize)],
     ow_ranges: &[(usize, usize)],
 ) {
-    for kh in 0..kernel_h {
-        let (oh_start, oh_end) = oh_ranges[kh];
-        if oh_start >= oh_end {
-            continue;
-        }
-        for kw in 0..kernel_w {
-            let (ow_start, ow_end) = ow_ranges[kw];
-            if ow_start >= ow_end {
+    // out_plane is a per-(batch, channel) slice of shape [out_h, out_w] stored
+    // contiguously, so out_h follows directly from the slice length.
+    let out_h = out_plane.len() / out_w;
+
+    for oh in 0..out_h {
+        let out_row = &mut out_plane[oh * out_w..(oh + 1) * out_w];
+
+        for kh in 0..kernel_h {
+            let (oh_start, oh_end) = oh_ranges[kh];
+            // Skip kernel rows that fall outside the padded image at this oh.
+            if oh < oh_start || oh >= oh_end {
                 continue;
             }
-            let w_val = w_plane[kh * kernel_w + kw];
-            // All terms are non-negative because ow_start was chosen so that
-            // the corresponding `iw` is in bounds.
-            let iw_start = ow_start * stride_w + kw * dilation_w - pad_w;
-            let run_len = ow_end - ow_start;
-            for oh in oh_start..oh_end {
-                let ih = oh * stride_h + kh * dilation_h - pad_h;
-                let in_row = &in_plane[ih * in_w..(ih + 1) * in_w];
-                let out_row = &mut out_plane[oh * out_w..(oh + 1) * out_w];
+            let ih = oh * stride_h + kh * dilation_h - pad_h;
+            let in_row = &in_plane[ih * in_w..(ih + 1) * in_w];
+
+            for kw in 0..kernel_w {
+                let (ow_start, ow_end) = ow_ranges[kw];
+                if ow_start >= ow_end {
+                    continue;
+                }
+                let w_val = w_plane[kh * kernel_w + kw];
+                // All terms are non-negative because ow_start was chosen so
+                // that the corresponding `iw` is in bounds.
+                let iw_start = ow_start * stride_w + kw * dilation_w - pad_w;
+
                 if stride_w == 1 {
                     // Contiguous input and output slices let LLVM emit SIMD
                     // fmuladd over the range.
+                    let run_len = ow_end - ow_start;
                     let in_slice = &in_row[iw_start..iw_start + run_len];
                     let out_slice = &mut out_row[ow_start..ow_end];
                     for (o, &xv) in out_slice.iter_mut().zip(in_slice.iter()) {
