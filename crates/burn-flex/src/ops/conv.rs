@@ -891,6 +891,26 @@ fn valid_out_range(
     (out_start, out_end)
 }
 
+/// Output-plane element count above which `conv_plane_accumulate` switches
+/// from the `kh, kw, oh, ow` "kh-outer" loop order to `oh, kh, kw, ow`
+/// "oh-outer".
+///
+/// Below the threshold the whole plane fits comfortably in L1 (~32 KB on
+/// most modern CPUs), so the hardware prefetcher tracks the regular
+/// `oh`-stride access and the kh-outer order amortizes per-kernel-position
+/// setup over long inner runs. Above the threshold the plane no longer
+/// fits, and the kh-outer order refetches the output from L2/DRAM once
+/// per `(kh, kw)` pair: a `kh * kw`-fold amplification of output memory
+/// traffic. Flipping to oh-outer pins one output row in L1 across every
+/// kernel position and traverses the plane exactly once.
+///
+/// 8192 f32 elements = 32 KB, i.e. L1 data-cache size on M3/M4 Max and
+/// most modern x86 server parts. The gap in the conv benchmarks is clean:
+/// every depthwise shape that regressed under pure oh-outer was <= 3136
+/// elements, while the Sobel / preproc / mask shapes that win under
+/// oh-outer are all > 65000 elements.
+const CONV_PLANE_OH_OUTER_THRESHOLD: usize = 8192;
+
 /// Accumulate one 2D conv plane: `out_plane += conv2d(in_plane, w_plane)` using
 /// the precomputed analytic `oh_ranges`/`ow_ranges` to skip padding checks in
 /// the inner loop.
@@ -900,14 +920,139 @@ fn valid_out_range(
 /// previous `ci` iterations). The function reads each output element before
 /// writing, so an uninitialized buffer produces silent garbage.
 ///
-/// Shared by `conv3d_depthwise_impl` and `conv3d_small_channel_impl`. Marked
-/// `inline(always)` so every call site gets a monomorphized copy where LLVM can
-/// see the concrete inner loop pattern and emit SIMD fmuladd. Using
-/// `num_traits::Float` bounds (rather than fn-pointer arithmetic) is load-
-/// bearing for vectorization.
-#[inline(always)]
+/// Dispatches to one of two loop orders based on `out_plane.len()`; see
+/// `CONV_PLANE_OH_OUTER_THRESHOLD` for the tradeoff. Shared by
+/// `conv3d_depthwise_impl` and `conv3d_small_channel_impl`. The dispatcher
+/// is `#[inline]` (not `inline(always)`) so the runtime length branch lives
+/// once at each call site instead of inlining both variants; the variants
+/// themselves stay `inline(always)` so LLVM sees the concrete inner loop
+/// pattern and emits SIMD fmuladd. Using `num_traits::Float` bounds (rather
+/// than fn-pointer arithmetic) is load-bearing for vectorization.
+#[inline]
 #[allow(clippy::too_many_arguments)]
 fn conv_plane_accumulate<T: num_traits::Float + Copy>(
+    out_plane: &mut [T],
+    in_plane: &[T],
+    w_plane: &[T],
+    kernel_h: usize,
+    kernel_w: usize,
+    in_w: usize,
+    out_w: usize,
+    stride_h: usize,
+    stride_w: usize,
+    pad_h: usize,
+    pad_w: usize,
+    dilation_h: usize,
+    dilation_w: usize,
+    oh_ranges: &[(usize, usize)],
+    ow_ranges: &[(usize, usize)],
+) {
+    if out_plane.len() > CONV_PLANE_OH_OUTER_THRESHOLD {
+        conv_plane_accumulate_oh_outer(
+            out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h, stride_w,
+            pad_h, pad_w, dilation_h, dilation_w, oh_ranges, ow_ranges,
+        );
+    } else {
+        conv_plane_accumulate_kh_outer(
+            out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h, stride_w,
+            pad_h, pad_w, dilation_h, dilation_w, oh_ranges, ow_ranges,
+        );
+    }
+}
+
+/// `oh`-outermost variant. Pins one output row in L1 across every kernel
+/// position that accumulates into it, so each row is touched exactly once
+/// regardless of how large the full output plane is. Selected when the
+/// plane exceeds L1 (see `CONV_PLANE_OH_OUTER_THRESHOLD`).
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn conv_plane_accumulate_oh_outer<T: num_traits::Float + Copy>(
+    out_plane: &mut [T],
+    in_plane: &[T],
+    w_plane: &[T],
+    kernel_h: usize,
+    kernel_w: usize,
+    in_w: usize,
+    out_w: usize,
+    stride_h: usize,
+    stride_w: usize,
+    pad_h: usize,
+    pad_w: usize,
+    dilation_h: usize,
+    dilation_w: usize,
+    oh_ranges: &[(usize, usize)],
+    ow_ranges: &[(usize, usize)],
+) {
+    // An empty plane or zero-width output is a trivial no-op. This also
+    // guards the divide below against `out_w == 0`, which is not reachable
+    // from the in-tree callers (burn's `calculate_conv_output_size` is
+    // always >= 1 for valid inputs) but would otherwise panic if some
+    // future caller handed us a degenerate slice.
+    if out_plane.is_empty() || out_w == 0 {
+        return;
+    }
+
+    // out_plane is a per-(batch, channel) slice of shape [out_h, out_w]
+    // stored contiguously; both call sites produce it by disjoint splitting
+    // of a `vec![zero; batch * channels * out_h * out_w]` allocation, so
+    // the length is always an exact multiple of `out_w`. The `debug_assert`
+    // turns that documentary invariant into an enforceable one.
+    debug_assert_eq!(
+        out_plane.len() % out_w,
+        0,
+        "out_plane length must be a whole number of rows"
+    );
+    let out_h = out_plane.len() / out_w;
+
+    for oh in 0..out_h {
+        let out_row = &mut out_plane[oh * out_w..(oh + 1) * out_w];
+
+        for kh in 0..kernel_h {
+            let (oh_start, oh_end) = oh_ranges[kh];
+            // Skip kernel rows that fall outside the padded image at this oh.
+            if oh < oh_start || oh >= oh_end {
+                continue;
+            }
+            let ih = oh * stride_h + kh * dilation_h - pad_h;
+            let in_row = &in_plane[ih * in_w..(ih + 1) * in_w];
+
+            for kw in 0..kernel_w {
+                let (ow_start, ow_end) = ow_ranges[kw];
+                if ow_start >= ow_end {
+                    continue;
+                }
+                let w_val = w_plane[kh * kernel_w + kw];
+                // All terms are non-negative because ow_start was chosen so
+                // that the corresponding `iw` is in bounds.
+                let iw_start = ow_start * stride_w + kw * dilation_w - pad_w;
+
+                if stride_w == 1 {
+                    let run_len = ow_end - ow_start;
+                    let in_slice = &in_row[iw_start..iw_start + run_len];
+                    let out_slice = &mut out_row[ow_start..ow_end];
+                    for (o, &xv) in out_slice.iter_mut().zip(in_slice.iter()) {
+                        *o = *o + w_val * xv;
+                    }
+                } else {
+                    let mut iw = iw_start;
+                    for o in &mut out_row[ow_start..ow_end] {
+                        *o = *o + w_val * in_row[iw];
+                        iw += stride_w;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `kh, kw`-outermost variant. Amortizes per-kernel-position setup over
+/// long regular `oh` runs that the hardware prefetcher can track.
+/// Selected when the whole output plane already fits in L1 (see
+/// `CONV_PLANE_OH_OUTER_THRESHOLD`): the oh-outer trick buys nothing
+/// there and the extra per-iteration bookkeeping slightly hurts.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn conv_plane_accumulate_kh_outer<T: num_traits::Float + Copy>(
     out_plane: &mut [T],
     in_plane: &[T],
     w_plane: &[T],
@@ -935,8 +1080,6 @@ fn conv_plane_accumulate<T: num_traits::Float + Copy>(
                 continue;
             }
             let w_val = w_plane[kh * kernel_w + kw];
-            // All terms are non-negative because ow_start was chosen so that
-            // the corresponding `iw` is in bounds.
             let iw_start = ow_start * stride_w + kw * dilation_w - pad_w;
             let run_len = ow_end - ow_start;
             for oh in oh_start..oh_end {
@@ -944,8 +1087,6 @@ fn conv_plane_accumulate<T: num_traits::Float + Copy>(
                 let in_row = &in_plane[ih * in_w..(ih + 1) * in_w];
                 let out_row = &mut out_plane[oh * out_w..(oh + 1) * out_w];
                 if stride_w == 1 {
-                    // Contiguous input and output slices let LLVM emit SIMD
-                    // fmuladd over the range.
                     let in_slice = &in_row[iw_start..iw_start + run_len];
                     let out_slice = &mut out_row[ow_start..ow_end];
                     for (o, &xv) in out_slice.iter_mut().zip(in_slice.iter()) {
@@ -2779,6 +2920,78 @@ mod tests {
         // Cross-check c_in == 5 against naive reference (this goes through
         // the generic conv3d_impl path, not the small-channel path).
         check_small_channel_conv2d_f32(1, 5, 4, 8, 8, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    // The tests below exercise `conv_plane_accumulate_oh_outer`, the variant
+    // selected when the output plane exceeds `CONV_PLANE_OH_OUTER_THRESHOLD`
+    // (8192 elements). Every test above this point uses shapes where the plane
+    // is <= 256 elements and stays on the kh-outer variant; without these,
+    // the oh-outer code path ships uncovered.
+    //
+    // 96x96 = 9216 > 8192, so one element past the threshold. 97x97 = 9409
+    // leaves a little more slack in case someone nudges the threshold.
+
+    #[test]
+    fn test_conv2d_depthwise_oh_outer_k3x3() {
+        // Depthwise path, oh-outer dispatch, 3x3 kernel, stride 1.
+        // Plane = 96 * 96 = 9216 elements.
+        check_depthwise_conv2d_f32(1, 2, 96, 96, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_oh_outer_k3x3_stride2() {
+        // Depthwise, oh-outer, stride 2: exercises the `stride_w != 1`
+        // inner branch inside the oh-outer variant. Plane = 96*96 = 9216.
+        check_depthwise_conv2d_f32(1, 2, 192, 192, 3, 3, [2, 2], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_oh_outer_k5x1() {
+        // Depthwise, oh-outer, 5x1 asymmetric kernel: the exact shape
+        // pattern that motivated the loop reorder (Sobel-style separable
+        // filter on a large plane). Plane = 97*97 = 9409.
+        check_depthwise_conv2d_f32(1, 2, 97, 97, 5, 1, [1, 1], [2, 0], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_oh_outer_k1x5() {
+        // Depthwise, oh-outer, 1x5 asymmetric kernel. Plane = 97*97 = 9409.
+        check_depthwise_conv2d_f32(1, 2, 97, 97, 1, 5, [1, 1], [0, 2], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_k3x3() {
+        // Small-channel path, oh-outer dispatch, stride 1.
+        // Plane = 96 * 96 = 9216.
+        check_small_channel_conv2d_f32(1, 3, 4, 96, 96, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_k3x3_stride2() {
+        // Small-channel, oh-outer, stride 2: exercises the stride != 1
+        // inner branch through small-channel dispatch. Plane = 96*96.
+        check_small_channel_conv2d_f32(1, 3, 4, 192, 192, 3, 3, [2, 2], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_k5x1_sobel() {
+        // Small-channel, oh-outer, 5x1 asymmetric kernel: the shape from
+        // the user-reported Sobel regression on RGB, on a plane large
+        // enough to cross the threshold. Plane = 97*97 = 9409.
+        check_small_channel_conv2d_f32(1, 3, 3, 97, 97, 5, 1, [1, 1], [2, 0], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_k1x5_sobel() {
+        // Small-channel, oh-outer, 1x5 asymmetric kernel. Plane = 97*97.
+        check_small_channel_conv2d_f32(1, 3, 3, 97, 97, 1, 5, [1, 1], [0, 2], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_with_bias_and_dilation() {
+        // Small-channel, oh-outer, with bias and dilation > 1.
+        // Plane = 96*96 = 9216.
+        check_small_channel_conv2d_f32(1, 3, 8, 100, 100, 3, 3, [1, 1], [2, 2], [2, 2], true);
     }
 
     #[test]

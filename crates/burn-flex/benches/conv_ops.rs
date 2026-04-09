@@ -304,6 +304,33 @@ macro_rules! bench_backend {
                 }
 
                 #[divan::bench]
+                fn sobel_1x3x488x448_k1x5(bencher: Bencher) {
+                    // 1x5 Sobel pass. Separable filter, runs on RGB.
+                    let x = make_input_2d::<B>(1, 3, 488, 448);
+                    let w = make_kernel_2d::<B>(3, 3, 1, 5);
+                    let opts = ConvOptions::new([1, 1], [0, 2], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn sobel_1x3x488x448_k5x1(bencher: Bencher) {
+                    // 5x1 Sobel pass. Separable filter, runs on RGB.
+                    let x = make_input_2d::<B>(1, 3, 488, 448);
+                    let w = make_kernel_2d::<B>(3, 3, 5, 1);
+                    let opts = ConvOptions::new([1, 1], [2, 0], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn downsample_1x4x128x128_k4x4_s2_to12(bencher: Bencher) {
+                    // 4 in, 12 out, 4x4 kernel, stride 2. Small downsample stem.
+                    let x = make_input_2d::<B>(1, 4, 128, 128);
+                    let w = make_kernel_2d::<B>(12, 4, 4, 4);
+                    let opts = ConvOptions::new([2, 2], [1, 1], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
                 fn preproc_1x3x488x448_k5x5_to8(bencher: Bencher) {
                     // First-stage image preprocessor: 3 in, 8 out, 5x5.
                     let x = make_input_2d::<B>(1, 3, 488, 448);
