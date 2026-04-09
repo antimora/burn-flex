@@ -935,19 +935,18 @@ fn conv_plane_accumulate<T: num_traits::Float + Copy>(
                 continue;
             }
             let w_val = w_plane[kh * kernel_w + kw];
-            // All terms in iw_start are non-negative because ow_start was
-            // chosen so that the corresponding `iw` is in bounds.
+            // All terms are non-negative because ow_start was chosen so that
+            // the corresponding `iw` is in bounds.
             let iw_start = ow_start * stride_w + kw * dilation_w - pad_w;
+            let run_len = ow_end - ow_start;
             for oh in oh_start..oh_end {
                 let ih = oh * stride_h + kh * dilation_h - pad_h;
                 let in_row = &in_plane[ih * in_w..(ih + 1) * in_w];
                 let out_row = &mut out_plane[oh * out_w..(oh + 1) * out_w];
                 if stride_w == 1 {
-                    // Contiguous input and output slices: the inner loop body
-                    // is a classic fused multiply-add across a contiguous
-                    // range that autovectorizes on every target supported by
-                    // burn-flex.
-                    let in_slice = &in_row[iw_start..iw_start + (ow_end - ow_start)];
+                    // Contiguous input and output slices let LLVM emit SIMD
+                    // fmuladd over the range.
+                    let in_slice = &in_row[iw_start..iw_start + run_len];
                     let out_slice = &mut out_row[ow_start..ow_end];
                     for (o, &xv) in out_slice.iter_mut().zip(in_slice.iter()) {
                         *o = *o + w_val * xv;
@@ -1036,9 +1035,7 @@ where
     let out_spatial = out_h * out_w;
     let k_spatial = kernel_h * kernel_w;
 
-    // Precompute per-(kh) input row indices and per-(kh) valid oh ranges,
-    // and per-(kw) valid ow ranges. All values are the same for every (b, c),
-    // so computing them once avoids redoing it inside the hot loop.
+    // Valid oh/ow ranges are identical for every (b, c), so precompute once.
     let oh_ranges: Vec<(usize, usize)> = (0..kernel_h)
         .map(|kh| valid_out_range(kh, dilation_h, pad_h, stride_h, in_h, out_h))
         .collect();
@@ -1048,73 +1045,71 @@ where
 
     let mut output = vec![zero; total];
 
+    // Per-plane work for one `(batch, channel)` pair. Output slice is passed
+    // in so the rayon and sequential dispatch paths can source it differently
+    // (from a raw pointer or a direct borrow) without duplicating this body.
+    let plane_work = |bc: usize, out_plane: &mut [T]| {
+        let c = bc % channels;
+        let in_base = bc * in_spatial;
+        let w_base = c * k_spatial;
+        conv_plane_accumulate(
+            out_plane,
+            &x_data[in_base..in_base + in_spatial],
+            &w_data[w_base..w_base + k_spatial],
+            kernel_h,
+            kernel_w,
+            in_w,
+            out_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            &oh_ranges,
+            &ow_ranges,
+        );
+    };
+
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
 
         let dst_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
-
-        // Parallelize over the flattened (batch, channel) index. This gives
-        // batch_size * channels independent planes, which on typical shapes
-        // (e.g. B=4, C=48 -> 192) is plenty of work for rayon and has ideal
-        // load balance since every plane does the same amount of compute.
         (0..batch_size * channels).into_par_iter().for_each(|bc| {
-            let b = bc / channels;
-            let c = bc % channels;
-            let out_base = (b * channels + c) * out_spatial;
-            let in_base = (b * channels + c) * in_spatial;
-            let w_base = c * k_spatial;
-
-            // SAFETY: each `bc` owns a disjoint `out_spatial`-sized slice of
-            // the output buffer, so no two threads write overlapping ranges.
-            let out_plane: &mut [T] =
-                unsafe { core::slice::from_raw_parts_mut(dst_ptr.ptr_add(out_base), out_spatial) };
-            let in_plane = &x_data[in_base..in_base + in_spatial];
-            let w_plane = &w_data[w_base..w_base + k_spatial];
-            conv_plane_accumulate(
-                out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h, stride_w,
-                pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
-            );
+            // SAFETY: disjoint `[bc * out_spatial, (bc+1) * out_spatial)`
+            // ranges tile the output buffer.
+            let out_plane: &mut [T] = unsafe {
+                core::slice::from_raw_parts_mut(dst_ptr.ptr_add(bc * out_spatial), out_spatial)
+            };
+            plane_work(bc, out_plane);
         });
     }
     #[cfg(not(feature = "rayon"))]
     {
-        for b in 0..batch_size {
-            for c in 0..channels {
-                let out_base = (b * channels + c) * out_spatial;
-                let in_base = (b * channels + c) * in_spatial;
-                let w_base = c * k_spatial;
-                let out_plane = &mut output[out_base..out_base + out_spatial];
-                let in_plane = &x_data[in_base..in_base + in_spatial];
-                let w_plane = &w_data[w_base..w_base + k_spatial];
-                conv_plane_accumulate(
-                    out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h,
-                    stride_w, pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
-                );
-            }
+        for bc in 0..batch_size * channels {
+            let out_base = bc * out_spatial;
+            plane_work(bc, &mut output[out_base..out_base + out_spatial]);
         }
     }
 
     if let Some(bias) = bias {
         let bias = bias.to_contiguous();
         let bias_data: &[T] = bias.storage();
-        // Length is asserted (not `.take()`-truncated) so a mismatch panics
-        // loudly instead of silently dropping bias for the trailing channels.
         assert_eq!(
             bias_data.len(),
             channels,
             "conv depthwise: bias length ({}) must equal channels ({channels})",
             bias_data.len()
         );
-        for b in 0..batch_size {
-            for (c, &bias_val) in bias_data.iter().enumerate() {
-                let base = (b * channels + c) * out_spatial;
-                let plane = &mut output[base..base + out_spatial];
-                for o in plane.iter_mut() {
-                    *o = *o + bias_val;
-                }
-            }
-        }
+        add_bias(
+            &mut output,
+            bias_data,
+            batch_size,
+            channels,
+            out_spatial,
+            |a, b| a + b,
+        );
     }
 
     let out_shape = Shape::from(vec![batch_size, channels, 1, out_h, out_w]);
@@ -1274,80 +1269,79 @@ where
 
     let mut output = vec![zero; total];
 
-    // For each `(batch, out_channel)` we accumulate
-    //   out[b, co] += sum over ci of conv2d(in[b, ci], w[co, ci])
-    // by calling conv_plane_accumulate once per input channel.
+    // Per-plane work for one `(batch, out_channel)` pair. Accumulates
+    // `sum over ci of conv2d(in[b, ci], w[co, ci])` into `out_plane` by
+    // calling the shared helper once per input channel.
+    let plane_work = |b_co: usize, out_plane: &mut [T]| {
+        let b = b_co / channels_out;
+        let co = b_co % channels_out;
+        for ci in 0..channels_in {
+            let in_base = b * x_batch_stride + ci * in_spatial;
+            let w_base = co * w_co_stride + ci * k_spatial;
+            conv_plane_accumulate(
+                out_plane,
+                &x_data[in_base..in_base + in_spatial],
+                &w_data[w_base..w_base + k_spatial],
+                kernel_h,
+                kernel_w,
+                in_w,
+                out_w,
+                stride_h,
+                stride_w,
+                pad_h,
+                pad_w,
+                dilation_h,
+                dilation_w,
+                &oh_ranges,
+                &ow_ranges,
+            );
+        }
+    };
+
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
 
         let dst_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
-
         (0..batch_size * channels_out)
             .into_par_iter()
             .for_each(|b_co| {
-                let b = b_co / channels_out;
-                let co = b_co % channels_out;
-                let out_base = (b * channels_out + co) * out_spatial;
-
-                // SAFETY: each `b_co` owns a disjoint `out_spatial` slice of
-                // the output buffer, so no two threads write overlapping
-                // ranges.
+                // SAFETY: disjoint `[b_co * out_spatial, (b_co+1) * out_spatial)`
+                // ranges tile the output buffer.
                 let out_plane: &mut [T] = unsafe {
-                    core::slice::from_raw_parts_mut(dst_ptr.ptr_add(out_base), out_spatial)
+                    core::slice::from_raw_parts_mut(
+                        dst_ptr.ptr_add(b_co * out_spatial),
+                        out_spatial,
+                    )
                 };
-                for ci in 0..channels_in {
-                    let in_base = b * x_batch_stride + ci * in_spatial;
-                    let w_base = co * w_co_stride + ci * k_spatial;
-                    let in_plane = &x_data[in_base..in_base + in_spatial];
-                    let w_plane = &w_data[w_base..w_base + k_spatial];
-                    conv_plane_accumulate(
-                        out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h,
-                        stride_w, pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
-                    );
-                }
+                plane_work(b_co, out_plane);
             });
     }
     #[cfg(not(feature = "rayon"))]
     {
-        for b in 0..batch_size {
-            for co in 0..channels_out {
-                let out_base = (b * channels_out + co) * out_spatial;
-                let out_plane = &mut output[out_base..out_base + out_spatial];
-                for ci in 0..channels_in {
-                    let in_base = b * x_batch_stride + ci * in_spatial;
-                    let w_base = co * w_co_stride + ci * k_spatial;
-                    let in_plane = &x_data[in_base..in_base + in_spatial];
-                    let w_plane = &w_data[w_base..w_base + k_spatial];
-                    conv_plane_accumulate(
-                        out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h,
-                        stride_w, pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
-                    );
-                }
-            }
+        for b_co in 0..batch_size * channels_out {
+            let out_base = b_co * out_spatial;
+            plane_work(b_co, &mut output[out_base..out_base + out_spatial]);
         }
     }
 
     if let Some(bias) = bias {
         let bias = bias.to_contiguous();
         let bias_data: &[T] = bias.storage();
-        // Length is asserted (not `.take()`-truncated) so a mismatch panics
-        // loudly instead of silently dropping bias for the trailing channels.
         assert_eq!(
             bias_data.len(),
             channels_out,
             "conv small-channel: bias length ({}) must equal channels_out ({channels_out})",
             bias_data.len()
         );
-        for b in 0..batch_size {
-            for (co, &bias_val) in bias_data.iter().enumerate() {
-                let base = (b * channels_out + co) * out_spatial;
-                let plane = &mut output[base..base + out_spatial];
-                for o in plane.iter_mut() {
-                    *o = *o + bias_val;
-                }
-            }
-        }
+        add_bias(
+            &mut output,
+            bias_data,
+            batch_size,
+            channels_out,
+            out_spatial,
+            |a, b| a + b,
+        );
     }
 
     let out_shape = Shape::from(vec![batch_size, channels_out, 1, out_h, out_w]);
