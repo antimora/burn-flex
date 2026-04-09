@@ -10,6 +10,10 @@
 //! - NHWC layout: Convert to channels-last for cache-friendly access
 //! - Nested parallelism: Batch and tile dimensions run in parallel via rayon
 //! - 1x1 fast path: Skip im2col for pointwise convolutions
+//! - Depthwise fast path: For canonical depthwise (groups == c_in == c_out,
+//!   channels_per_group == 1), skip NHWC conversion, im2col, and gemm entirely.
+//!   Uses a direct per-(b, c) accumulate with analytic bounds so the inner
+//!   spatial loop has no padding checks and autovectorizes.
 //! - Direct conv path: For small-spatial 1D-like convolutions, decompose into
 //!   per-kernel-position gemm calls on NCHW data, skipping NHWC conversion and im2col
 //!
@@ -44,9 +48,9 @@ macro_rules! conv3d_1x1_typed {
     };
 }
 
-/// Generates a conv3d typed function with 1x1 and direct fast-path checks.
+/// Generates a conv3d typed function with 1x1, depthwise, and direct fast-path checks.
 macro_rules! conv3d_typed {
-    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr, $fn_1x1:ident $(, $fn_direct:ident)?) => {
+    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr, $fn_1x1:ident, $fn_depthwise:ident $(, $fn_direct:ident)?) => {
         pub fn $fn_name(
             x: FlexTensor,
             weight: FlexTensor,
@@ -57,8 +61,11 @@ macro_rules! conv3d_typed {
             if is_1x1_conv(w_shape[2], w_shape[3], w_shape[4], options) {
                 return $fn_1x1(x, weight, bias, options);
             }
+            let x_shape = x.layout().shape();
+            if should_use_depthwise_conv(x_shape, w_shape, options) {
+                return $fn_depthwise(x, weight, bias, options);
+            }
             $(
-                let x_shape = x.layout().shape();
                 if should_use_direct_conv(x_shape, w_shape, options) {
                     return $fn_direct(x, weight, bias, options);
                 }
@@ -186,6 +193,7 @@ conv3d_typed!(
     gemm_f32,
     |a, b| a + b,
     conv3d_1x1_f32,
+    conv3d_depthwise_f32,
     conv3d_direct_f32
 );
 conv3d_typed!(
@@ -196,6 +204,7 @@ conv3d_typed!(
     gemm_f64,
     |a, b| a + b,
     conv3d_1x1_f64,
+    conv3d_depthwise_f64,
     conv3d_direct_f64
 );
 conv3d_typed!(
@@ -205,7 +214,8 @@ conv3d_typed!(
     f16::from_f32(0.0),
     gemm_f16,
     |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()),
-    conv3d_1x1_f16
+    conv3d_1x1_f16,
+    conv3d_depthwise_f16
 );
 bf16_via_f32!(conv3d_bf16, conv3d_f32, 3, ConvOptions);
 
@@ -780,6 +790,311 @@ conv3d_1x1_typed!(
     f16::from_f32(1.0),
     |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32())
 );
+
+// ============================================================================
+// Depthwise conv fast path (no NHWC, no im2col, no gemm)
+// ============================================================================
+//
+// For canonical depthwise convolutions where every input channel maps to
+// exactly one output channel through its own filter (groups == c_in == c_out,
+// channels_per_group == 1), the generic im2col + per-group gemm path pays
+// enormous overhead:
+//
+//   - Per (tile, group) heap allocation of a col_tile buffer.
+//   - Per (tile, group) gemm dispatch with M=1, K=kernel_spatial, N=tile_size.
+//     The gemm kernel's setup cost dominates the tiny inner compute.
+//   - Full NHWC conversion of the input even though no channel mixing occurs.
+//
+// The depthwise path drops all three. It walks NCHW data directly and, for
+// each (batch, channel), accumulates the convolution by looping over kernel
+// positions on the outside and spatial positions on the inside. The valid
+// output range for each kernel position is computed analytically so the
+// inner spatial loop has no padding checks and LLVM autovectorizes it in
+// the common stride=1, dilation=1 case.
+
+/// Decide whether to use the depthwise fast path.
+///
+/// Triggers on canonical depthwise 1D or 2D convolutions (restricted to
+/// `kd == 1 && in_d == 1` after the 3D expansion used by conv1d/conv2d).
+fn should_use_depthwise_conv(
+    x_shape: &[usize],
+    w_shape: &[usize],
+    options: &ConvOptions<3>,
+) -> bool {
+    let channels_in = x_shape[1];
+    let channels_out = w_shape[0];
+    let channels_per_group = w_shape[1];
+    let groups = options.groups;
+
+    // Canonical depthwise: one input channel per group, one output channel per group.
+    if channels_per_group != 1 || groups != channels_in || channels_out != channels_in {
+        return false;
+    }
+
+    // Only the 1D/2D-in-3D shapes (kd=1, in_d=1) produced by the conv1d/conv2d
+    // expansion. Pure 3D depthwise would need additional loop nesting.
+    if w_shape[2] != 1 || x_shape[2] != 1 {
+        return false;
+    }
+    if options.stride[0] != 1 || options.padding[0] != 0 || options.dilation[0] != 1 {
+        return false;
+    }
+
+    true
+}
+
+/// Compute the half-open range `[out_start, out_end)` of output positions `o`
+/// for which the corresponding input index `o * stride + k * dilation - pad`
+/// lies inside `[0, in_size)`.
+#[inline]
+fn valid_out_range(
+    k: usize,
+    dilation: usize,
+    pad: usize,
+    stride: usize,
+    in_size: usize,
+    out_size: usize,
+) -> (usize, usize) {
+    debug_assert!(stride >= 1, "stride must be >= 1");
+    let offset = k * dilation;
+
+    // Lower: smallest o with o*stride + offset >= pad.
+    let out_start = if offset >= pad {
+        0
+    } else {
+        (pad - offset).div_ceil(stride)
+    };
+
+    // Upper (exclusive): smallest o with o*stride + offset - pad >= in_size,
+    // i.e. smallest o with o*stride >= in_size + pad - offset.
+    let threshold = in_size + pad;
+    let out_end = if offset >= threshold {
+        0
+    } else {
+        (threshold - offset).div_ceil(stride)
+    };
+
+    let out_end = out_end.min(out_size);
+    let out_start = out_start.min(out_end);
+    (out_start, out_end)
+}
+
+macro_rules! conv3d_depthwise_typed {
+    ($fn_name:ident, $T:ty, $dtype:expr) => {
+        fn $fn_name(
+            x: FlexTensor,
+            weight: FlexTensor,
+            bias: Option<FlexTensor>,
+            options: &ConvOptions<3>,
+        ) -> FlexTensor {
+            conv3d_depthwise_impl::<$T>(x, weight, bias, options, $dtype)
+        }
+    };
+}
+
+conv3d_depthwise_typed!(conv3d_depthwise_f32, f32, DType::F32);
+conv3d_depthwise_typed!(conv3d_depthwise_f64, f64, DType::F64);
+conv3d_depthwise_typed!(conv3d_depthwise_f16, f16, DType::F16);
+
+/// Depthwise conv3d: one filter per channel, no channel mixing.
+///
+/// Preconditions (checked by `should_use_depthwise_conv`):
+/// - `channels_per_group == 1`
+/// - `groups == channels_in == channels_out`
+/// - `kernel_d == 1`, `in_d == 1`, trivial d-axis options.
+///
+/// Uses `num_traits::Float` bounds so the inner multiply-accumulate compiles
+/// down to direct `fmul`/`fadd` instructions that LLVM can autovectorize.
+/// Function-pointer arithmetic (`fn(T, T) -> T`) would prevent vectorization
+/// because each call is an indirect branch that blocks the loop pattern match.
+fn conv3d_depthwise_impl<T>(
+    x: FlexTensor,
+    weight: FlexTensor,
+    bias: Option<FlexTensor>,
+    options: &ConvOptions<3>,
+    dtype: DType,
+) -> FlexTensor
+where
+    T: num_traits::Float + bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + Sync,
+{
+    let zero = <T as num_traits::Zero>::zero();
+    let x = x.to_contiguous();
+    let weight = weight.to_contiguous();
+
+    let x_shape = x.layout().shape();
+    let w_shape = weight.layout().shape();
+
+    let batch_size = x_shape[0];
+    let channels = x_shape[1];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
+
+    let kernel_h = w_shape[3];
+    let kernel_w = w_shape[4];
+
+    let [_, stride_h, stride_w] = options.stride;
+    let [_, pad_h, pad_w] = options.padding;
+    let [_, dilation_h, dilation_w] = options.dilation;
+
+    let out_h = calculate_conv_output_size(kernel_h, stride_h, pad_h, dilation_h, in_h);
+    let out_w = calculate_conv_output_size(kernel_w, stride_w, pad_w, dilation_w, in_w);
+
+    let total = [batch_size, channels, out_h, out_w]
+        .iter()
+        .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+        .expect("conv depthwise: output dimensions would overflow");
+
+    let x_data: &[T] = x.storage();
+    let w_data: &[T] = weight.storage();
+
+    let in_spatial = in_h * in_w;
+    let out_spatial = out_h * out_w;
+    let k_spatial = kernel_h * kernel_w;
+
+    // Precompute per-(kh) input row indices and per-(kh) valid oh ranges,
+    // and per-(kw) valid ow ranges. All values are the same for every (b, c),
+    // so computing them once avoids redoing it inside the hot loop.
+    let oh_ranges: Vec<(usize, usize)> = (0..kernel_h)
+        .map(|kh| valid_out_range(kh, dilation_h, pad_h, stride_h, in_h, out_h))
+        .collect();
+    let ow_ranges: Vec<(usize, usize)> = (0..kernel_w)
+        .map(|kw| valid_out_range(kw, dilation_w, pad_w, stride_w, in_w, out_w))
+        .collect();
+
+    let mut output = vec![zero; total];
+
+    // Work function for one (batch, channel) pair.
+    //
+    // Marked `inline(always)` so the monomorphized body is emitted directly
+    // at each call site. The inner `out_slice += w_val * in_slice` loop has
+    // to inline and specialize cleanly for LLVM to emit SIMD fmuladd.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn compute_plane<T: num_traits::Float + Copy>(
+        out_plane: &mut [T],
+        in_plane: &[T],
+        w_plane: &[T],
+        kernel_h: usize,
+        kernel_w: usize,
+        in_w: usize,
+        out_w: usize,
+        stride_h: usize,
+        stride_w: usize,
+        pad_h: usize,
+        pad_w: usize,
+        dilation_h: usize,
+        dilation_w: usize,
+        oh_ranges: &[(usize, usize)],
+        ow_ranges: &[(usize, usize)],
+    ) {
+        for kh in 0..kernel_h {
+            let (oh_start, oh_end) = oh_ranges[kh];
+            if oh_start >= oh_end {
+                continue;
+            }
+            for kw in 0..kernel_w {
+                let (ow_start, ow_end) = ow_ranges[kw];
+                if ow_start >= ow_end {
+                    continue;
+                }
+                let w_val = w_plane[kh * kernel_w + kw];
+                // All terms in iw_start are non-negative because ow_start
+                // was chosen so that the corresponding `iw` is in bounds.
+                let iw_start = ow_start * stride_w + kw * dilation_w - pad_w;
+                for oh in oh_start..oh_end {
+                    let ih = oh * stride_h + kh * dilation_h - pad_h;
+                    let in_row = &in_plane[ih * in_w..(ih + 1) * in_w];
+                    let out_row = &mut out_plane[oh * out_w..(oh + 1) * out_w];
+                    if stride_w == 1 {
+                        // Contiguous input and output slices: the inner loop
+                        // body is a classic fused multiply-add across a
+                        // contiguous range that autovectorizes on every target
+                        // supported by burn-flex.
+                        let in_slice = &in_row[iw_start..iw_start + (ow_end - ow_start)];
+                        let out_slice = &mut out_row[ow_start..ow_end];
+                        for (o, &xv) in out_slice.iter_mut().zip(in_slice.iter()) {
+                            *o = *o + w_val * xv;
+                        }
+                    } else {
+                        let mut iw = iw_start;
+                        for o in &mut out_row[ow_start..ow_end] {
+                            *o = *o + w_val * in_row[iw];
+                            iw += stride_w;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+
+        let dst_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
+
+        // Parallelize over the flattened (batch, channel) index. This gives
+        // batch_size * channels independent planes, which on typical shapes
+        // (e.g. B=4, C=48 -> 192) is plenty of work for rayon and has ideal
+        // load balance since every plane does the same amount of compute.
+        (0..batch_size * channels).into_par_iter().for_each(|bc| {
+            let b = bc / channels;
+            let c = bc % channels;
+            let out_base = (b * channels + c) * out_spatial;
+            let in_base = (b * channels + c) * in_spatial;
+            let w_base = c * k_spatial;
+
+            // SAFETY: each `bc` owns a disjoint `out_spatial`-sized slice of
+            // the output buffer, so no two threads write overlapping ranges.
+            let out_plane: &mut [T] =
+                unsafe { core::slice::from_raw_parts_mut(dst_ptr.ptr_add(out_base), out_spatial) };
+            let in_plane = &x_data[in_base..in_base + in_spatial];
+            let w_plane = &w_data[w_base..w_base + k_spatial];
+            compute_plane(
+                out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h, stride_w,
+                pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
+            );
+        });
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        for b in 0..batch_size {
+            for c in 0..channels {
+                let out_base = (b * channels + c) * out_spatial;
+                let in_base = (b * channels + c) * in_spatial;
+                let w_base = c * k_spatial;
+                let out_plane = &mut output[out_base..out_base + out_spatial];
+                let in_plane = &x_data[in_base..in_base + in_spatial];
+                let w_plane = &w_data[w_base..w_base + k_spatial];
+                compute_plane(
+                    out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h,
+                    stride_w, pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
+                );
+            }
+        }
+    }
+
+    if let Some(bias) = bias {
+        let bias = bias.to_contiguous();
+        let bias_data: &[T] = bias.storage();
+        for b in 0..batch_size {
+            for (c, &bias_val) in bias_data.iter().enumerate().take(channels) {
+                let base = (b * channels + c) * out_spatial;
+                let plane = &mut output[base..base + out_spatial];
+                for o in plane.iter_mut() {
+                    *o = *o + bias_val;
+                }
+            }
+        }
+    }
+
+    let out_shape = Shape::from(vec![batch_size, channels, 1, out_h, out_w]);
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(out_shape),
+        dtype,
+    )
+}
 
 // ============================================================================
 // Direct conv path for small spatial sizes (no im2col)
@@ -1468,5 +1783,356 @@ mod tests {
         for (a, e) in out.iter().zip(expected.iter()) {
             assert!((a.to_f32() - e).abs() < 0.5);
         }
+    }
+
+    // ========================================================================
+    // Depthwise conv fast-path tests
+    // ========================================================================
+    //
+    // These tests exercise `conv3d_depthwise_impl` and cross-check against a
+    // naive reference to catch any indexing, bounds, or accumulation mistakes.
+
+    /// Naive NCHW depthwise conv2d reference implementation.
+    /// Returns output with shape `[batch, channels, out_h, out_w]`.
+    #[allow(clippy::too_many_arguments)]
+    fn naive_depthwise_conv2d_f32(
+        x: &[f32],
+        w: &[f32],
+        bias: Option<&[f32]>,
+        batch: usize,
+        channels: usize,
+        in_h: usize,
+        in_w: usize,
+        kernel_h: usize,
+        kernel_w: usize,
+        stride_h: usize,
+        stride_w: usize,
+        pad_h: usize,
+        pad_w: usize,
+        dilation_h: usize,
+        dilation_w: usize,
+    ) -> (Vec<f32>, usize, usize) {
+        let out_h = (in_h + 2 * pad_h - dilation_h * (kernel_h - 1) - 1) / stride_h + 1;
+        let out_w = (in_w + 2 * pad_w - dilation_w * (kernel_w - 1) - 1) / stride_w + 1;
+        let mut out = vec![0.0f32; batch * channels * out_h * out_w];
+        for b in 0..batch {
+            for c in 0..channels {
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let mut acc = 0.0f32;
+                        for kh in 0..kernel_h {
+                            let ih = oh as isize * stride_h as isize
+                                + kh as isize * dilation_h as isize
+                                - pad_h as isize;
+                            if ih < 0 || ih >= in_h as isize {
+                                continue;
+                            }
+                            for kw in 0..kernel_w {
+                                let iw = ow as isize * stride_w as isize
+                                    + kw as isize * dilation_w as isize
+                                    - pad_w as isize;
+                                if iw < 0 || iw >= in_w as isize {
+                                    continue;
+                                }
+                                let x_idx =
+                                    ((b * channels + c) * in_h + ih as usize) * in_w + iw as usize;
+                                let w_idx = (c * kernel_h + kh) * kernel_w + kw;
+                                acc += x[x_idx] * w[w_idx];
+                            }
+                        }
+                        if let Some(bias) = bias {
+                            acc += bias[c];
+                        }
+                        let o_idx = ((b * channels + c) * out_h + oh) * out_w + ow;
+                        out[o_idx] = acc;
+                    }
+                }
+            }
+        }
+        (out, out_h, out_w)
+    }
+
+    /// Build deterministic pseudo-random input for a depthwise test.
+    fn seeded_vec_f32(n: usize, seed: u32) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                let v = ((i as u32).wrapping_mul(2654435761).wrapping_add(seed)) & 0xffff;
+                (v as f32 / 32768.0) - 1.0
+            })
+            .collect()
+    }
+
+    /// Shared helper: run conv2d via the public dispatch (which must pick the
+    /// depthwise path for these shapes) and compare to the naive reference.
+    #[allow(clippy::too_many_arguments)]
+    fn check_depthwise_conv2d_f32(
+        batch: usize,
+        channels: usize,
+        in_h: usize,
+        in_w: usize,
+        kernel_h: usize,
+        kernel_w: usize,
+        stride: [usize; 2],
+        padding: [usize; 2],
+        dilation: [usize; 2],
+        with_bias: bool,
+    ) {
+        let x_vec = seeded_vec_f32(batch * channels * in_h * in_w, 1);
+        let w_vec = seeded_vec_f32(channels * kernel_h * kernel_w, 2);
+        let bias_vec = if with_bias {
+            Some(seeded_vec_f32(channels, 3))
+        } else {
+            None
+        };
+
+        let (expected, out_h, out_w) = naive_depthwise_conv2d_f32(
+            &x_vec,
+            &w_vec,
+            bias_vec.as_deref(),
+            batch,
+            channels,
+            in_h,
+            in_w,
+            kernel_h,
+            kernel_w,
+            stride[0],
+            stride[1],
+            padding[0],
+            padding[1],
+            dilation[0],
+            dilation[1],
+        );
+
+        let x = FlexTensor::from_data(TensorData::new(x_vec, vec![batch, channels, in_h, in_w]));
+        let weight = FlexTensor::from_data(TensorData::new(
+            w_vec,
+            vec![channels, 1, kernel_h, kernel_w],
+        ));
+        let bias = bias_vec.map(|v| FlexTensor::from_data(TensorData::new(v, vec![channels])));
+        let options = ConvOptions::new(stride, padding, dilation, channels);
+        let result = conv2d_f32(x, weight, bias, &options);
+
+        assert_eq!(
+            result.layout().shape().to_vec(),
+            vec![batch, channels, out_h, out_w],
+            "output shape mismatch"
+        );
+
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(out.len(), expected.len());
+        for (i, (a, e)) in out.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (a - e).abs() < 1e-4,
+                "mismatch at {i}: got {a}, expected {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_3x3_no_pad() {
+        // Canonical depthwise: groups == channels_in == channels_out = 8, 3x3.
+        check_depthwise_conv2d_f32(2, 8, 16, 16, 3, 3, [1, 1], [0, 0], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_3x3_pad1() {
+        // Same input and output size via padding=1.
+        check_depthwise_conv2d_f32(2, 8, 16, 16, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_3x3_stride2_pad1() {
+        // Halve spatial via stride 2, with padding.
+        check_depthwise_conv2d_f32(1, 16, 32, 32, 3, 3, [2, 2], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_5x5_pad2() {
+        check_depthwise_conv2d_f32(2, 4, 10, 10, 5, 5, [1, 1], [2, 2], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_7x7_pad3() {
+        // Large kernel like ConvNeXt's 7x7 depthwise.
+        check_depthwise_conv2d_f32(2, 24, 14, 14, 7, 7, [1, 1], [3, 3], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_dilated() {
+        // Dilation 2 means the effective receptive field is 5x5 but with gaps.
+        check_depthwise_conv2d_f32(1, 8, 12, 12, 3, 3, [1, 1], [2, 2], [2, 2], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_with_bias() {
+        check_depthwise_conv2d_f32(2, 8, 8, 8, 3, 3, [1, 1], [1, 1], [1, 1], true);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_single_channel() {
+        // groups = channels_in = 1 is a degenerate depthwise which should
+        // still go through this path (it also looks identical to an
+        // ungrouped 1-channel conv, but validates the range math).
+        check_depthwise_conv2d_f32(1, 1, 5, 5, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_asymmetric_kernel() {
+        // Non-square kernel.
+        check_depthwise_conv2d_f32(1, 4, 8, 12, 3, 5, [1, 1], [1, 2], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_f64() {
+        // Smoke test f64 dispatch through depthwise path.
+        let x_data: Vec<f64> = (0..2 * 4 * 5 * 5).map(|i| (i as f64) * 0.1).collect();
+        let w_data: Vec<f64> = (0..4 * 3 * 3).map(|i| (i as f64) * 0.01).collect();
+        let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![2, 4, 5, 5]));
+        let weight = FlexTensor::from_data(TensorData::new(w_data.clone(), vec![4, 1, 3, 3]));
+        let options = ConvOptions::new([1, 1], [1, 1], [1, 1], 4);
+        let result = conv2d_f64(x, weight, None, &options);
+        let out: Vec<f64> = result.into_data().to_vec().unwrap();
+
+        // Verify against a naive f64 reference for one element (center of channel 2).
+        let b = 0usize;
+        let c = 2usize;
+        let oh = 2usize;
+        let ow = 2usize;
+        let mut expected = 0.0f64;
+        for kh in 0..3 {
+            for kw in 0..3 {
+                let ih = oh as isize + kh as isize - 1;
+                let iw = ow as isize + kw as isize - 1;
+                if ih >= 0 && ih < 5 && iw >= 0 && iw < 5 {
+                    let x_idx = ((b * 4 + c) * 5 + ih as usize) * 5 + iw as usize;
+                    let w_idx = (c * 3 + kh) * 3 + kw;
+                    expected += x_data[x_idx] * w_data[w_idx];
+                }
+            }
+        }
+        let out_idx = ((b * 4 + c) * 5 + oh) * 5 + ow;
+        assert!((out[out_idx] - expected).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_f16() {
+        // Smoke test f16 dispatch through depthwise path.
+        use burn_std::f16;
+        let x_data: Vec<f16> = (0..16).map(|i| f16::from_f32(i as f32 * 0.1)).collect();
+        let w_data: Vec<f16> = (0..16).map(|i| f16::from_f32(i as f32 * 0.01)).collect();
+        let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 4, 2, 2]));
+        let weight = FlexTensor::from_data(TensorData::new(w_data, vec![4, 1, 2, 2]));
+        let options = ConvOptions::new([1, 1], [0, 0], [1, 1], 4);
+        let result = conv2d_f16(x, weight, None, &options);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 4, 1, 1]);
+    }
+
+    #[test]
+    fn test_conv1d_depthwise() {
+        // conv1d -> conv3d expansion (kd=kh=1), depthwise on the last axis.
+        let channels = 4;
+        let in_w = 16;
+        let kw = 3;
+        let x_data = seeded_vec_f32(channels * in_w, 10);
+        let w_data = seeded_vec_f32(channels * kw, 20);
+        let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![1, channels, in_w]));
+        let weight = FlexTensor::from_data(TensorData::new(w_data.clone(), vec![channels, 1, kw]));
+        let options = ConvOptions::new([1], [1], [1], channels);
+        let result = conv1d_f32(x, weight, None, &options);
+        let out_w = in_w;
+        assert_eq!(result.layout().shape().to_vec(), vec![1, channels, out_w]);
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // Naive reference.
+        for c in 0..channels {
+            for o in 0..out_w {
+                let mut expected = 0.0f32;
+                for k in 0..kw {
+                    let i = o as isize + k as isize - 1;
+                    if i >= 0 && i < in_w as isize {
+                        expected += x_data[c * in_w + i as usize] * w_data[c * kw + k];
+                    }
+                }
+                let actual = out[c * out_w + o];
+                assert!(
+                    (actual - expected).abs() < 1e-5,
+                    "conv1d depthwise mismatch at c={c}, o={o}: expected {expected}, got {actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_conv1d_depthwise_stride_batch_bias() {
+        // Depthwise conv1d with batch > 1, stride > 1, padding, and bias.
+        // conv1d flows through the same conv3d_depthwise_impl as conv2d
+        // because conv1d expands to a 3D shape with kd=kh=1. This test
+        // validates the full dispatch path with a non-trivial stride.
+        let batch = 3;
+        let channels = 6;
+        let in_w = 32;
+        let kw = 5;
+        let stride = 2;
+        let pad = 2;
+        let out_w = (in_w + 2 * pad - kw) / stride + 1;
+
+        let x_data = seeded_vec_f32(batch * channels * in_w, 30);
+        let w_data = seeded_vec_f32(channels * kw, 40);
+        let bias_data = seeded_vec_f32(channels, 50);
+
+        let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![batch, channels, in_w]));
+        let weight = FlexTensor::from_data(TensorData::new(w_data.clone(), vec![channels, 1, kw]));
+        let bias = FlexTensor::from_data(TensorData::new(bias_data.clone(), vec![channels]));
+        let options = ConvOptions::new([stride], [pad], [1], channels);
+        let result = conv1d_f32(x, weight, Some(bias), &options);
+        assert_eq!(
+            result.layout().shape().to_vec(),
+            vec![batch, channels, out_w]
+        );
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        // Naive reference.
+        for b in 0..batch {
+            for c in 0..channels {
+                for o in 0..out_w {
+                    let mut expected = bias_data[c];
+                    for k in 0..kw {
+                        let i = (o as isize * stride as isize) + k as isize - pad as isize;
+                        if i >= 0 && i < in_w as isize {
+                            let x_idx = (b * channels + c) * in_w + i as usize;
+                            let w_idx = c * kw + k;
+                            expected += x_data[x_idx] * w_data[w_idx];
+                        }
+                    }
+                    let actual = out[(b * channels + c) * out_w + o];
+                    assert!(
+                        (actual - expected).abs() < 1e-4,
+                        "conv1d depthwise mismatch at b={b}, c={c}, o={o}: expected {expected}, got {actual}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_valid_out_range_basics() {
+        // Sanity checks for the analytic range helper.
+        // 3x3, no pad, stride 1: every k position produces the full range.
+        let (s, e) = valid_out_range(0, 1, 0, 1, 5, 3);
+        assert_eq!((s, e), (0, 3));
+        let (s, e) = valid_out_range(2, 1, 0, 1, 5, 3);
+        assert_eq!((s, e), (0, 3));
+        // 3x3, pad 1, stride 1: kernel position 0 needs o*1 + 0 >= 1 -> o >= 1.
+        let (s, e) = valid_out_range(0, 1, 1, 1, 5, 5);
+        assert_eq!((s, e), (1, 5));
+        // kernel position 2 needs o*1 + 2 - 1 < 5 -> o < 4.
+        let (s, e) = valid_out_range(2, 1, 1, 1, 5, 5);
+        assert_eq!((s, e), (0, 4));
+        // stride 2: o*2 + 0 in [0, in). With in=5, out=3: o in [0, 3).
+        let (s, e) = valid_out_range(0, 1, 0, 2, 5, 3);
+        assert_eq!((s, e), (0, 3));
+        // dilation 2, pad 2, stride 1: kernel position 0 iw = o*1 + 0 - 2 -> o >= 2.
+        let (s, e) = valid_out_range(0, 2, 2, 1, 5, 5);
+        assert_eq!((s, e), (2, 5));
     }
 }

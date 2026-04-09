@@ -228,6 +228,48 @@ macro_rules! bench_backend {
                 }
             }
 
+            // Depthwise conv1d (groups == channels_in == channels_out).
+            // These flow through the same conv3d_depthwise_impl fast path as
+            // conv2d because conv1d expands to a trivial 3D shape (kd=kh=1).
+            #[divan::bench_group(name = "conv1d_depthwise")]
+            mod conv1d_depthwise {
+                use super::*;
+
+                #[divan::bench]
+                fn depthwise_k3_8x32x512(bencher: Bencher) {
+                    let x = make_input_1d::<B>(8, 32, 512);
+                    let w = make_kernel_1d::<B>(32, 1, 3);
+                    let opts = ConvOptions::new([1], [1], [1], 32);
+                    bencher.bench(|| module::conv1d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn depthwise_k7_8x64x1024(bencher: Bencher) {
+                    let x = make_input_1d::<B>(8, 64, 1024);
+                    let w = make_kernel_1d::<B>(64, 1, 7);
+                    let opts = ConvOptions::new([1], [3], [1], 64);
+                    bencher.bench(|| module::conv1d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn depthwise_k15_4x128x2048(bencher: Bencher) {
+                    // Larger receptive field, dilation 1. Tests the common
+                    // ConvNeXt-1d / audio separable conv case.
+                    let x = make_input_1d::<B>(4, 128, 2048);
+                    let w = make_kernel_1d::<B>(128, 1, 15);
+                    let opts = ConvOptions::new([1], [7], [1], 128);
+                    bencher.bench(|| module::conv1d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn depthwise_k3_stride2_8x64x1024(bencher: Bencher) {
+                    let x = make_input_1d::<B>(8, 64, 1024);
+                    let w = make_kernel_1d::<B>(64, 1, 3);
+                    let opts = ConvOptions::new([2], [1], [1], 64);
+                    bencher.bench(|| module::conv1d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+            }
+
             #[divan::bench_group(name = "conv2d_kernel_sizes")]
             mod conv2d_kernel_sizes {
                 use super::*;
@@ -261,6 +303,66 @@ macro_rules! bench_backend {
                     let x = make_input_2d::<B>(4, 64, 56, 56);
                     let w = make_kernel_2d::<B>(128, 64, 7, 7);
                     let opts = ConvOptions::new([1, 1], [3, 3], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+            }
+
+            // Depthwise (groups == channels_in == channels_out). Shapes cover
+            // MobileNet/ConvNeXt style depthwise blocks and a ConvNeXt-7x7
+            // block reported in a user regression on burn-ndarray parity.
+            #[divan::bench_group(name = "conv2d_depthwise")]
+            mod conv2d_depthwise {
+                use super::*;
+
+                #[divan::bench]
+                fn depthwise_3x3_4x32x56x56(bencher: Bencher) {
+                    let x = make_input_2d::<B>(4, 32, 56, 56);
+                    let w = make_kernel_2d::<B>(32, 1, 3, 3);
+                    let opts = ConvOptions::new([1, 1], [1, 1], [1, 1], 32);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn depthwise_3x3_4x96x28x28(bencher: Bencher) {
+                    let x = make_input_2d::<B>(4, 96, 28, 28);
+                    let w = make_kernel_2d::<B>(96, 1, 3, 3);
+                    let opts = ConvOptions::new([1, 1], [1, 1], [1, 1], 96);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn depthwise_3x3_4x192x14x14(bencher: Bencher) {
+                    let x = make_input_2d::<B>(4, 192, 14, 14);
+                    let w = make_kernel_2d::<B>(192, 1, 3, 3);
+                    let opts = ConvOptions::new([1, 1], [1, 1], [1, 1], 192);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn depthwise_7x7_4x24x56x56(bencher: Bencher) {
+                    // ConvNeXt-style 7x7 depthwise. This shape was 3x slower
+                    // than burn-ndarray before the depthwise fast path landed.
+                    let x = make_input_2d::<B>(4, 24, 56, 56);
+                    let w = make_kernel_2d::<B>(24, 1, 7, 7);
+                    let opts = ConvOptions::new([1, 1], [3, 3], [1, 1], 24);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn depthwise_7x7_4x48x56x56(bencher: Bencher) {
+                    // Another regressed shape (channels_out = 48).
+                    let x = make_input_2d::<B>(4, 48, 56, 56);
+                    let w = make_kernel_2d::<B>(48, 1, 7, 7);
+                    let opts = ConvOptions::new([1, 1], [3, 3], [1, 1], 48);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn depthwise_3x3_stride2_4x64x56x56(bencher: Bencher) {
+                    // Downsampling depthwise 3x3.
+                    let x = make_input_2d::<B>(4, 64, 56, 56);
+                    let w = make_kernel_2d::<B>(64, 1, 3, 3);
+                    let opts = ConvOptions::new([2, 2], [1, 1], [1, 1], 64);
                     bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
                 }
             }
