@@ -123,3 +123,7 @@ harness = false
 [[bench]]
 name = "fft_ops"
 harness = false
+
+[[bench]]
+name = "norm_ops"
+harness = false
