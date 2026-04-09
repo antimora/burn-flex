@@ -2272,15 +2272,38 @@ mod tests {
 
     #[test]
     fn test_conv2d_depthwise_f16() {
-        // Smoke test f16 dispatch through depthwise path.
+        // Validate f16 depthwise dispatch against a naive f32 reference.
+        // Shape check alone would miss indexing/accumulation bugs that still
+        // happen to produce the right shape.
         use burn_std::f16;
-        let x_data: Vec<f16> = (0..16).map(|i| f16::from_f32(i as f32 * 0.1)).collect();
-        let w_data: Vec<f16> = (0..16).map(|i| f16::from_f32(i as f32 * 0.01)).collect();
+        let x_data_f32: Vec<f32> = (0..16).map(|i| i as f32 * 0.1).collect();
+        let w_data_f32: Vec<f32> = (0..16).map(|i| i as f32 * 0.01).collect();
+        let x_data: Vec<f16> = x_data_f32.iter().copied().map(f16::from_f32).collect();
+        let w_data: Vec<f16> = w_data_f32.iter().copied().map(f16::from_f32).collect();
         let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 4, 2, 2]));
         let weight = FlexTensor::from_data(TensorData::new(w_data, vec![4, 1, 2, 2]));
         let options = ConvOptions::new([1, 1], [0, 0], [1, 1], 4);
         let result = conv2d_f16(x, weight, None, &options);
         assert_eq!(result.layout().shape().to_vec(), vec![1, 4, 1, 1]);
+        let out: Vec<f16> = result.into_data().to_vec().unwrap();
+
+        // Depthwise: out[c] = sum over (kh, kw) of x[c, kh, kw] * w[c, 0, kh, kw].
+        // The input per-channel is 4 elements (2x2) and the kernel is 2x2, so
+        // there's exactly one output pixel per channel.
+        for c in 0..4 {
+            let mut expected = 0.0f32;
+            for k in 0..4 {
+                // c * 4 indexes into channel c's 2x2 plane; both x and w share
+                // the same [c, ...] offset because the depthwise weight layout
+                // is [c_out, 1, kh, kw].
+                expected += x_data_f32[c * 4 + k] * w_data_f32[c * 4 + k];
+            }
+            let actual = out[c].to_f32();
+            assert!(
+                (actual - expected).abs() < 1e-2,
+                "f16 depthwise mismatch at c={c}: expected {expected}, got {actual}"
+            );
+        }
     }
 
     #[test]
@@ -2589,29 +2612,47 @@ mod tests {
 
     #[test]
     fn test_conv2d_small_channel_f16() {
-        // Smoke test f16 dispatch through the small-channel path. The f16
-        // monomorphization relies on `half::f16` satisfying `num_traits::Float`;
-        // a regression there would ship silently without this test.
+        // Validate f16 dispatch through the small-channel path by running
+        // the same shape through the f32 path and comparing element-wise.
+        // This catches indexing/accumulation bugs in addition to regressions
+        // in the `num_traits::Float` monomorphization for f16.
         use burn_std::f16;
-        let x_data: Vec<f16> = (0..3 * 4 * 4)
-            .map(|i| f16::from_f32(i as f32 * 0.1))
-            .collect();
-        let w_data: Vec<f16> = (0..4 * 3 * 3 * 3)
-            .map(|i| f16::from_f32(i as f32 * 0.01))
-            .collect();
-        let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 3, 4, 4]));
-        let weight = FlexTensor::from_data(TensorData::new(w_data, vec![4, 3, 3, 3]));
+        let x_data_f32: Vec<f32> = (0..3 * 4 * 4).map(|i| i as f32 * 0.1).collect();
+        let w_data_f32: Vec<f32> = (0..4 * 3 * 3 * 3).map(|i| i as f32 * 0.01).collect();
+
+        let x_data_f16: Vec<f16> = x_data_f32.iter().copied().map(f16::from_f32).collect();
+        let w_data_f16: Vec<f16> = w_data_f32.iter().copied().map(f16::from_f32).collect();
+
+        let x_f16 = FlexTensor::from_data(TensorData::new(x_data_f16, vec![1, 3, 4, 4]));
+        let weight_f16 = FlexTensor::from_data(TensorData::new(w_data_f16, vec![4, 3, 3, 3]));
+        let x_f32 = FlexTensor::from_data(TensorData::new(x_data_f32, vec![1, 3, 4, 4]));
+        let weight_f32 = FlexTensor::from_data(TensorData::new(w_data_f32, vec![4, 3, 3, 3]));
+
         let options = ConvOptions::new([1, 1], [1, 1], [1, 1], 1);
-        let result = conv2d_f16(x, weight, None, &options);
-        assert_eq!(result.layout().shape().to_vec(), vec![1, 4, 4, 4]);
-        // Ensure at least one output element is non-zero (not silently all NaN
-        // or all zero from an incorrectly specialized kernel).
-        let out: Vec<f16> = result.into_data().to_vec().unwrap();
-        assert!(
-            out.iter()
-                .any(|v| v.to_f32() != 0.0 && !v.to_f32().is_nan()),
-            "f16 small-channel output is all zero or NaN"
-        );
+        let result_f16 = conv2d_f16(x_f16, weight_f16, None, &options);
+        let result_f32 = conv2d_f32(x_f32, weight_f32, None, &options);
+        assert_eq!(result_f16.layout().shape().to_vec(), vec![1, 4, 4, 4]);
+        assert_eq!(result_f32.layout().shape().to_vec(), vec![1, 4, 4, 4]);
+
+        let out_f16: Vec<f16> = result_f16.into_data().to_vec().unwrap();
+        let out_f32: Vec<f32> = result_f32.into_data().to_vec().unwrap();
+        assert_eq!(out_f16.len(), out_f32.len());
+
+        // f16 has ~11 bits of mantissa (~0.1% relative precision). With
+        // accumulation across `c_in * k_spatial = 27` FMAs the relative
+        // error can grow to a few times that. Use a relative tolerance
+        // scaled by the expected magnitude with a small absolute floor for
+        // values near zero.
+        let rel_tol = 3e-3f32;
+        let abs_tol = 1e-2f32;
+        for (i, (actual, expected)) in out_f16.iter().zip(out_f32.iter()).enumerate() {
+            let actual_f32 = actual.to_f32();
+            let bound = (expected.abs() * rel_tol).max(abs_tol);
+            assert!(
+                !actual_f32.is_nan() && (actual_f32 - expected).abs() <= bound,
+                "f16 small-channel mismatch at {i}: got {actual_f32}, expected {expected}, bound {bound}"
+            );
+        }
     }
 
     #[test]
@@ -2738,6 +2779,70 @@ mod tests {
         // Cross-check c_in == 5 against naive reference (this goes through
         // the generic conv3d_impl path, not the small-channel path).
         check_small_channel_conv2d_f32(1, 5, 4, 8, 8, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_predicate_triggers() {
+        // Directly assert `should_use_depthwise_conv` returns true for
+        // representative canonical depthwise shapes, and false for shapes
+        // that look depthwise-ish but are not. Without this, a future change
+        // that tightens the predicate could silently revert depthwise shapes
+        // to the generic path while the correctness tests still pass.
+        //
+        // conv2d options expand to 3D as `[1, stride_h, stride_w]` etc., with
+        // the d-axis always trivial. conv1d expands with `kd == kh == 1` and
+        // `in_d == in_h == 1`.
+
+        // Canonical depthwise 3x3, groups == c_in == c_out == 32.
+        assert!(should_use_depthwise_conv(
+            &[4, 32, 1, 56, 56],
+            &[32, 1, 1, 3, 3],
+            &ConvOptions::new([1, 1, 1], [0, 1, 1], [1, 1, 1], 32),
+        ));
+        // Canonical depthwise 7x7, the ConvNeXt shape Thomas reported.
+        assert!(should_use_depthwise_conv(
+            &[4, 48, 1, 56, 56],
+            &[48, 1, 1, 7, 7],
+            &ConvOptions::new([1, 1, 1], [0, 3, 3], [1, 1, 1], 48),
+        ));
+        // Conv1d depthwise (kh == 1 via the conv1d -> conv3d expansion).
+        assert!(should_use_depthwise_conv(
+            &[8, 64, 1, 1, 1024],
+            &[64, 1, 1, 1, 3],
+            &ConvOptions::new([1, 1, 1], [0, 0, 1], [1, 1, 1], 64),
+        ));
+        // Strided + dilated depthwise.
+        assert!(should_use_depthwise_conv(
+            &[1, 16, 1, 32, 32],
+            &[16, 1, 1, 3, 3],
+            &ConvOptions::new([1, 2, 2], [0, 1, 1], [1, 2, 2], 16),
+        ));
+
+        // Not depthwise: groups == 1.
+        assert!(!should_use_depthwise_conv(
+            &[1, 8, 1, 16, 16],
+            &[16, 8, 1, 3, 3],
+            &ConvOptions::new([1, 1, 1], [0, 1, 1], [1, 1, 1], 1),
+        ));
+        // Not depthwise: channels_per_group > 1 (grouped but not depthwise).
+        assert!(!should_use_depthwise_conv(
+            &[1, 8, 1, 16, 16],
+            &[8, 4, 1, 3, 3],
+            &ConvOptions::new([1, 1, 1], [0, 1, 1], [1, 1, 1], 2),
+        ));
+        // Not depthwise: groups == c_in but c_out != c_in (depth multiplier
+        // > 1; the canonical depthwise path is restricted to multiplier 1).
+        assert!(!should_use_depthwise_conv(
+            &[1, 8, 1, 16, 16],
+            &[16, 1, 1, 3, 3],
+            &ConvOptions::new([1, 1, 1], [0, 1, 1], [1, 1, 1], 8),
+        ));
+        // Not depthwise: pure 3D with kd > 1 (the `d`-axis restriction).
+        assert!(!should_use_depthwise_conv(
+            &[1, 8, 4, 16, 16],
+            &[8, 1, 3, 3, 3],
+            &ConvOptions::new([1, 1, 1], [1, 1, 1], [1, 1, 1], 8),
+        ));
     }
 
     #[test]
