@@ -528,6 +528,61 @@ contiguous chunks directly.
 | 8x32x512   | 5      | 536 us  | 2.32 ms | **4.3x** |
 | 16x64x1024 | 7      | 5.17 ms | 50.7 ms | **9.8x** |
 
+### Depthwise Conv2d
+
+Canonical depthwise (`groups == channels_in == channels_out`, `channels_per_group == 1`) uses
+a dedicated direct-accumulate fast path that bypasses NHWC conversion, im2col, and gemm.
+Measured 2026-04-09.
+
+| Input       | Kernel | Flex   | NdArray | Speedup  |
+| ----------- | ------ | ------ | ------- | -------- |
+| 4x32x56x56  | 3x3    | 106 us | 282 us  | **2.7x** |
+| 4x96x28x28  | 3x3    | 115 us | 282 us  | **2.4x** |
+| 4x192x14x14 | 3x3    | 120 us | 296 us  | **2.5x** |
+| 4x64x56x56  | 3x3 s2 | 144 us | 336 us  | **2.3x** |
+| 4x24x56x56  | 7x7    | 185 us | 347 us  | **1.9x** |
+| 4x48x56x56  | 7x7    | 300 us | 565 us  | **1.9x** |
+
+The 7x7 `4x48x56x56` case (ConvNeXt-style block) was ~3.1 ms on the previous generic
+im2col+gemm path, so the depthwise path is also ~10x faster than the previous burn-flex
+implementation.
+
+### Depthwise Conv1d
+
+conv1d depthwise flows through the same fast path (conv1d expands to a 3D shape with
+`kd == kh == 1` before dispatch, which satisfies the depthwise trigger).
+
+| Input      | Kernel | Flex   | NdArray | Speedup   |
+| ---------- | ------ | ------ | ------- | --------- |
+| 8x32x512   | 3      | 78 us  | 396 us  | **5.1x**  |
+| 8x64x1024  | 3 s2   | 118 us | 917 us  | **7.7x**  |
+| 8x64x1024  | 7      | 114 us | 1.16 ms | **10.2x** |
+| 4x128x2048 | 15     | 206 us | 2.88 ms | **14.0x** |
+
+### Small-channel Conv2d (groups=1)
+
+For `groups=1` convs with `channels_in <= 4 && channels_out <= 16` (e.g. Sobel-style
+edge filters, single-channel mask networks, early image preprocessors), the same direct
+accumulate path is used. Gemm dispatch overhead dominates inner compute at these sizes
+and the NHWC conversion is pure memory traffic when channel count is already tiny.
+Measured 2026-04-09.
+
+| Input         | Kernel          | Flex    | NdArray | Speedup  |
+| ------------- | --------------- | ------- | ------- | -------- |
+| 1x3x488x448   | 3x3 `3->3`      | 694 us  | 763 us  | **1.1x** |
+| 1x3x488x448   | 1x3 `3->3`      | 278 us  | 364 us  | **1.3x** |
+| 1x3x488x448   | 3x1 `3->3`      | 253 us  | 350 us  | **1.4x** |
+| 1x3x488x448   | 5x5 `3->8`      | 1.98 ms | 2.59 ms | **1.3x** |
+| 1x1x256x256   | 3x3 `1->8`      | 201 us  | 173 us  | 0.86x    |
+
+On the previous generic im2col+gemm path, the 3x3 `3->3` case measured 2.03 ms and
+the 1x3 `3->3` case 1.13 ms, so the fast path is 2.9-4.7x faster than the previous
+burn-flex implementation.
+
+The `channels_out > 16` case (e.g. ImageNet first layer `3->64, 7x7, s2`) falls through
+to the generic gemm path where register tiling across output channels makes gemm
+competitive. Verified no regression on that shape: 2.84 ms vs burn-ndarray's 2.86 ms.
+
 ---
 
 ## Pooling

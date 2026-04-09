@@ -270,6 +270,69 @@ macro_rules! bench_backend {
                 }
             }
 
+            // Small-channel groups=1 convs (Sobel-style edge filters and
+            // first-stage image preprocessors). These were reported as a
+            // 2.6-3.3x slowdown vs burn-ndarray before the small-channel
+            // fast path landed.
+            #[divan::bench_group(name = "conv2d_small_channel")]
+            mod conv2d_small_channel {
+                use super::*;
+
+                #[divan::bench]
+                fn sobel_1x3x488x448_k3x3(bencher: Bencher) {
+                    // 3-channel image, same-padding 3x3, 3 output channels.
+                    let x = make_input_2d::<B>(1, 3, 488, 448);
+                    let w = make_kernel_2d::<B>(3, 3, 3, 3);
+                    let opts = ConvOptions::new([1, 1], [1, 1], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn sobel_1x3x488x448_k1x3(bencher: Bencher) {
+                    let x = make_input_2d::<B>(1, 3, 488, 448);
+                    let w = make_kernel_2d::<B>(3, 3, 1, 3);
+                    let opts = ConvOptions::new([1, 1], [0, 1], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn sobel_1x3x488x448_k3x1(bencher: Bencher) {
+                    let x = make_input_2d::<B>(1, 3, 488, 448);
+                    let w = make_kernel_2d::<B>(3, 3, 3, 1);
+                    let opts = ConvOptions::new([1, 1], [1, 0], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn preproc_1x3x488x448_k5x5_to8(bencher: Bencher) {
+                    // First-stage image preprocessor: 3 in, 8 out, 5x5.
+                    let x = make_input_2d::<B>(1, 3, 488, 448);
+                    let w = make_kernel_2d::<B>(8, 3, 5, 5);
+                    let opts = ConvOptions::new([1, 1], [2, 2], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn mask_1x1x256x256_k3x3_to8(bencher: Bencher) {
+                    // Single-channel mask input, early feature extractor.
+                    let x = make_input_2d::<B>(1, 1, 256, 256);
+                    let w = make_kernel_2d::<B>(8, 1, 3, 3);
+                    let opts = ConvOptions::new([1, 1], [1, 1], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+
+                #[divan::bench]
+                fn first_layer_4x3x224x224_k7x7_s2(bencher: Bencher) {
+                    // Classic ImageNet first layer: 3 in, 7x7, stride 2.
+                    // Output channels = 64 is large so gemm could compete;
+                    // this bench shows whether our path is at worst on par.
+                    let x = make_input_2d::<B>(4, 3, 224, 224);
+                    let w = make_kernel_2d::<B>(64, 3, 7, 7);
+                    let opts = ConvOptions::new([2, 2], [3, 3], [1, 1], 1);
+                    bencher.bench(|| module::conv2d::<B>(x.clone(), w.clone(), None, opts.clone()));
+                }
+            }
+
             #[divan::bench_group(name = "conv2d_kernel_sizes")]
             mod conv2d_kernel_sizes {
                 use super::*;

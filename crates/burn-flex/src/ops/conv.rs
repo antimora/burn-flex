@@ -14,6 +14,11 @@
 //!   channels_per_group == 1), skip NHWC conversion, im2col, and gemm entirely.
 //!   Uses a direct per-(b, c) accumulate with analytic bounds so the inner
 //!   spatial loop has no padding checks and autovectorizes.
+//! - Small-channel fast path: For groups=1 convs with very few input channels
+//!   (e.g. 3-channel Sobel-style edge filters), reuse the depthwise kernel by
+//!   accumulating over input channels. Skips the same NHWC/im2col/gemm overhead
+//!   as the depthwise path. Wins when `channels_in` is small enough that
+//!   gemm's per-dispatch setup cost dominates over the tiny inner compute.
 //! - Direct conv path: For small-spatial 1D-like convolutions, decompose into
 //!   per-kernel-position gemm calls on NCHW data, skipping NHWC conversion and im2col
 //!
@@ -48,9 +53,10 @@ macro_rules! conv3d_1x1_typed {
     };
 }
 
-/// Generates a conv3d typed function with 1x1, depthwise, and direct fast-path checks.
+/// Generates a conv3d typed function with 1x1, depthwise, small-channel, and
+/// direct fast-path checks.
 macro_rules! conv3d_typed {
-    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr, $fn_1x1:ident, $fn_depthwise:ident $(, $fn_direct:ident)?) => {
+    ($fn_name:ident, $T:ty, $dtype:expr, $zero:expr, $gemm_fn:ident, $add_fn:expr, $fn_1x1:ident, $fn_depthwise:ident, $fn_small_channel:ident $(, $fn_direct:ident)?) => {
         pub fn $fn_name(
             x: FlexTensor,
             weight: FlexTensor,
@@ -64,6 +70,9 @@ macro_rules! conv3d_typed {
             let x_shape = x.layout().shape();
             if should_use_depthwise_conv(x_shape, w_shape, options) {
                 return $fn_depthwise(x, weight, bias, options);
+            }
+            if should_use_small_channel_conv(x_shape, w_shape, options) {
+                return $fn_small_channel(x, weight, bias, options);
             }
             $(
                 if should_use_direct_conv(x_shape, w_shape, options) {
@@ -194,6 +203,7 @@ conv3d_typed!(
     |a, b| a + b,
     conv3d_1x1_f32,
     conv3d_depthwise_f32,
+    conv3d_small_channel_f32,
     conv3d_direct_f32
 );
 conv3d_typed!(
@@ -205,6 +215,7 @@ conv3d_typed!(
     |a, b| a + b,
     conv3d_1x1_f64,
     conv3d_depthwise_f64,
+    conv3d_small_channel_f64,
     conv3d_direct_f64
 );
 conv3d_typed!(
@@ -215,7 +226,8 @@ conv3d_typed!(
     gemm_f16,
     |a: f16, b: f16| f16::from_f32(a.to_f32() + b.to_f32()),
     conv3d_1x1_f16,
-    conv3d_depthwise_f16
+    conv3d_depthwise_f16,
+    conv3d_small_channel_f16
 );
 bf16_via_f32!(conv3d_bf16, conv3d_f32, 3, ConvOptions);
 
@@ -879,6 +891,74 @@ fn valid_out_range(
     (out_start, out_end)
 }
 
+/// Accumulate one 2D conv plane: `out_plane += conv2d(in_plane, w_plane)` using
+/// the precomputed analytic `oh_ranges`/`ow_ranges` to skip padding checks in
+/// the inner loop.
+///
+/// Shared by `conv3d_depthwise_impl` and `conv3d_small_channel_impl`. Marked
+/// `inline(always)` so every call site gets a monomorphized copy where LLVM can
+/// see the concrete inner loop pattern and emit SIMD fmuladd. Using
+/// `num_traits::Float` bounds (rather than fn-pointer arithmetic) is load-
+/// bearing for vectorization.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn conv_plane_accumulate<T: num_traits::Float + Copy>(
+    out_plane: &mut [T],
+    in_plane: &[T],
+    w_plane: &[T],
+    kernel_h: usize,
+    kernel_w: usize,
+    in_w: usize,
+    out_w: usize,
+    stride_h: usize,
+    stride_w: usize,
+    pad_h: usize,
+    pad_w: usize,
+    dilation_h: usize,
+    dilation_w: usize,
+    oh_ranges: &[(usize, usize)],
+    ow_ranges: &[(usize, usize)],
+) {
+    for kh in 0..kernel_h {
+        let (oh_start, oh_end) = oh_ranges[kh];
+        if oh_start >= oh_end {
+            continue;
+        }
+        for kw in 0..kernel_w {
+            let (ow_start, ow_end) = ow_ranges[kw];
+            if ow_start >= ow_end {
+                continue;
+            }
+            let w_val = w_plane[kh * kernel_w + kw];
+            // All terms in iw_start are non-negative because ow_start was
+            // chosen so that the corresponding `iw` is in bounds.
+            let iw_start = ow_start * stride_w + kw * dilation_w - pad_w;
+            for oh in oh_start..oh_end {
+                let ih = oh * stride_h + kh * dilation_h - pad_h;
+                let in_row = &in_plane[ih * in_w..(ih + 1) * in_w];
+                let out_row = &mut out_plane[oh * out_w..(oh + 1) * out_w];
+                if stride_w == 1 {
+                    // Contiguous input and output slices: the inner loop body
+                    // is a classic fused multiply-add across a contiguous
+                    // range that autovectorizes on every target supported by
+                    // burn-flex.
+                    let in_slice = &in_row[iw_start..iw_start + (ow_end - ow_start)];
+                    let out_slice = &mut out_row[ow_start..ow_end];
+                    for (o, &xv) in out_slice.iter_mut().zip(in_slice.iter()) {
+                        *o = *o + w_val * xv;
+                    }
+                } else {
+                    let mut iw = iw_start;
+                    for o in &mut out_row[ow_start..ow_end] {
+                        *o = *o + w_val * in_row[iw];
+                        iw += stride_w;
+                    }
+                }
+            }
+        }
+    }
+}
+
 macro_rules! conv3d_depthwise_typed {
     ($fn_name:ident, $T:ty, $dtype:expr) => {
         fn $fn_name(
@@ -963,70 +1043,6 @@ where
 
     let mut output = vec![zero; total];
 
-    // Work function for one (batch, channel) pair.
-    //
-    // Marked `inline(always)` so the monomorphized body is emitted directly
-    // at each call site. The inner `out_slice += w_val * in_slice` loop has
-    // to inline and specialize cleanly for LLVM to emit SIMD fmuladd.
-    #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn compute_plane<T: num_traits::Float + Copy>(
-        out_plane: &mut [T],
-        in_plane: &[T],
-        w_plane: &[T],
-        kernel_h: usize,
-        kernel_w: usize,
-        in_w: usize,
-        out_w: usize,
-        stride_h: usize,
-        stride_w: usize,
-        pad_h: usize,
-        pad_w: usize,
-        dilation_h: usize,
-        dilation_w: usize,
-        oh_ranges: &[(usize, usize)],
-        ow_ranges: &[(usize, usize)],
-    ) {
-        for kh in 0..kernel_h {
-            let (oh_start, oh_end) = oh_ranges[kh];
-            if oh_start >= oh_end {
-                continue;
-            }
-            for kw in 0..kernel_w {
-                let (ow_start, ow_end) = ow_ranges[kw];
-                if ow_start >= ow_end {
-                    continue;
-                }
-                let w_val = w_plane[kh * kernel_w + kw];
-                // All terms in iw_start are non-negative because ow_start
-                // was chosen so that the corresponding `iw` is in bounds.
-                let iw_start = ow_start * stride_w + kw * dilation_w - pad_w;
-                for oh in oh_start..oh_end {
-                    let ih = oh * stride_h + kh * dilation_h - pad_h;
-                    let in_row = &in_plane[ih * in_w..(ih + 1) * in_w];
-                    let out_row = &mut out_plane[oh * out_w..(oh + 1) * out_w];
-                    if stride_w == 1 {
-                        // Contiguous input and output slices: the inner loop
-                        // body is a classic fused multiply-add across a
-                        // contiguous range that autovectorizes on every target
-                        // supported by burn-flex.
-                        let in_slice = &in_row[iw_start..iw_start + (ow_end - ow_start)];
-                        let out_slice = &mut out_row[ow_start..ow_end];
-                        for (o, &xv) in out_slice.iter_mut().zip(in_slice.iter()) {
-                            *o = *o + w_val * xv;
-                        }
-                    } else {
-                        let mut iw = iw_start;
-                        for o in &mut out_row[ow_start..ow_end] {
-                            *o = *o + w_val * in_row[iw];
-                            iw += stride_w;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
@@ -1050,7 +1066,7 @@ where
                 unsafe { core::slice::from_raw_parts_mut(dst_ptr.ptr_add(out_base), out_spatial) };
             let in_plane = &x_data[in_base..in_base + in_spatial];
             let w_plane = &w_data[w_base..w_base + k_spatial];
-            compute_plane(
+            conv_plane_accumulate(
                 out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h, stride_w,
                 pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
             );
@@ -1066,7 +1082,7 @@ where
                 let out_plane = &mut output[out_base..out_base + out_spatial];
                 let in_plane = &x_data[in_base..in_base + in_spatial];
                 let w_plane = &w_data[w_base..w_base + k_spatial];
-                compute_plane(
+                conv_plane_accumulate(
                     out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h,
                     stride_w, pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
                 );
@@ -1089,6 +1105,231 @@ where
     }
 
     let out_shape = Shape::from(vec![batch_size, channels, 1, out_h, out_w]);
+    FlexTensor::new(
+        Bytes::from_elems(output),
+        Layout::contiguous(out_shape),
+        dtype,
+    )
+}
+
+// ============================================================================
+// Small-channel conv fast path (no NHWC, no im2col, no gemm)
+// ============================================================================
+//
+// For `groups=1` convs with very few input channels (e.g. 3-channel Sobel
+// filters, single-channel mask networks, early-stage image preprocessors),
+// the generic `conv3d_impl` pays the same kind of overhead as the depthwise
+// case: gemm is dispatched with `M = channels_out, K = channels_in * k_spatial,
+// N = tile_size`, and at small `K` the gemm kernel's pack + select + dispatch
+// cost dominates the actual FMAs. On top of that, the full NHWC conversion
+// of the input is pure memory traffic that buys nothing when the channel
+// dimension is already tiny.
+//
+// The small-channel path walks NCHW data directly. For each `(batch, out_ch)`
+// pair it accumulates contributions from every input channel by calling the
+// same `conv_plane_accumulate` helper used by the depthwise path. Compared
+// to the depthwise case this adds an outer `for ci in 0..channels_in` loop
+// around the accumulate; everything else (analytic output ranges, parallel
+// fan-out, bias add) is identical.
+
+/// Threshold on `channels_in` for the small-channel fast path.
+///
+/// Picked empirically: at `channels_in <= 4`, gemm dispatch overhead exceeds
+/// the inner compute by a clear margin. Tuning higher risks regressing shapes
+/// where gemm's data reuse across output channels wins.
+const SMALL_CHANNEL_IN_THRESHOLD: usize = 4;
+
+/// Threshold on `channels_out` for the small-channel fast path.
+///
+/// The small-channel path loops `for co: for ci:` and re-reads each input
+/// channel once per output channel. At large `channels_out`, that redundant
+/// memory traffic dominates over gemm's register-tiled data reuse. Picked
+/// empirically: classic ImageNet first-layer (`3 -> 64`) runs ~5x slower on
+/// the direct path than on gemm, so we cap at 16 to stay safely on the right
+/// side of that cliff. Sobel-style filters (`3 -> 3..8`) are well under this
+/// and keep their 1.1-1.4x win over burn-ndarray.
+const SMALL_CHANNEL_OUT_THRESHOLD: usize = 16;
+
+/// Decide whether to use the small-channel fast path.
+///
+/// Triggers on `groups=1` 2D-in-3D convs (or 1D via the conv1d expansion)
+/// with both small `channels_in` and small `channels_out`. Non-depthwise
+/// grouped convs and the many-channel case both go through the generic
+/// `conv3d_impl`.
+fn should_use_small_channel_conv(
+    x_shape: &[usize],
+    w_shape: &[usize],
+    options: &ConvOptions<3>,
+) -> bool {
+    if options.groups != 1 {
+        return false;
+    }
+
+    // Only the 1D/2D-in-3D shapes (kd=1, in_d=1). Pure 3D convs do not benefit
+    // and would require adding a d-axis loop.
+    if w_shape[2] != 1 || x_shape[2] != 1 {
+        return false;
+    }
+    if options.stride[0] != 1 || options.padding[0] != 0 || options.dilation[0] != 1 {
+        return false;
+    }
+
+    let channels_in = x_shape[1];
+    let channels_out = w_shape[0];
+    channels_in > 0
+        && channels_in <= SMALL_CHANNEL_IN_THRESHOLD
+        && channels_out > 0
+        && channels_out <= SMALL_CHANNEL_OUT_THRESHOLD
+}
+
+macro_rules! conv3d_small_channel_typed {
+    ($fn_name:ident, $T:ty, $dtype:expr) => {
+        fn $fn_name(
+            x: FlexTensor,
+            weight: FlexTensor,
+            bias: Option<FlexTensor>,
+            options: &ConvOptions<3>,
+        ) -> FlexTensor {
+            conv3d_small_channel_impl::<$T>(x, weight, bias, options, $dtype)
+        }
+    };
+}
+
+conv3d_small_channel_typed!(conv3d_small_channel_f32, f32, DType::F32);
+conv3d_small_channel_typed!(conv3d_small_channel_f64, f64, DType::F64);
+conv3d_small_channel_typed!(conv3d_small_channel_f16, f16, DType::F16);
+
+/// Small-channel conv3d: `groups=1` with small `channels_in`.
+///
+/// Preconditions (checked by `should_use_small_channel_conv`):
+/// - `options.groups == 1`
+/// - `channels_in <= SMALL_CHANNEL_IN_THRESHOLD`
+/// - `kernel_d == 1`, `in_d == 1`, trivial d-axis options.
+fn conv3d_small_channel_impl<T>(
+    x: FlexTensor,
+    weight: FlexTensor,
+    bias: Option<FlexTensor>,
+    options: &ConvOptions<3>,
+    dtype: DType,
+) -> FlexTensor
+where
+    T: num_traits::Float + bytemuck::Pod + Clone + Copy + burn_backend::Element + Send + Sync,
+{
+    let zero = <T as num_traits::Zero>::zero();
+    let x = x.to_contiguous();
+    let weight = weight.to_contiguous();
+
+    let x_shape = x.layout().shape();
+    let w_shape = weight.layout().shape();
+
+    let batch_size = x_shape[0];
+    let channels_in = x_shape[1];
+    let in_h = x_shape[3];
+    let in_w = x_shape[4];
+
+    let channels_out = w_shape[0];
+    let kernel_h = w_shape[3];
+    let kernel_w = w_shape[4];
+
+    let [_, stride_h, stride_w] = options.stride;
+    let [_, pad_h, pad_w] = options.padding;
+    let [_, dilation_h, dilation_w] = options.dilation;
+
+    let out_h = calculate_conv_output_size(kernel_h, stride_h, pad_h, dilation_h, in_h);
+    let out_w = calculate_conv_output_size(kernel_w, stride_w, pad_w, dilation_w, in_w);
+
+    let total = [batch_size, channels_out, out_h, out_w]
+        .iter()
+        .try_fold(1usize, |acc, &x| acc.checked_mul(x))
+        .expect("conv small-channel: output dimensions would overflow");
+
+    let x_data: &[T] = x.storage();
+    let w_data: &[T] = weight.storage();
+
+    let in_spatial = in_h * in_w;
+    let out_spatial = out_h * out_w;
+    let k_spatial = kernel_h * kernel_w;
+    let w_co_stride = channels_in * k_spatial;
+    let x_batch_stride = channels_in * in_spatial;
+
+    let oh_ranges: Vec<(usize, usize)> = (0..kernel_h)
+        .map(|kh| valid_out_range(kh, dilation_h, pad_h, stride_h, in_h, out_h))
+        .collect();
+    let ow_ranges: Vec<(usize, usize)> = (0..kernel_w)
+        .map(|kw| valid_out_range(kw, dilation_w, pad_w, stride_w, in_w, out_w))
+        .collect();
+
+    let mut output = vec![zero; total];
+
+    // For each `(batch, out_channel)` we accumulate
+    //   out[b, co] += sum over ci of conv2d(in[b, ci], w[co, ci])
+    // by calling conv_plane_accumulate once per input channel.
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+
+        let dst_ptr = crate::ops::SendMutPtr::new(output.as_mut_ptr());
+
+        (0..batch_size * channels_out)
+            .into_par_iter()
+            .for_each(|b_co| {
+                let b = b_co / channels_out;
+                let co = b_co % channels_out;
+                let out_base = (b * channels_out + co) * out_spatial;
+
+                // SAFETY: each `b_co` owns a disjoint `out_spatial` slice of
+                // the output buffer, so no two threads write overlapping
+                // ranges.
+                let out_plane: &mut [T] = unsafe {
+                    core::slice::from_raw_parts_mut(dst_ptr.ptr_add(out_base), out_spatial)
+                };
+                for ci in 0..channels_in {
+                    let in_base = b * x_batch_stride + ci * in_spatial;
+                    let w_base = co * w_co_stride + ci * k_spatial;
+                    let in_plane = &x_data[in_base..in_base + in_spatial];
+                    let w_plane = &w_data[w_base..w_base + k_spatial];
+                    conv_plane_accumulate(
+                        out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h,
+                        stride_w, pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
+                    );
+                }
+            });
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        for b in 0..batch_size {
+            for co in 0..channels_out {
+                let out_base = (b * channels_out + co) * out_spatial;
+                let out_plane = &mut output[out_base..out_base + out_spatial];
+                for ci in 0..channels_in {
+                    let in_base = b * x_batch_stride + ci * in_spatial;
+                    let w_base = co * w_co_stride + ci * k_spatial;
+                    let in_plane = &x_data[in_base..in_base + in_spatial];
+                    let w_plane = &w_data[w_base..w_base + k_spatial];
+                    conv_plane_accumulate(
+                        out_plane, in_plane, w_plane, kernel_h, kernel_w, in_w, out_w, stride_h,
+                        stride_w, pad_h, pad_w, dilation_h, dilation_w, &oh_ranges, &ow_ranges,
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(bias) = bias {
+        let bias = bias.to_contiguous();
+        let bias_data: &[T] = bias.storage();
+        for b in 0..batch_size {
+            for (co, &bias_val) in bias_data.iter().enumerate().take(channels_out) {
+                let base = (b * channels_out + co) * out_spatial;
+                let plane = &mut output[base..base + out_spatial];
+                for o in plane.iter_mut() {
+                    *o = *o + bias_val;
+                }
+            }
+        }
+    }
+
+    let out_shape = Shape::from(vec![batch_size, channels_out, 1, out_h, out_w]);
     FlexTensor::new(
         Bytes::from_elems(output),
         Layout::contiguous(out_shape),
@@ -2112,6 +2353,333 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ========================================================================
+    // Small-channel conv fast-path tests
+    // ========================================================================
+    //
+    // These tests exercise `conv3d_small_channel_impl` for groups=1 convs
+    // with `channels_in <= SMALL_CHANNEL_IN_THRESHOLD`. They cross-check the
+    // output against a naive NCHW reference that sums over both input
+    // channels and kernel positions.
+
+    #[allow(clippy::too_many_arguments)]
+    fn naive_conv2d_f32(
+        x: &[f32],
+        w: &[f32],
+        bias: Option<&[f32]>,
+        batch: usize,
+        channels_in: usize,
+        channels_out: usize,
+        in_h: usize,
+        in_w: usize,
+        kernel_h: usize,
+        kernel_w: usize,
+        stride_h: usize,
+        stride_w: usize,
+        pad_h: usize,
+        pad_w: usize,
+        dilation_h: usize,
+        dilation_w: usize,
+    ) -> (Vec<f32>, usize, usize) {
+        let out_h = (in_h + 2 * pad_h - dilation_h * (kernel_h - 1) - 1) / stride_h + 1;
+        let out_w = (in_w + 2 * pad_w - dilation_w * (kernel_w - 1) - 1) / stride_w + 1;
+        let mut out = vec![0.0f32; batch * channels_out * out_h * out_w];
+        for b in 0..batch {
+            for co in 0..channels_out {
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let mut acc = 0.0f32;
+                        for ci in 0..channels_in {
+                            for kh in 0..kernel_h {
+                                let ih = oh as isize * stride_h as isize
+                                    + kh as isize * dilation_h as isize
+                                    - pad_h as isize;
+                                if ih < 0 || ih >= in_h as isize {
+                                    continue;
+                                }
+                                for kw in 0..kernel_w {
+                                    let iw = ow as isize * stride_w as isize
+                                        + kw as isize * dilation_w as isize
+                                        - pad_w as isize;
+                                    if iw < 0 || iw >= in_w as isize {
+                                        continue;
+                                    }
+                                    let x_idx = ((b * channels_in + ci) * in_h + ih as usize)
+                                        * in_w
+                                        + iw as usize;
+                                    let w_idx =
+                                        ((co * channels_in + ci) * kernel_h + kh) * kernel_w + kw;
+                                    acc += x[x_idx] * w[w_idx];
+                                }
+                            }
+                        }
+                        if let Some(bias) = bias {
+                            acc += bias[co];
+                        }
+                        let o_idx = ((b * channels_out + co) * out_h + oh) * out_w + ow;
+                        out[o_idx] = acc;
+                    }
+                }
+            }
+        }
+        (out, out_h, out_w)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_small_channel_conv2d_f32(
+        batch: usize,
+        channels_in: usize,
+        channels_out: usize,
+        in_h: usize,
+        in_w: usize,
+        kernel_h: usize,
+        kernel_w: usize,
+        stride: [usize; 2],
+        padding: [usize; 2],
+        dilation: [usize; 2],
+        with_bias: bool,
+    ) {
+        let x_vec = seeded_vec_f32(batch * channels_in * in_h * in_w, 100);
+        let w_vec = seeded_vec_f32(channels_out * channels_in * kernel_h * kernel_w, 200);
+        let bias_vec = if with_bias {
+            Some(seeded_vec_f32(channels_out, 300))
+        } else {
+            None
+        };
+
+        let (expected, out_h, out_w) = naive_conv2d_f32(
+            &x_vec,
+            &w_vec,
+            bias_vec.as_deref(),
+            batch,
+            channels_in,
+            channels_out,
+            in_h,
+            in_w,
+            kernel_h,
+            kernel_w,
+            stride[0],
+            stride[1],
+            padding[0],
+            padding[1],
+            dilation[0],
+            dilation[1],
+        );
+
+        let x = FlexTensor::from_data(TensorData::new(x_vec, vec![batch, channels_in, in_h, in_w]));
+        let weight = FlexTensor::from_data(TensorData::new(
+            w_vec,
+            vec![channels_out, channels_in, kernel_h, kernel_w],
+        ));
+        let bias = bias_vec.map(|v| FlexTensor::from_data(TensorData::new(v, vec![channels_out])));
+        let options = ConvOptions::new(stride, padding, dilation, 1);
+        let result = conv2d_f32(x, weight, bias, &options);
+
+        assert_eq!(
+            result.layout().shape().to_vec(),
+            vec![batch, channels_out, out_h, out_w],
+            "output shape mismatch"
+        );
+
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+        assert_eq!(out.len(), expected.len());
+        for (i, (a, e)) in out.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (a - e).abs() < 1e-3,
+                "mismatch at {i}: got {a}, expected {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_3in_8out_k3x3_pad1() {
+        // Sobel-like: 3 input channels, several output channels, 3x3 kernel.
+        check_small_channel_conv2d_f32(2, 3, 8, 16, 16, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_3in_3out_k3x3_no_pad() {
+        // Channels_in == channels_out == 3, same count but groups=1 so each
+        // output channel combines all input channels (not depthwise).
+        check_small_channel_conv2d_f32(1, 3, 3, 10, 10, 3, 3, [1, 1], [0, 0], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_3in_16out_k5x5_pad2() {
+        check_small_channel_conv2d_f32(2, 3, 16, 12, 12, 5, 5, [1, 1], [2, 2], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_4in_8out_k3x3_stride2() {
+        // Threshold channels_in == 4.
+        check_small_channel_conv2d_f32(1, 4, 8, 16, 16, 3, 3, [2, 2], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_2in_4out_dilated() {
+        check_small_channel_conv2d_f32(1, 2, 4, 12, 12, 3, 3, [1, 1], [2, 2], [2, 2], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_with_bias() {
+        check_small_channel_conv2d_f32(2, 3, 8, 8, 8, 3, 3, [1, 1], [1, 1], [1, 1], true);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_asymmetric_kernel() {
+        // 1x3 and 3x1 kernels are common for separable edge filters.
+        check_small_channel_conv2d_f32(1, 3, 6, 16, 16, 1, 3, [1, 1], [0, 1], [1, 1], false);
+        check_small_channel_conv2d_f32(1, 3, 6, 16, 16, 3, 1, [1, 1], [1, 0], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_f64() {
+        // Smoke test f64 dispatch.
+        let x_data: Vec<f64> = (0..2 * 3 * 5 * 5).map(|i| (i as f64) * 0.1).collect();
+        let w_data: Vec<f64> = (0..4 * 3 * 3 * 3).map(|i| (i as f64) * 0.01).collect();
+        let x = FlexTensor::from_data(TensorData::new(x_data.clone(), vec![2, 3, 5, 5]));
+        let weight = FlexTensor::from_data(TensorData::new(w_data.clone(), vec![4, 3, 3, 3]));
+        let options = ConvOptions::new([1, 1], [1, 1], [1, 1], 1);
+        let result = conv2d_f64(x, weight, None, &options);
+        let out: Vec<f64> = result.into_data().to_vec().unwrap();
+
+        // Verify against a naive reference for one element (center of channel 2).
+        let b = 0usize;
+        let co = 2usize;
+        let oh = 2usize;
+        let ow = 2usize;
+        let mut expected = 0.0f64;
+        for ci in 0..3 {
+            for kh in 0..3 {
+                for kw in 0..3 {
+                    let ih = oh as isize + kh as isize - 1;
+                    let iw = ow as isize + kw as isize - 1;
+                    if ih >= 0 && ih < 5 && iw >= 0 && iw < 5 {
+                        let x_idx = ((b * 3 + ci) * 5 + ih as usize) * 5 + iw as usize;
+                        let w_idx = ((co * 3 + ci) * 3 + kh) * 3 + kw;
+                        expected += x_data[x_idx] * w_data[w_idx];
+                    }
+                }
+            }
+        }
+        let out_idx = ((b * 4 + co) * 5 + oh) * 5 + ow;
+        assert!(
+            (out[out_idx] - expected).abs() < 1e-10,
+            "got {}, expected {expected}",
+            out[out_idx]
+        );
+    }
+
+    #[test]
+    fn test_conv1d_small_channel_3in() {
+        // conv1d -> conv3d expansion with groups=1 and 3 input channels.
+        let batch = 2;
+        let channels_in = 3;
+        let channels_out = 5;
+        let in_w = 24;
+        let kw = 5;
+        let stride = 1;
+        let pad = 2;
+        let out_w = in_w; // same padding
+
+        let x_data = seeded_vec_f32(batch * channels_in * in_w, 400);
+        let w_data = seeded_vec_f32(channels_out * channels_in * kw, 500);
+        let x = FlexTensor::from_data(TensorData::new(
+            x_data.clone(),
+            vec![batch, channels_in, in_w],
+        ));
+        let weight = FlexTensor::from_data(TensorData::new(
+            w_data.clone(),
+            vec![channels_out, channels_in, kw],
+        ));
+        let options = ConvOptions::new([stride], [pad], [1], 1);
+        let result = conv1d_f32(x, weight, None, &options);
+        assert_eq!(
+            result.layout().shape().to_vec(),
+            vec![batch, channels_out, out_w]
+        );
+        let out: Vec<f32> = result.into_data().to_vec().unwrap();
+
+        for b in 0..batch {
+            for co in 0..channels_out {
+                for o in 0..out_w {
+                    let mut expected = 0.0f32;
+                    for ci in 0..channels_in {
+                        for k in 0..kw {
+                            let i = o as isize + k as isize - pad as isize;
+                            if i >= 0 && i < in_w as isize {
+                                let x_idx = (b * channels_in + ci) * in_w + i as usize;
+                                let w_idx = (co * channels_in + ci) * kw + k;
+                                expected += x_data[x_idx] * w_data[w_idx];
+                            }
+                        }
+                    }
+                    let actual = out[(b * channels_out + co) * out_w + o];
+                    assert!(
+                        (actual - expected).abs() < 1e-4,
+                        "mismatch at b={b}, co={co}, o={o}: expected {expected}, got {actual}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_single_input() {
+        // 1 input channel is allowed (<= threshold) but this also matches
+        // many existing conv tests that passed through conv3d_impl before
+        // this path existed. Cross-check against the naive reference.
+        check_small_channel_conv2d_f32(1, 1, 4, 8, 8, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_threshold_exact() {
+        // Verify the thresholds are honored:
+        // - channels_in in [1, 4] AND channels_out in [1, 16] triggers the
+        //   small-channel path
+        // - channels_in == 5 does not
+        // - channels_out == 17 does not
+        // - groups != 1 does not
+        //
+        // conv2d options are expanded to 3D as `[0, pad_h, pad_w]` and
+        // `[1, stride_h, stride_w]` etc. - the d-axis is always trivial.
+
+        // c_in == 4, c_out == 16: exactly at the thresholds, should trigger.
+        assert!(should_use_small_channel_conv(
+            &[1, 4, 1, 8, 8],
+            &[16, 4, 1, 3, 3],
+            &ConvOptions::new([1, 1, 1], [0, 1, 1], [1, 1, 1], 1),
+        ));
+        // c_in == 5: excluded.
+        assert!(!should_use_small_channel_conv(
+            &[1, 5, 1, 8, 8],
+            &[2, 5, 1, 3, 3],
+            &ConvOptions::new([1, 1, 1], [0, 1, 1], [1, 1, 1], 1),
+        ));
+        // c_in == 3, c_out == 17: excluded (large output channel count).
+        assert!(!should_use_small_channel_conv(
+            &[1, 3, 1, 8, 8],
+            &[17, 3, 1, 3, 3],
+            &ConvOptions::new([1, 1, 1], [0, 1, 1], [1, 1, 1], 1),
+        ));
+        // c_in == 3, c_out == 64 (ImageNet first layer): excluded.
+        assert!(!should_use_small_channel_conv(
+            &[1, 3, 1, 224, 224],
+            &[64, 3, 1, 7, 7],
+            &ConvOptions::new([1, 2, 2], [0, 3, 3], [1, 1, 1], 1),
+        ));
+        // Non-groups=1 is excluded.
+        assert!(!should_use_small_channel_conv(
+            &[1, 4, 1, 8, 8],
+            &[4, 1, 1, 3, 3],
+            &ConvOptions::new([1, 1, 1], [0, 1, 1], [1, 1, 1], 4),
+        ));
+
+        // Cross-check c_in == 5 against naive reference (this goes through
+        // the generic conv3d_impl path, not the small-channel path).
+        check_small_channel_conv2d_f32(1, 5, 4, 8, 8, 3, 3, [1, 1], [1, 1], [1, 1], false);
     }
 
     #[test]
