@@ -182,9 +182,7 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
     // even start the strided write into the destination, which triples
     // the memory traffic for what should be a single-pass scalar fill.
     // Detect it and hand off to `slice_fill_impl`.
-    if !value.layout().strides().is_empty()
-        && value.layout().strides().iter().all(|&s| s == 0)
-    {
+    if !value.layout().strides().is_empty() && value.layout().strides().iter().all(|&s| s == 0) {
         // All strides zero means every position maps to the same element
         // at `start_offset`. Read it once and dispatch.
         let scalar = value.storage::<E>()[value.layout().start_offset()];
@@ -717,7 +715,10 @@ mod tests {
 
         let result_data = result.into_data();
         let values: Vec<f32> = bytemuck::cast_slice(&result_data.bytes).to_vec();
-        assert_eq!(values, vec![0.0, 1.0, 0.0, 3.0, 0.0, 5.0, 0.0, 7.0, 0.0, 9.0]);
+        assert_eq!(
+            values,
+            vec![0.0, 1.0, 0.0, 3.0, 0.0, 5.0, 0.0, 7.0, 0.0, 9.0]
+        );
     }
 
     #[test]
@@ -727,10 +728,8 @@ mod tests {
         use burn_tensor::Tensor;
 
         let data: Vec<f32> = (0..25).map(|i| i as f32).collect();
-        let t: Tensor<Flex, 2> = Tensor::from_data(
-            TensorData::new(data.clone(), [5, 5]),
-            &Default::default(),
-        );
+        let t: Tensor<Flex, 2> =
+            Tensor::from_data(TensorData::new(data.clone(), [5, 5]), &Default::default());
         let filled = t.slice_fill([1..4, 1..4], 42.0);
         let out: Vec<f32> = filled.into_data().into_vec().unwrap();
 

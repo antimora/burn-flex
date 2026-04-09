@@ -76,9 +76,7 @@ where
     // memcpy to materialize lhs contiguous, then fall through to the
     // SIMD fast paths below. The memcpy is strictly cheaper than the
     // scalar fallback it replaces.
-    if !lhs.layout().is_contiguous()
-        && rhs.layout().strides().iter().any(|&s| s == 0)
-    {
+    if !lhs.layout().is_contiguous() && rhs.layout().strides().contains(&0) {
         lhs = lhs.to_contiguous();
     }
 
@@ -182,11 +180,9 @@ fn detect_broadcast_pattern(lhs: &Layout, rhs: &Layout) -> Option<BroadcastView>
     // strides `[C, 0, 1]`. The leading `C` stride is fine because
     // `N == 1` in the hot ConvNeXt case; it just never gets stepped.
     if last_stride == 1 {
-        let outer_ok = (0..ndims - 1)
-            .all(|d| rhs_strides[d] == 0 || lhs_shape[d] == 1);
+        let outer_ok = (0..ndims - 1).all(|d| rhs_strides[d] == 0 || lhs_shape[d] == 1);
         if outer_ok {
-            let outer_count: usize =
-                (0..ndims - 1).map(|d| lhs_shape[d]).product();
+            let outer_count: usize = (0..ndims - 1).map(|d| lhs_shape[d]).product();
             let row_len = lhs_shape[ndims - 1];
             // Empty inputs: nothing to do, let the fallback handle it
             // (it will also produce an empty result).
@@ -1152,11 +1148,14 @@ mod tests {
     #[test]
     fn test_binary_shared_row_broadcast_f32() {
         let a = FlexTensor::from_data(TensorData::new(
-            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
+            vec![
+                1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+            ],
             vec![1, 3, 4],
         ));
         // 1D gamma broadcast over rows.
-        let gamma = FlexTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], vec![4]));
+        let gamma =
+            FlexTensor::from_data(TensorData::new(vec![10.0f32, 20.0, 30.0, 40.0], vec![4]));
         let gamma_unsqueezed = gamma.reshape(Shape::from(vec![1, 1, 4]));
         let result = binary_op(
             a,
@@ -1180,14 +1179,13 @@ mod tests {
     #[test]
     fn test_binary_per_row_scalar_broadcast_f32() {
         let a = FlexTensor::from_data(TensorData::new(
-            vec![1.0f32, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0, 100.0, 200.0, 300.0, 400.0],
+            vec![
+                1.0f32, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0, 100.0, 200.0, 300.0, 400.0,
+            ],
             vec![1, 3, 4],
         ));
         // Scalars shaped like `mean_dim(-1)` output.
-        let mean = FlexTensor::from_data(TensorData::new(
-            vec![2.5f32, 25.0, 250.0],
-            vec![1, 3, 1],
-        ));
+        let mean = FlexTensor::from_data(TensorData::new(vec![2.5f32, 25.0, 250.0], vec![1, 3, 1]));
         let result = binary_op(a, mean, |a, b| a - b, |a, b| a - b, Some(BinaryOp::Sub));
         let data = result.into_data();
         let expected = vec![
@@ -1261,7 +1259,13 @@ mod tests {
             vec![2, 4, 1],
         ));
 
-        let result = binary_op(a_permuted, mean, |a, b| a - b, |a, b| a - b, Some(BinaryOp::Sub));
+        let result = binary_op(
+            a_permuted,
+            mean,
+            |a, b| a - b,
+            |a, b| a - b,
+            Some(BinaryOp::Sub),
+        );
 
         // Reference computation.
         let reference: Vec<f32> = {

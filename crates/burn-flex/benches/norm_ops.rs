@@ -32,19 +32,11 @@ fn make_tensor_3d<B: Backend>(d0: usize, d1: usize, d2: usize) -> Tensor<B, 3> {
     Tensor::from_data(TensorData::new(data, [d0, d1, d2]), &Default::default())
 }
 
-fn make_tensor_4d<B: Backend>(
-    d0: usize,
-    d1: usize,
-    d2: usize,
-    d3: usize,
-) -> Tensor<B, 4> {
+fn make_tensor_4d<B: Backend>(d0: usize, d1: usize, d2: usize, d3: usize) -> Tensor<B, 4> {
     let data: Vec<f32> = (0..d0 * d1 * d2 * d3)
         .map(|i| ((i % 1000) as f32 / 1000.0) - 0.5)
         .collect();
-    Tensor::from_data(
-        TensorData::new(data, [d0, d1, d2, d3]),
-        &Default::default(),
-    )
+    Tensor::from_data(TensorData::new(data, [d0, d1, d2, d3]), &Default::default())
 }
 
 fn make_gamma_beta<B: Backend>(d_model: usize) -> (Tensor<B, 1>, Tensor<B, 1>) {
@@ -93,36 +85,28 @@ macro_rules! bench_backend {
                 fn c48_hw244x224(bencher: Bencher) {
                     let x = make_tensor_3d::<B>(1, 244 * 224, 48);
                     let (g, b) = make_gamma_beta::<B>(48);
-                    bencher.bench(|| {
-                        decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5)
-                    });
+                    bencher.bench(|| decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5));
                 }
 
                 #[divan::bench]
                 fn c96_hw122x112(bencher: Bencher) {
                     let x = make_tensor_3d::<B>(1, 122 * 112, 96);
                     let (g, b) = make_gamma_beta::<B>(96);
-                    bencher.bench(|| {
-                        decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5)
-                    });
+                    bencher.bench(|| decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5));
                 }
 
                 #[divan::bench]
                 fn c192_hw61x56(bencher: Bencher) {
                     let x = make_tensor_3d::<B>(1, 61 * 56, 192);
                     let (g, b) = make_gamma_beta::<B>(192);
-                    bencher.bench(|| {
-                        decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5)
-                    });
+                    bencher.bench(|| decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5));
                 }
 
                 #[divan::bench]
                 fn c384_hw30x28(bencher: Bencher) {
                     let x = make_tensor_3d::<B>(1, 30 * 28, 384);
                     let (g, b) = make_gamma_beta::<B>(384);
-                    bencher.bench(|| {
-                        decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5)
-                    });
+                    bencher.bench(|| decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5));
                 }
 
                 // Transformer-style: typical `[batch=2, seq=512, d=768]`.
@@ -130,9 +114,7 @@ macro_rules! bench_backend {
                 fn d768_seq512_b2(bencher: Bencher) {
                     let x = make_tensor_3d::<B>(2, 512, 768);
                     let (g, b) = make_gamma_beta::<B>(768);
-                    bencher.bench(|| {
-                        decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5)
-                    });
+                    bencher.bench(|| decomposed_layer_norm(x.clone(), g.clone(), b.clone(), 1e-5));
                 }
             }
 
