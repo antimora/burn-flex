@@ -895,6 +895,11 @@ fn valid_out_range(
 /// the precomputed analytic `oh_ranges`/`ow_ranges` to skip padding checks in
 /// the inner loop.
 ///
+/// **Precondition**: `out_plane` must already hold the running accumulator
+/// (zero on the first call, or whatever partial sum has been built up across
+/// previous `ci` iterations). The function reads each output element before
+/// writing, so an uninitialized buffer produces silent garbage.
+///
 /// Shared by `conv3d_depthwise_impl` and `conv3d_small_channel_impl`. Marked
 /// `inline(always)` so every call site gets a monomorphized copy where LLVM can
 /// see the concrete inner loop pattern and emit SIMD fmuladd. Using
@@ -1093,8 +1098,16 @@ where
     if let Some(bias) = bias {
         let bias = bias.to_contiguous();
         let bias_data: &[T] = bias.storage();
+        // Length is asserted (not `.take()`-truncated) so a mismatch panics
+        // loudly instead of silently dropping bias for the trailing channels.
+        assert_eq!(
+            bias_data.len(),
+            channels,
+            "conv depthwise: bias length ({}) must equal channels ({channels})",
+            bias_data.len()
+        );
         for b in 0..batch_size {
-            for (c, &bias_val) in bias_data.iter().enumerate().take(channels) {
+            for (c, &bias_val) in bias_data.iter().enumerate() {
                 let base = (b * channels + c) * out_spatial;
                 let plane = &mut output[base..base + out_spatial];
                 for o in plane.iter_mut() {
@@ -1318,8 +1331,16 @@ where
     if let Some(bias) = bias {
         let bias = bias.to_contiguous();
         let bias_data: &[T] = bias.storage();
+        // Length is asserted (not `.take()`-truncated) so a mismatch panics
+        // loudly instead of silently dropping bias for the trailing channels.
+        assert_eq!(
+            bias_data.len(),
+            channels_out,
+            "conv small-channel: bias length ({}) must equal channels_out ({channels_out})",
+            bias_data.len()
+        );
         for b in 0..batch_size {
-            for (co, &bias_val) in bias_data.iter().enumerate().take(channels_out) {
+            for (co, &bias_val) in bias_data.iter().enumerate() {
                 let base = (b * channels_out + co) * out_spatial;
                 let plane = &mut output[base..base + out_spatial];
                 for o in plane.iter_mut() {
@@ -2570,6 +2591,49 @@ mod tests {
             "got {}, expected {expected}",
             out[out_idx]
         );
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_f16() {
+        // Smoke test f16 dispatch through the small-channel path. The f16
+        // monomorphization relies on `half::f16` satisfying `num_traits::Float`;
+        // a regression there would ship silently without this test.
+        use burn_std::f16;
+        let x_data: Vec<f16> = (0..3 * 4 * 4)
+            .map(|i| f16::from_f32(i as f32 * 0.1))
+            .collect();
+        let w_data: Vec<f16> = (0..4 * 3 * 3 * 3)
+            .map(|i| f16::from_f32(i as f32 * 0.01))
+            .collect();
+        let x = FlexTensor::from_data(TensorData::new(x_data, vec![1, 3, 4, 4]));
+        let weight = FlexTensor::from_data(TensorData::new(w_data, vec![4, 3, 3, 3]));
+        let options = ConvOptions::new([1, 1], [1, 1], [1, 1], 1);
+        let result = conv2d_f16(x, weight, None, &options);
+        assert_eq!(result.layout().shape().to_vec(), vec![1, 4, 4, 4]);
+        // Ensure at least one output element is non-zero (not silently all NaN
+        // or all zero from an incorrectly specialized kernel).
+        let out: Vec<f16> = result.into_data().to_vec().unwrap();
+        assert!(
+            out.iter()
+                .any(|v| v.to_f32() != 0.0 && !v.to_f32().is_nan()),
+            "f16 small-channel output is all zero or NaN"
+        );
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_bias_length_mismatch_panics() {
+        // The small-channel impl must panic loudly when bias length does not
+        // match channels_out. A silent truncation here would make models with
+        // misconfigured bias silently produce wrong output.
+        let x = FlexTensor::from_data(TensorData::new(vec![0.0f32; 48], vec![1, 3, 4, 4]));
+        let weight = FlexTensor::from_data(TensorData::new(vec![0.0f32; 108], vec![4, 3, 3, 3]));
+        // Bias has only 2 elements but there are 4 output channels.
+        let bias = FlexTensor::from_data(TensorData::new(vec![0.0f32, 0.0], vec![2]));
+        let options = ConvOptions::new([1, 1], [1, 1], [1, 1], 1);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            conv2d_f32(x, weight, Some(bias), &options)
+        }));
+        assert!(result.is_err(), "expected panic on bias length mismatch");
     }
 
     #[test]
