@@ -922,12 +922,13 @@ const CONV_PLANE_OH_OUTER_THRESHOLD: usize = 8192;
 ///
 /// Dispatches to one of two loop orders based on `out_plane.len()`; see
 /// `CONV_PLANE_OH_OUTER_THRESHOLD` for the tradeoff. Shared by
-/// `conv3d_depthwise_impl` and `conv3d_small_channel_impl`. Marked
-/// `inline(always)` so every call site gets a monomorphized copy where LLVM
-/// can see the concrete inner loop pattern and emit SIMD fmuladd. Using
-/// `num_traits::Float` bounds (rather than fn-pointer arithmetic) is load-
-/// bearing for vectorization.
-#[inline(always)]
+/// `conv3d_depthwise_impl` and `conv3d_small_channel_impl`. The dispatcher
+/// is `#[inline]` (not `inline(always)`) so the runtime length branch lives
+/// once at each call site instead of inlining both variants; the variants
+/// themselves stay `inline(always)` so LLVM sees the concrete inner loop
+/// pattern and emits SIMD fmuladd. Using `num_traits::Float` bounds (rather
+/// than fn-pointer arithmetic) is load-bearing for vectorization.
+#[inline]
 #[allow(clippy::too_many_arguments)]
 fn conv_plane_accumulate<T: num_traits::Float + Copy>(
     out_plane: &mut [T],
@@ -982,8 +983,25 @@ fn conv_plane_accumulate_oh_outer<T: num_traits::Float + Copy>(
     oh_ranges: &[(usize, usize)],
     ow_ranges: &[(usize, usize)],
 ) {
-    // out_plane is a per-(batch, channel) slice of shape [out_h, out_w] stored
-    // contiguously, so out_h follows directly from the slice length.
+    // An empty plane or zero-width output is a trivial no-op. This also
+    // guards the divide below against `out_w == 0`, which is not reachable
+    // from the in-tree callers (burn's `calculate_conv_output_size` is
+    // always >= 1 for valid inputs) but would otherwise panic if some
+    // future caller handed us a degenerate slice.
+    if out_plane.is_empty() || out_w == 0 {
+        return;
+    }
+
+    // out_plane is a per-(batch, channel) slice of shape [out_h, out_w]
+    // stored contiguously; both call sites produce it by disjoint splitting
+    // of a `vec![zero; batch * channels * out_h * out_w]` allocation, so
+    // the length is always an exact multiple of `out_w`. The `debug_assert`
+    // turns that documentary invariant into an enforceable one.
+    debug_assert_eq!(
+        out_plane.len() % out_w,
+        0,
+        "out_plane length must be a whole number of rows"
+    );
     let out_h = out_plane.len() / out_w;
 
     for oh in 0..out_h {
@@ -2902,6 +2920,78 @@ mod tests {
         // Cross-check c_in == 5 against naive reference (this goes through
         // the generic conv3d_impl path, not the small-channel path).
         check_small_channel_conv2d_f32(1, 5, 4, 8, 8, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    // The tests below exercise `conv_plane_accumulate_oh_outer`, the variant
+    // selected when the output plane exceeds `CONV_PLANE_OH_OUTER_THRESHOLD`
+    // (8192 elements). Every test above this point uses shapes where the plane
+    // is <= 256 elements and stays on the kh-outer variant; without these,
+    // the oh-outer code path ships uncovered.
+    //
+    // 96x96 = 9216 > 8192, so one element past the threshold. 97x97 = 9409
+    // leaves a little more slack in case someone nudges the threshold.
+
+    #[test]
+    fn test_conv2d_depthwise_oh_outer_k3x3() {
+        // Depthwise path, oh-outer dispatch, 3x3 kernel, stride 1.
+        // Plane = 96 * 96 = 9216 elements.
+        check_depthwise_conv2d_f32(1, 2, 96, 96, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_oh_outer_k3x3_stride2() {
+        // Depthwise, oh-outer, stride 2: exercises the `stride_w != 1`
+        // inner branch inside the oh-outer variant. Plane = 96*96 = 9216.
+        check_depthwise_conv2d_f32(1, 2, 192, 192, 3, 3, [2, 2], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_oh_outer_k5x1() {
+        // Depthwise, oh-outer, 5x1 asymmetric kernel: the exact shape
+        // pattern that motivated the loop reorder (Sobel-style separable
+        // filter on a large plane). Plane = 97*97 = 9409.
+        check_depthwise_conv2d_f32(1, 2, 97, 97, 5, 1, [1, 1], [2, 0], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_depthwise_oh_outer_k1x5() {
+        // Depthwise, oh-outer, 1x5 asymmetric kernel. Plane = 97*97 = 9409.
+        check_depthwise_conv2d_f32(1, 2, 97, 97, 1, 5, [1, 1], [0, 2], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_k3x3() {
+        // Small-channel path, oh-outer dispatch, stride 1.
+        // Plane = 96 * 96 = 9216.
+        check_small_channel_conv2d_f32(1, 3, 4, 96, 96, 3, 3, [1, 1], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_k3x3_stride2() {
+        // Small-channel, oh-outer, stride 2: exercises the stride != 1
+        // inner branch through small-channel dispatch. Plane = 96*96.
+        check_small_channel_conv2d_f32(1, 3, 4, 192, 192, 3, 3, [2, 2], [1, 1], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_k5x1_sobel() {
+        // Small-channel, oh-outer, 5x1 asymmetric kernel: the shape from
+        // the user-reported Sobel regression on RGB, on a plane large
+        // enough to cross the threshold. Plane = 97*97 = 9409.
+        check_small_channel_conv2d_f32(1, 3, 3, 97, 97, 5, 1, [1, 1], [2, 0], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_k1x5_sobel() {
+        // Small-channel, oh-outer, 1x5 asymmetric kernel. Plane = 97*97.
+        check_small_channel_conv2d_f32(1, 3, 3, 97, 97, 1, 5, [1, 1], [0, 2], [1, 1], false);
+    }
+
+    #[test]
+    fn test_conv2d_small_channel_oh_outer_with_bias_and_dilation() {
+        // Small-channel, oh-outer, with bias and dilation > 1.
+        // Plane = 96*96 = 9216.
+        check_small_channel_conv2d_f32(1, 3, 8, 100, 100, 3, 3, [1, 1], [2, 2], [2, 2], true);
     }
 
     #[test]
