@@ -316,8 +316,12 @@ impl FlexTensor {
         let all_positive = strides.iter().all(|&s| s >= 0);
 
         if shape.len() <= 1 && all_positive {
-            // 0-D scalar or 1-D run with a uniform stride.
-            debug_assert_eq!(n, shape.iter().product::<usize>().max(1));
+            // 0-D scalar or 1-D run with a uniform stride. Empty
+            // collapsed shape means rank 0 (numel 1); otherwise
+            // numel is the single dim's size (which may be 0 for
+            // zero-sized 1D tensors, so don't clamp via `.max(1)`).
+            let collapsed_numel = if shape.is_empty() { 1 } else { shape[0] };
+            debug_assert_eq!(n, collapsed_numel);
             // SAFETY: capacity is n; we fill every position below.
             unsafe { dst.set_len(n) };
             if shape.is_empty() {
@@ -488,11 +492,21 @@ fn collapse_for_copy(shape: &[usize], strides: &[isize]) -> CollapsedLayout {
     // Single forward sweep: squeeze size-1 dims and merge whenever
     // the current dim's `stride * size` equals the previous output
     // dim's stride (i.e. the two form a contiguous run).
+    //
+    // Use `checked_mul` so a pathological layout whose stride math
+    // would overflow `isize` simply fails to merge rather than
+    // wrapping into an incorrect merge decision. Real tensors can't
+    // hit this (total numel is bounded by `isize::MAX`), but
+    // hand-built layouts passed through the test paths could.
     for (&s, &st) in shape.iter().zip(strides.iter()) {
         if s == 1 {
             continue;
         }
-        if out.ndim > 0 && out.strides[out.ndim - 1] == st * s as isize {
+        let merge = out.ndim > 0
+            && (s as isize)
+                .checked_mul(st)
+                .is_some_and(|run| out.strides[out.ndim - 1] == run);
+        if merge {
             out.shape[out.ndim - 1] *= s;
             out.strides[out.ndim - 1] = st;
         } else {
@@ -621,6 +635,29 @@ mod tests {
         let (s, st) = collapsed.as_slices();
         assert!(s.is_empty());
         assert!(st.is_empty());
+    }
+
+    /// Regression: an empty 1D view produced by `narrow` at a
+    /// non-zero offset forces `copy_contiguous` to run (it can't
+    /// early-return via the contiguous-at-offset-0 shortcut). The
+    /// old `debug_assert_eq!(n, shape.product().max(1))` tripped
+    /// for this shape because `.max(1)` produced 1 while the true
+    /// numel is 0.
+    #[test]
+    fn test_to_contiguous_zero_sized_narrowed() {
+        let t = FlexTensor::from_data(TensorData::new(
+            (0..6).map(|i| i as f32).collect::<Vec<_>>(),
+            vec![6],
+        ));
+        // narrow(dim, start=3, len=0): shape [0], start_offset 3.
+        let empty_view = t.narrow(0, 3, 0);
+        assert_eq!(empty_view.shape().to_vec(), vec![0]);
+        assert_ne!(empty_view.layout().start_offset(), 0);
+
+        let contig = empty_view.to_contiguous();
+        assert_eq!(contig.shape().to_vec(), vec![0]);
+        assert_eq!(contig.layout().start_offset(), 0);
+        assert_eq!(contig.into_data().bytes.len(), 0);
     }
 
     /// 4D permuted layout round-trips through the collapse + tiled

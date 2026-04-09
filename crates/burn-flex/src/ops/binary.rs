@@ -74,7 +74,15 @@ where
     // `StridedIter`, an order of magnitude slower than the SIMD fast
     // path. Pay one memcpy to materialize lhs contiguous so the fast
     // paths below can take over.
-    if !lhs.layout().is_contiguous() && rhs.layout().strides().contains(&0) {
+    //
+    // Gate on `simd_hint.is_some()` so custom ops like `atan2` or
+    // `powf` (which have no SIMD fast path and go straight to
+    // `binary_op_typed`) don't pay for a memcpy they can't benefit
+    // from. Their strided fallback handles non-contig lhs directly.
+    if simd_hint.is_some()
+        && !lhs.layout().is_contiguous()
+        && rhs.layout().strides().contains(&0)
+    {
         lhs = lhs.to_contiguous();
     }
 
