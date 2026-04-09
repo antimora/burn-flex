@@ -305,33 +305,28 @@ impl FlexTensor {
         let n = self.layout.num_elements();
         let mut dst = Vec::with_capacity(n);
 
-        // Try to reduce the layout to a 2D transpose first, then fall
-        // back to the generic ND strided iterator only if collapse
-        // can't simplify it further. Collapsing squeezes size-1 dims
-        // and merges adjacent dims whose strides line up, which turns
-        // e.g. a permuted `[N, H, W, C]` ConvNeXt layer-norm input
-        // into a simple 2D `[H*W, C]` transpose. Without this the 4D
-        // ND fallback scalar-walks the whole tensor; see issue #64
-        // item 2.
-        let shape_vec = self.layout.shape().to_vec();
-        let (collapsed_shape, collapsed_strides) =
-            collapse_for_copy(&shape_vec, self.layout.strides());
+        // Squeeze size-1 dims and merge adjacent stride-contiguous
+        // runs so e.g. a permuted `[N, H, W, C]` ConvNeXt layer-norm
+        // input becomes a plain 2D `[H*W, C]` transpose that the
+        // tiled copy below handles at near-memcpy speed. Without the
+        // collapse, the 4D ND fallback scalar-walks the tensor.
+        let collapsed = collapse_for_copy(self.layout.shape(), self.layout.strides());
+        let (shape, strides) = collapsed.as_slices();
         let offset = self.layout.start_offset() as isize;
-        let all_positive = collapsed_strides.iter().all(|&s| s >= 0);
+        let all_positive = strides.iter().all(|&s| s >= 0);
 
-        if collapsed_shape.len() <= 1 && all_positive {
-            // 0-D or 1-D after collapse: either a scalar or a
-            // contiguous run with a uniform stride.
-            debug_assert_eq!(n, collapsed_shape.iter().product::<usize>().max(1));
-            // SAFETY: capacity is n; we fill every position.
+        if shape.len() <= 1 && all_positive {
+            // 0-D scalar or 1-D run with a uniform stride.
+            debug_assert_eq!(n, shape.iter().product::<usize>().max(1));
+            // SAFETY: capacity is n; we fill every position below.
             unsafe { dst.set_len(n) };
-            if collapsed_shape.is_empty() {
+            if shape.is_empty() {
                 if n > 0 {
                     dst[0] = src[offset as usize];
                 }
             } else {
-                let len = collapsed_shape[0];
-                let stride = collapsed_strides[0];
+                let len = shape[0];
+                let stride = strides[0];
                 if stride == 1 {
                     dst[..len].copy_from_slice(&src[offset as usize..offset as usize + len]);
                 } else {
@@ -341,65 +336,19 @@ impl FlexTensor {
                     }
                 }
             }
-        } else if collapsed_shape.len() == 2 && all_positive {
-            // 2D positive-stride (transpose-like): tile both dims to
-            // keep reads in cache. This is the hot path for permuted
-            // ConvNeXt inputs and transposed matmul operands alike.
-            let (rows, cols) = (collapsed_shape[0], collapsed_shape[1]);
-            let (row_stride, col_stride) = (collapsed_strides[0], collapsed_strides[1]);
-            const TILE: usize = 16;
-
-            debug_assert_eq!(rows * cols, n, "2D strides must cover all elements");
-            // SAFETY: capacity is n. The tiled loops visit every
-            // (row, col) pair exactly once, writing all n positions.
+        } else if shape.len() == 2 && all_positive {
+            // 2D positive-stride (transpose-like): tile both dims so
+            // reads stay in cache. The loop-nesting chooser inside
+            // `copy_2d_tiled` picks whichever ordering puts the
+            // smaller source stride on the innermost loop.
+            debug_assert_eq!(shape[0] * shape[1], n, "2D strides must cover all elements");
+            // SAFETY: capacity is n; `copy_2d_tiled` writes every
+            // `(row, col)` position exactly once.
             unsafe { dst.set_len(n) };
-
-            // Pick the loop nesting so the innermost read walks the
-            // smaller source stride, otherwise we'd read with a large
-            // stride on the hot inner loop and trash the cache. For a
-            // `[N, C, H, W].permute([0, 2, 3, 1])` ConvNeXt layer norm
-            // the collapsed strides are `[1, 54656]`, which means
-            // `row_stride < col_stride` and the row-inside-col branch
-            // below is the right choice.
-            if row_stride <= col_stride {
-                for col_tile in (0..cols).step_by(TILE) {
-                    let col_end = (col_tile + TILE).min(cols);
-                    for row_tile in (0..rows).step_by(TILE) {
-                        let row_end = (row_tile + TILE).min(rows);
-                        for col in col_tile..col_end {
-                            let col_base = offset + col as isize * col_stride;
-                            for row in row_tile..row_end {
-                                let idx = (col_base + row as isize * row_stride) as usize;
-                                unsafe {
-                                    *dst.get_unchecked_mut(row * cols + col) = src[idx];
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                for row_tile in (0..rows).step_by(TILE) {
-                    let row_end = (row_tile + TILE).min(rows);
-                    for col_tile in (0..cols).step_by(TILE) {
-                        let col_end = (col_tile + TILE).min(cols);
-                        for row in row_tile..row_end {
-                            let row_base =
-                                offset + row as isize * row_stride + col_tile as isize * col_stride;
-                            let dst_base = row * cols + col_tile;
-                            for c in 0..(col_end - col_tile) {
-                                let idx = (row_base + c as isize * col_stride) as usize;
-                                unsafe {
-                                    *dst.get_unchecked_mut(dst_base + c) = src[idx];
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            copy_2d_tiled(&mut dst, src, offset, shape[0], shape[1], strides[0], strides[1]);
         } else {
-            // General fallback using strided iterator. Covers negative
-            // strides (flipped tensors) and ND layouts that can't be
-            // collapsed to 2D.
+            // General fallback: covers negative strides (flipped
+            // tensors) and ND layouts that can't collapse to ≤2D.
             for idx in crate::strided_index::StridedIter::new(&self.layout) {
                 dst.push(src[idx]);
             }
@@ -476,59 +425,142 @@ impl TensorMetadata for FlexTensor {
     }
 }
 
-/// Collapse a shape/stride pair into the minimum-rank equivalent layout
-/// for a contiguous copy. Specifically:
+/// Max rank we're willing to handle without falling back to the
+/// strided iterator. Burn tensors are capped at 8 dims in practice.
+const COLLAPSE_MAX_RANK: usize = 8;
+
+/// Collapsed layout result of [`collapse_for_copy`], stored in stack
+/// arrays so `to_contiguous()` doesn't have to hit the allocator on
+/// its hot path.
+#[derive(Debug, Clone, Copy)]
+struct CollapsedLayout {
+    ndim: usize,
+    shape: [usize; COLLAPSE_MAX_RANK],
+    strides: [isize; COLLAPSE_MAX_RANK],
+}
+
+impl CollapsedLayout {
+    #[inline]
+    fn as_slices(&self) -> (&[usize], &[isize]) {
+        (&self.shape[..self.ndim], &self.strides[..self.ndim])
+    }
+}
+
+/// Collapse a shape/stride pair into the minimum-rank equivalent
+/// layout for a contiguous copy:
 ///
-/// 1. Squeezes size-1 dims (their stride is irrelevant since the loop
-///    never advances past index 0).
-/// 2. Merges adjacent dims `(i, i+1)` when `stride[i] == stride[i+1] *
-///    shape[i+1]`, meaning the two dims form a single logical run
-///    through memory and can be treated as one.
+/// 1. Squeeze size-1 dims (their stride never gets stepped past 0).
+/// 2. Merge adjacent dims `(i, i+1)` when
+///    `stride[i] == stride[i+1] * shape[i+1]`, which means the two
+///    dims form a single logical run through memory.
 ///
 /// Canonical example: a 4D ConvNeXt input `[1, 244, 224, 48]` with
-/// strides `[2623488, 224, 1, 54656]` (the result of
-/// `[N,C,H,W].permute([0, 2, 3, 1])`) collapses to a 2D `[54656, 48]`
-/// with strides `[1, 54656]`, a plain 2D transpose that the tiled 2D
-/// fast path handles at near-memcpy speed.
+/// strides `[2_623_488, 224, 1, 54656]` (from
+/// `[N, C, H, W].permute([0, 2, 3, 1])`) collapses to 2D
+/// `[54656, 48]` with strides `[1, 54656]`.
 ///
-/// Collapsing preserves the iteration order of a contiguous destination
-/// walk, so the resulting `(shape, strides)` pair can be substituted
-/// directly into a row-major copy loop without changing the visit
-/// order.
+/// If the input rank exceeds [`COLLAPSE_MAX_RANK`] the result is
+/// left at rank > 2 so the caller falls through to its generic
+/// strided path. If the input is rank > `COLLAPSE_MAX_RANK`, we
+/// return the original (un-collapsed) layout truncated, which the
+/// caller will reject via its `shape.len() == 2` gate.
 ///
 /// PRECONDITION: the caller must gate on all-positive strides before
-/// using the collapsed layout. The merge rule assumes positive strides
-/// and will produce iteration-order-incorrect results for flipped
-/// tensors (both `copy_contiguous` call sites check `all_positive`
-/// before taking the collapsed path).
-fn collapse_for_copy(shape: &[usize], strides: &[isize]) -> (Vec<usize>, Vec<isize>) {
-    let mut s: Vec<usize> = Vec::with_capacity(shape.len());
-    let mut st: Vec<isize> = Vec::with_capacity(strides.len());
+/// using the collapsed layout. The merge rule assumes positive
+/// strides and will produce iteration-order-incorrect results for
+/// flipped tensors.
+fn collapse_for_copy(shape: &[usize], strides: &[isize]) -> CollapsedLayout {
+    let mut out = CollapsedLayout {
+        ndim: 0,
+        shape: [0; COLLAPSE_MAX_RANK],
+        strides: [0; COLLAPSE_MAX_RANK],
+    };
 
-    // Step 1: squeeze size-1 dims.
-    for i in 0..shape.len() {
-        if shape[i] != 1 {
-            s.push(shape[i]);
-            st.push(strides[i]);
+    // Bail out to the caller's fallback if the rank is too large to
+    // fit our stack buffer. In practice this never triggers (burn
+    // tensors are ≤8 dims), but leaving the `ndim` high signals the
+    // caller to take the generic strided path.
+    if shape.len() > COLLAPSE_MAX_RANK {
+        out.ndim = shape.len().min(COLLAPSE_MAX_RANK);
+        return out;
+    }
+
+    // Single forward sweep: squeeze size-1 dims and merge whenever
+    // the current dim's `stride * size` equals the previous output
+    // dim's stride (i.e. the two form a contiguous run).
+    for (&s, &st) in shape.iter().zip(strides.iter()) {
+        if s == 1 {
+            continue;
+        }
+        if out.ndim > 0 && out.strides[out.ndim - 1] == st * s as isize {
+            out.shape[out.ndim - 1] *= s;
+            out.strides[out.ndim - 1] = st;
+        } else {
+            out.shape[out.ndim] = s;
+            out.strides[out.ndim] = st;
+            out.ndim += 1;
         }
     }
 
-    // Step 2: merge adjacent dims that form one contiguous run. Walk
-    // backwards so merging doesn't invalidate indices ahead of us.
-    let mut i = s.len();
-    while i >= 2 {
-        let lo = i - 2;
-        let hi = i - 1;
-        if st[lo] == st[hi] * s[hi] as isize {
-            s[lo] *= s[hi];
-            st[lo] = st[hi];
-            s.remove(hi);
-            st.remove(hi);
-        }
-        i -= 1;
-    }
+    out
+}
 
-    (s, st)
+/// Tiled 2D copy from a strided source into a contiguous destination.
+/// The loop nesting is chosen so the innermost read walks whichever
+/// source stride is smaller, which keeps the hot loop in cache even
+/// for transpose-like layouts.
+#[inline]
+fn copy_2d_tiled<E: Copy>(
+    dst: &mut [E],
+    src: &[E],
+    offset: isize,
+    rows: usize,
+    cols: usize,
+    row_stride: isize,
+    col_stride: isize,
+) {
+    const TILE: usize = 16;
+
+    if row_stride <= col_stride {
+        // row-inside-col: the inner loop walks `row_stride` (smaller).
+        for col_tile in (0..cols).step_by(TILE) {
+            let col_end = (col_tile + TILE).min(cols);
+            for row_tile in (0..rows).step_by(TILE) {
+                let row_end = (row_tile + TILE).min(rows);
+                for col in col_tile..col_end {
+                    let col_base = offset + col as isize * col_stride;
+                    for row in row_tile..row_end {
+                        let idx = (col_base + row as isize * row_stride) as usize;
+                        // SAFETY: caller set `dst.len() == rows * cols`
+                        // and each `(row, col)` is visited once.
+                        unsafe {
+                            *dst.get_unchecked_mut(row * cols + col) = src[idx];
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // col-inside-row: the inner loop walks `col_stride` (smaller).
+        for row_tile in (0..rows).step_by(TILE) {
+            let row_end = (row_tile + TILE).min(rows);
+            for col_tile in (0..cols).step_by(TILE) {
+                let col_end = (col_tile + TILE).min(cols);
+                for row in row_tile..row_end {
+                    let row_base =
+                        offset + row as isize * row_stride + col_tile as isize * col_stride;
+                    let dst_base = row * cols + col_tile;
+                    for c in 0..(col_end - col_tile) {
+                        let idx = (row_base + c as isize * col_stride) as usize;
+                        // SAFETY: same as above.
+                        unsafe {
+                            *dst.get_unchecked_mut(dst_base + c) = src[idx];
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Get the size in bytes for a dtype element.
@@ -558,51 +590,43 @@ mod tests {
 
     #[test]
     fn test_collapse_for_copy_squeezes_size1_and_merges_contig() {
-        // Case from issue #64 item 2: permuted ConvNeXt input.
-        // Shape [1, 244, 224, 48], strides from .permute([0,2,3,1])
-        // on an [N,C,H,W]=[1,48,244,224] contiguous tensor.
+        // Permuted ConvNeXt input: [1, 48, 244, 224].permute([0,2,3,1]).
         let shape = vec![1, 244, 224, 48];
         let strides = vec![2_623_488_isize, 224, 1, 54656];
-        let (s, st) = collapse_for_copy(&shape, &strides);
-        // After squeezing dim 0 and merging dims 1+2 (which are
-        // row-contiguous), we get a 2D transpose of [54656, 48] with
-        // the original big stride on the trailing dim.
-        assert_eq!(s, vec![54656, 48]);
-        assert_eq!(st, vec![1, 54656]);
+        let collapsed = collapse_for_copy(&shape, &strides);
+        let (s, st) = collapsed.as_slices();
+        assert_eq!(s, &[54656, 48]);
+        assert_eq!(st, &[1, 54656]);
     }
 
     #[test]
     fn test_collapse_for_copy_already_contiguous_3d() {
-        // Contiguous [2, 3, 4] strides [12, 4, 1] should collapse all
-        // the way to a single 1D run because each pair is
-        // stride-contiguous.
-        let (s, st) = collapse_for_copy(&[2, 3, 4], &[12, 4, 1]);
-        assert_eq!(s, vec![24]);
-        assert_eq!(st, vec![1]);
+        let collapsed = collapse_for_copy(&[2, 3, 4], &[12, 4, 1]);
+        let (s, st) = collapsed.as_slices();
+        assert_eq!(s, &[24]);
+        assert_eq!(st, &[1]);
     }
 
     #[test]
     fn test_collapse_for_copy_transpose_2d() {
-        // Plain transpose of [3, 5] -> [5, 3] with strides swapped.
-        // Cannot collapse further.
-        let (s, st) = collapse_for_copy(&[5, 3], &[1, 5]);
-        assert_eq!(s, vec![5, 3]);
-        assert_eq!(st, vec![1, 5]);
+        let collapsed = collapse_for_copy(&[5, 3], &[1, 5]);
+        let (s, st) = collapsed.as_slices();
+        assert_eq!(s, &[5, 3]);
+        assert_eq!(st, &[1, 5]);
     }
 
     #[test]
     fn test_collapse_for_copy_all_size1() {
-        // All dims size 1: collapses to empty (a scalar).
-        let (s, st) = collapse_for_copy(&[1, 1, 1], &[0, 0, 0]);
+        let collapsed = collapse_for_copy(&[1, 1, 1], &[0, 0, 0]);
+        let (s, st) = collapsed.as_slices();
         assert!(s.is_empty());
         assert!(st.is_empty());
     }
 
+    /// 4D permuted layout round-trips through the collapse + tiled
+    /// copy path. Mirrors the ConvNeXt channels-last permute.
     #[test]
     fn test_to_contiguous_4d_permuted_matches_naive() {
-        // Matches the hot shape: [1, 48, 244, 224] permuted to
-        // [1, 244, 224, 48]. Verify the collapsed + tiled copy path
-        // produces the same bytes as a naive strided iteration.
         let dims = [1, 48, 4, 5];
         let n: usize = dims.iter().product();
         let data: Vec<f32> = (0..n).map(|i| i as f32).collect();
@@ -614,13 +638,11 @@ mod tests {
         assert!(contig.is_contiguous());
         assert_eq!(contig.shape().to_vec(), vec![1, 4, 5, 48]);
 
-        // Build expected via manual index walk.
+        // Expected via manual strided walk of the source.
         let mut expected = Vec::with_capacity(n);
         for h in 0..4 {
             for w in 0..5 {
                 for c in 0..48 {
-                    // Original [1, 48, 4, 5] linear index:
-                    // c * (4*5) + h * 5 + w
                     let idx = c * 20 + h * 5 + w;
                     expected.push(data[idx]);
                 }
@@ -632,20 +654,13 @@ mod tests {
         assert_eq!(values, expected.as_slice());
     }
 
+    /// Exercise the `row_stride > col_stride` branch of the 2D tiled
+    /// copy (the ConvNeXt case hits the other branch).
     #[test]
     fn test_to_contiguous_2d_row_stride_gt_col_stride() {
-        // Exercise the `else` branch of the 2D tiled copy (the
-        // original col-inner nesting), which triggers when
-        // `row_stride > col_stride`. The hot ConvNeXt case hits the
-        // other branch because the permuted last dim has the big
-        // stride.
-        //
-        // Strategy: build a stepped-outer view over a `[6, 3]`
-        // contiguous tensor. `slice(s![..;2, ..])` on `[6, 3]` strides
-        // `[3, 1]` gives a shape `[3, 3]` view with strides `[6, 1]`
-        // and start_offset 0. That's non-contiguous, and the collapse
-        // doesn't merge (stride[0]=6 != stride[1]*s[1]=3), so the 2D
-        // branch runs with row_stride 6 and col_stride 1.
+        // `slice(s![..;2, ..])` on a [6, 3] contiguous tensor gives a
+        // [3, 3] view with strides [6, 1] that doesn't collapse, so
+        // the 2D branch runs with row_stride > col_stride.
         let data: Vec<f32> = (0..18).map(|i| i as f32).collect();
         let t = FlexTensor::from_data(TensorData::new(data, vec![6, 3]));
         let stepped = crate::ops::slice::slice(

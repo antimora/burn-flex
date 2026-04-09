@@ -174,187 +174,64 @@ fn slice_assign_impl<E: Element + bytemuck::Pod + Clone>(
     slices: &[Slice],
     value: FlexTensor,
 ) -> FlexTensor {
-    // Fast path: `slice_fill(slice, scalar)` decomposes upstream into
-    // `slice_assign(slice, expand(one_elem_tensor, slice_shape))`. The
-    // expanded value has all strides == 0, meaning every read returns the
-    // same scalar. Calling `to_contiguous()` on it would materialize a
-    // full `slice_numel * elem_size` temporary (alloc + fill) before we
-    // even start the strided write into the destination, which triples
-    // the memory traffic for what should be a single-pass scalar fill.
-    // Detect it and hand off to `slice_fill_impl`.
-    //
-    // We gate on `num_elements > 0` (not `!strides().is_empty()`) so
-    // that rank-0 scalar tensors are covered as well: their strides
-    // slice is empty, so `iter().all(...)` is vacuously true, and the
-    // single storage element at `start_offset` is the scalar we want.
-    // The `num_elements > 0` check also guards the storage read
-    // against a zero-sized source (e.g. `from_data(vec![], [0]).expand
-    // ([0, 3])`), which would otherwise index an empty slice.
+    // Broadcast-scalar fast path: if `value` is a fully-broadcast
+    // scalar (all strides zero), read the scalar once instead of
+    // materializing the expansion via `to_contiguous`. The
+    // `num_elements > 0` gate also guards the storage read against
+    // zero-sized sources where `iter().all(...)` would be vacuously
+    // true.
     if value.layout().num_elements() > 0 && value.layout().strides().iter().all(|&s| s == 0) {
-        // All strides zero (or rank 0) means every position maps to
-        // the same element at `start_offset`. Read it once and
-        // dispatch.
         let scalar = value.storage::<E>()[value.layout().start_offset()];
-        return slice_fill_impl::<E>(tensor, slices, scalar);
+        return slice_write_impl::<E>(tensor, slices, WriteSource::Scalar(scalar));
     }
 
-    // Make tensor contiguous
-    let mut tensor = tensor.to_contiguous();
-    let dst_layout = tensor.layout().clone();
-    let ndims = dst_layout.num_dims();
-
-    // Get value data
     let value = value.to_contiguous();
     let val_src: &[E] = value.storage::<E>();
+    slice_write_impl::<E>(tensor, slices, WriteSource::Slice(val_src))
+}
 
-    // Calculate slice info: (start, len, step) for each dimension
-    let slice_info: Vec<(usize, usize, isize)> = (0..ndims)
-        .map(|dim| {
-            let dim_size = dst_layout.shape()[dim] as isize;
-            let slice = if dim < slices.len() {
-                &slices[dim]
-            } else {
-                &Slice::new(0, None, 1)
-            };
-            compute_slice_info(slice, dim_size)
-        })
-        .collect();
+/// Source to splat into a sliced region of a destination tensor. The
+/// two variants drive the same dispatch tree; `Scalar` hits the
+/// broadcast-scalar fast path (no value buffer), `Slice` hits the
+/// memcpy-style assign path (advances through `val_src`).
+#[derive(Copy, Clone)]
+enum WriteSource<'a, E: Copy> {
+    Scalar(E),
+    Slice(&'a [E]),
+}
 
-    // Get mutable access
-    let dst = tensor.storage_mut::<E>();
-
-    // Check if innermost dimension is contiguous (step=1)
-    let inner_contiguous = slice_info
-        .last()
-        .map(|(_, _, step)| *step == 1)
-        .unwrap_or(false);
-
-    if ndims == 1 {
-        // 1D case: simple loop or memcpy
-        let (start, len, step) = slice_info[0];
-        if step == 1 {
-            // Contiguous: use memcpy
-            dst[start..start + len].copy_from_slice(&val_src[..len]);
-        } else {
-            // Strided: element-by-element
-            for (i, &val) in val_src.iter().enumerate().take(len) {
-                let dst_i = if step > 0 {
-                    start + i * step as usize
-                } else {
-                    (start as isize - (i as isize) * (-step)) as usize
-                };
-                dst[dst_i] = val;
-            }
-        }
-    } else if ndims == 2 && inner_contiguous {
-        // 2D with contiguous inner: row-based memcpy
-        let (row_start, row_len, row_step) = slice_info[0];
-        let (col_start, col_len, _) = slice_info[1];
-        let dst_cols = dst_layout.shape()[1];
-
-        let mut val_offset = 0;
-        for r in 0..row_len {
-            let row_idx = if row_step > 0 {
-                row_start + r * row_step as usize
-            } else {
-                (row_start as isize - (r as isize) * (-row_step)) as usize
-            };
-            let dst_row_start = row_idx * dst_cols + col_start;
-            dst[dst_row_start..dst_row_start + col_len]
-                .copy_from_slice(&val_src[val_offset..val_offset + col_len]);
-            val_offset += col_len;
-        }
-    } else if inner_contiguous {
-        // ND with contiguous inner: iterate outer dims, memcpy inner
-        let inner_len = slice_info[ndims - 1].1;
-        let outer_dims = ndims - 1;
-        let dst_strides = dst_layout.strides();
-
-        // Compute total iterations for outer dimensions
-        let mut outer_count = 1usize;
-        for info in slice_info.iter().take(outer_dims) {
-            outer_count *= info.1;
-        }
-
-        // Iterate using flat index for outer dimensions
-        let mut outer_indices = vec![0usize; outer_dims];
-        let mut val_offset = 0;
-
-        for _ in 0..outer_count {
-            // Compute destination offset for current outer indices
-            let mut dst_offset = dst_layout.start_offset() as isize;
-            for (dim, &idx) in outer_indices.iter().enumerate() {
-                let (start, _, step) = slice_info[dim];
-                let src_i = if step > 0 {
-                    start + idx * step as usize
-                } else {
-                    (start as isize - (idx as isize) * (-step)) as usize
-                };
-                dst_offset += src_i as isize * dst_strides[dim];
-            }
-            // Add inner dimension start
-            dst_offset += slice_info[ndims - 1].0 as isize * dst_strides[ndims - 1];
-            let dst_offset = dst_offset as usize;
-
-            // Copy inner row
-            dst[dst_offset..dst_offset + inner_len]
-                .copy_from_slice(&val_src[val_offset..val_offset + inner_len]);
-            val_offset += inner_len;
-
-            // Increment outer indices (odometer style)
-            for dim in (0..outer_dims).rev() {
-                outer_indices[dim] += 1;
-                if outer_indices[dim] < slice_info[dim].1 {
-                    break;
-                }
-                outer_indices[dim] = 0;
-            }
-        }
-    } else {
-        // Fallback: element-by-element with iterative approach
-        let total_elements: usize = slice_info.iter().map(|(_, len, _)| len).product();
-        let dst_strides = dst_layout.strides();
-        let mut indices = vec![0usize; ndims];
-
-        for &val in val_src.iter().take(total_elements) {
-            // Compute destination index
-            let mut dst_offset = dst_layout.start_offset() as isize;
-            for (dim, &idx) in indices.iter().enumerate() {
-                let (start, _, step) = slice_info[dim];
-                let src_i = if step > 0 {
-                    start + idx * step as usize
-                } else {
-                    (start as isize - (idx as isize) * (-step)) as usize
-                };
-                dst_offset += src_i as isize * dst_strides[dim];
-            }
-
-            dst[dst_offset as usize] = val;
-
-            // Increment indices (odometer style)
-            for dim in (0..ndims).rev() {
-                indices[dim] += 1;
-                if indices[dim] < slice_info[dim].1 {
-                    break;
-                }
-                indices[dim] = 0;
-            }
+impl<'a, E: Copy> WriteSource<'a, E> {
+    /// Write a contiguous span of `dst` starting at `dst_offset` for
+    /// `len` elements. For `Slice`, `src_offset` is the current
+    /// position in the value buffer.
+    #[inline]
+    fn write_span(self, dst: &mut [E], dst_offset: usize, len: usize, src_offset: usize) {
+        match self {
+            WriteSource::Scalar(s) => dst[dst_offset..dst_offset + len].fill(s),
+            WriteSource::Slice(src) => dst[dst_offset..dst_offset + len]
+                .copy_from_slice(&src[src_offset..src_offset + len]),
         }
     }
 
-    tensor
+    /// Write a single element. `src_idx` is only read in the `Slice`
+    /// variant.
+    #[inline]
+    fn write_element(self, dst: &mut [E], dst_idx: usize, src_idx: usize) {
+        match self {
+            WriteSource::Scalar(s) => dst[dst_idx] = s,
+            WriteSource::Slice(src) => dst[dst_idx] = src[src_idx],
+        }
+    }
 }
 
-/// Scalar slice fill implementation. Mirrors the dispatch structure of
-/// `slice_assign_impl` (1D fast path, 2D inner-contiguous fast path, ND
-/// inner-contiguous fast path, strided fallback) but writes a single
-/// scalar value instead of copying from a source buffer. Hit from
-/// `slice_assign_impl`'s broadcast-scalar fast path to avoid materializing
-/// a temporary expand-to-contiguous copy; see issue #64 item 3.
-fn slice_fill_impl<E: Element + bytemuck::Pod + Clone>(
+/// Unified slice writer used by both `slice_assign_impl` and the
+/// scalar-broadcast fast path. Walks the destination's sliced region
+/// (1D / 2D inner-contig / ND inner-contig / strided fallback) and
+/// pulls values from the given [`WriteSource`].
+fn slice_write_impl<E: Element + bytemuck::Pod>(
     tensor: FlexTensor,
     slices: &[Slice],
-    scalar: E,
+    source: WriteSource<'_, E>,
 ) -> FlexTensor {
     let mut tensor = tensor.to_contiguous();
     let dst_layout = tensor.layout().clone();
@@ -380,14 +257,16 @@ fn slice_fill_impl<E: Element + bytemuck::Pod + Clone>(
         .unwrap_or(false);
 
     if ndims == 0 {
-        // Rank 0: single scalar destination.
+        // Rank 0: single scalar destination. Only reachable from the
+        // scalar fast path; `slice_assign` on a rank-0 tensor with a
+        // rank-0 source also ends up here.
         if !dst.is_empty() {
-            dst[0] = scalar;
+            source.write_element(dst, 0, 0);
         }
     } else if ndims == 1 {
         let (start, len, step) = slice_info[0];
         if step == 1 {
-            dst[start..start + len].fill(scalar);
+            source.write_span(dst, start, len, 0);
         } else {
             for i in 0..len {
                 let dst_i = if step > 0 {
@@ -395,7 +274,7 @@ fn slice_fill_impl<E: Element + bytemuck::Pod + Clone>(
                 } else {
                     (start as isize - (i as isize) * (-step)) as usize
                 };
-                dst[dst_i] = scalar;
+                source.write_element(dst, dst_i, i);
             }
         }
     } else if ndims == 2 && inner_contiguous {
@@ -403,6 +282,7 @@ fn slice_fill_impl<E: Element + bytemuck::Pod + Clone>(
         let (col_start, col_len, _) = slice_info[1];
         let dst_cols = dst_layout.shape()[1];
 
+        let mut val_offset = 0;
         for r in 0..row_len {
             let row_idx = if row_step > 0 {
                 row_start + r * row_step as usize
@@ -410,19 +290,18 @@ fn slice_fill_impl<E: Element + bytemuck::Pod + Clone>(
                 (row_start as isize - (r as isize) * (-row_step)) as usize
             };
             let dst_row_start = row_idx * dst_cols + col_start;
-            dst[dst_row_start..dst_row_start + col_len].fill(scalar);
+            source.write_span(dst, dst_row_start, col_len, val_offset);
+            val_offset += col_len;
         }
     } else if inner_contiguous {
         let inner_len = slice_info[ndims - 1].1;
         let outer_dims = ndims - 1;
         let dst_strides = dst_layout.strides();
 
-        let mut outer_count = 1usize;
-        for info in slice_info.iter().take(outer_dims) {
-            outer_count *= info.1;
-        }
+        let outer_count: usize = slice_info.iter().take(outer_dims).map(|i| i.1).product();
 
         let mut outer_indices = vec![0usize; outer_dims];
+        let mut val_offset = 0;
 
         for _ in 0..outer_count {
             let mut dst_offset = dst_layout.start_offset() as isize;
@@ -438,8 +317,10 @@ fn slice_fill_impl<E: Element + bytemuck::Pod + Clone>(
             dst_offset += slice_info[ndims - 1].0 as isize * dst_strides[ndims - 1];
             let dst_offset = dst_offset as usize;
 
-            dst[dst_offset..dst_offset + inner_len].fill(scalar);
+            source.write_span(dst, dst_offset, inner_len, val_offset);
+            val_offset += inner_len;
 
+            // Odometer increment over outer dims.
             for dim in (0..outer_dims).rev() {
                 outer_indices[dim] += 1;
                 if outer_indices[dim] < slice_info[dim].1 {
@@ -453,7 +334,7 @@ fn slice_fill_impl<E: Element + bytemuck::Pod + Clone>(
         let dst_strides = dst_layout.strides();
         let mut indices = vec![0usize; ndims];
 
-        for _ in 0..total_elements {
+        for i in 0..total_elements {
             let mut dst_offset = dst_layout.start_offset() as isize;
             for (dim, &idx) in indices.iter().enumerate() {
                 let (start, _, step) = slice_info[dim];
@@ -465,7 +346,7 @@ fn slice_fill_impl<E: Element + bytemuck::Pod + Clone>(
                 dst_offset += src_i as isize * dst_strides[dim];
             }
 
-            dst[dst_offset as usize] = scalar;
+            source.write_element(dst, dst_offset as usize, i);
 
             for dim in (0..ndims).rev() {
                 indices[dim] += 1;
@@ -643,12 +524,9 @@ mod tests {
         );
     }
 
-    // Tests for the broadcast-scalar fast path added for issue #64 item 3.
-    //
-    // These mimic what burn-tensor's `Tensor::slice_fill` produces: a
-    // 1-element source tensor expanded to the slice shape (all strides
-    // zero), handed to slice_assign. The fast path detects the zero-stride
-    // value and dispatches to the scalar slice_fill_impl.
+    // Broadcast-scalar fast path tests: mimic what
+    // `Tensor::slice_fill` produces (a 1-element source expanded to
+    // the slice shape with all strides zero).
 
     fn broadcast_scalar_f32(value: f32, target_shape: &[usize]) -> FlexTensor {
         let scalar_tensor = FlexTensor::from_data(TensorData::new(vec![value], [1]));
@@ -751,11 +629,7 @@ mod tests {
         assert_eq!(out, expected);
     }
 
-    /// Exercise the broadcast-scalar fast path for a non-f32 dtype.
-    /// `slice_fill_impl` is monomorphized per-element-type with no
-    /// dtype-specific code, but nothing in the test suite actually
-    /// verifies that a Pod cast through a 64-bit integer type produces
-    /// the right bytes in the destination.
+    /// Broadcast-scalar fast path on a non-f32 dtype.
     #[test]
     fn test_slice_assign_broadcast_scalar_i64() {
         fn broadcast_scalar_i64(value: i64, target_shape: &[usize]) -> FlexTensor {
@@ -776,9 +650,7 @@ mod tests {
         assert_eq!(values, vec![0, -7, -7, 3, 4, -7, -7, 7, 8, 9, 10, 11]);
     }
 
-    /// ND strided fallback path in `slice_fill_impl`: a 3D slice with a
-    /// stepped inner dim so `inner_contiguous` is false and the final
-    /// `else` branch runs.
+    /// ND strided fallback path: 3D slice with a stepped inner dim.
     #[test]
     fn test_slice_assign_broadcast_scalar_nd_strided_fallback() {
         let data: Vec<f32> = (0..24).map(|i| i as f32).collect();
@@ -808,8 +680,7 @@ mod tests {
         assert_eq!(values, expected);
     }
 
-    /// Stepped 2D row index in `slice_fill_impl`'s 2D-inner-contig
-    /// branch: tests the `row_step > 0` path with `row_step != 1`.
+    /// 2D inner-contig branch with `row_step > 1`.
     #[test]
     fn test_slice_assign_broadcast_scalar_2d_stepped_rows() {
         let data: Vec<f32> = (0..25).map(|i| i as f32).collect();
