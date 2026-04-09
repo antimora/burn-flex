@@ -79,10 +79,7 @@ where
     // `powf` (which have no SIMD fast path and go straight to
     // `binary_op_typed`) don't pay for a memcpy they can't benefit
     // from. Their strided fallback handles non-contig lhs directly.
-    if simd_hint.is_some()
-        && !lhs.layout().is_contiguous()
-        && rhs.layout().strides().contains(&0)
-    {
+    if simd_hint.is_some() && !lhs.layout().is_contiguous() && rhs.layout().strides().contains(&0) {
         lhs = lhs.to_contiguous();
     }
 

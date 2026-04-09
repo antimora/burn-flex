@@ -349,7 +349,9 @@ impl FlexTensor {
             // SAFETY: capacity is n; `copy_2d_tiled` writes every
             // `(row, col)` position exactly once.
             unsafe { dst.set_len(n) };
-            copy_2d_tiled(&mut dst, src, offset, shape[0], shape[1], strides[0], strides[1]);
+            copy_2d_tiled(
+                &mut dst, src, offset, shape[0], shape[1], strides[0], strides[1],
+            );
         } else {
             // General fallback: covers negative strides (flipped
             // tensors) and ND layouts that can't collapse to ≤2D.
