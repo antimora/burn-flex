@@ -4,6 +4,9 @@
 
 ## burn-flex - The portable flex that carries Burn anywhere.
 
+> 🎉 **Update:** burn-flex has been successfully merged into the upstream Burn repository via
+> [tracel-ai/burn#4761](https://github.com/tracel-ai/burn/pull/4761).
+
 A fast, memory-efficient CPU backend for Burn with multi-threading, SIMD, and optimized matrix
 multiplication. Runs on std, no_std, and WebAssembly. Supports f16/bf16, zero-copy data loading, and
 is thread-safe by design.
