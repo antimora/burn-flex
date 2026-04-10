@@ -2,10 +2,14 @@
   <img src="https://raw.githubusercontent.com/antimora/burn-flex/main/logo.png" alt="burn-flex logo" width="400">
 </p>
 
-## burn-flex - The portable flex that carries Burn anywhere.
+<h2 align="center">
+  🎉 burn-flex has been merged into <a href="https://github.com/tracel-ai/burn">Burn</a>!
+</h2>
+<h3 align="center">
+  See <a href="https://github.com/tracel-ai/burn/pull/4761">tracel-ai/burn#4761</a>
+</h3>
 
-> 🎉 **Update:** burn-flex has been successfully merged into the upstream Burn repository via
-> [tracel-ai/burn#4761](https://github.com/tracel-ai/burn/pull/4761).
+## burn-flex - The portable flex that carries Burn anywhere.
 
 A fast, memory-efficient CPU backend for Burn with multi-threading, SIMD, and optimized matrix
 multiplication. Runs on std, no_std, and WebAssembly. Supports f16/bf16, zero-copy data loading, and
